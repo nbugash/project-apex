@@ -1,0 +1,43 @@
+schema_version: "1.0"
+
+extension:
+  id: featuremap
+  name: "Feature Map Sequencing"
+  version: "1.1.0"
+  description: "Ordered feature backlog with immutable identities, dependency-aware sequencing, and a gate that refuses to specify a feature whose prerequisites are incomplete"
+  author: nbugash
+  repository: https://github.com/nbugash/spec-kit
+  license: MIT
+
+requires:
+  speckit_version: ">=0.2.0"
+  tools:
+    - name: python3
+      required: true
+
+provides:
+  commands:
+    - name: speckit.featuremap.check
+      file: commands/speckit.featuremap.check.md
+      description: "Resolve the feature to specify and refuse the run when its dependencies are incomplete"
+    - name: speckit.featuremap.add
+      file: commands/speckit.featuremap.add.md
+      description: "Add a feature to the map with the correct identity, position and dependencies"
+
+  scripts:
+    - name: featuremap
+      file: scripts/python/feature_map.py
+      description: "Parse the feature map, resolve the next feature, verify integrity, add features, record spec paths"
+      runtimes:
+        - python
+
+hooks:
+  before_specify:
+    command: speckit.featuremap.check
+    optional: false
+    description: "Enforce feature map sequencing before specification"
+
+tags:
+  - "planning"
+  - "backlog"
+  - "workflow"

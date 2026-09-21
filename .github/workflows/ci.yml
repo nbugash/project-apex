@@ -1,0 +1,58 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  interface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - run: npm ci
+      - run: npm run ds:sync
+      # Required checks, not advisory. lint:ds enforces Constitution Principle I
+      # mechanically; perf:budget is what makes Principle V a measurement, not a claim.
+      - run: npm run lint:ds
+      - run: npm run test:unit
+      - run: npm run perf:budget
+
+  e2e:
+    # Linux only. macOS has no WebDriver for its platform webview — see Appendix A, A-E2E.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >
+          sudo apt-get update && sudo apt-get install -y
+          webkit2gtk-driver xvfb libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      # tauri-driver bridges WebDriver to the platform webview; the suite cannot start
+      # without it, and its absence otherwise surfaces as an opaque connection refusal.
+      - run: cargo install tauri-driver --locked
+      - run: npm ci && npm run ds:sync
+      # The harness builds the bundle and the binary itself and serves the bundle on the
+      # dev port, because a debug build loads devUrl and would otherwise show a blank
+      # webview with every selector timing out for no visible reason.
+      - run: xvfb-run -a npm run e2e
+
+  smoke-macos:
+    # Not an end-to-end run: no WebDriver exists for WKWebView. This proves the app starts
+    # and paints on the platform the suite cannot drive (Appendix A, A-E2E).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - run: npm ci && npm run build
+      - run: npm run smoke:macos
