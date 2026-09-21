@@ -49,8 +49,11 @@ export interface SessionSnapshot {
 export const shellReady = (): Promise<void> => invoke('shell_ready');
 export const sessionGet = (): Promise<SessionSnapshot> => invoke('session_get');
 
-export const layoutSetRegion = (region: RegionId, visible: boolean, extent: number): Promise<void> =>
-  invoke('layout_set_region', { region, visible, extent });
+export const layoutSetRegion = (
+  region: RegionId,
+  visible: boolean,
+  extent: number,
+): Promise<void> => invoke('layout_set_region', { region, visible, extent });
 
 export const documentsOpen = (displayName: string): Promise<string> =>
   invoke('documents_open', { displayName });
@@ -61,5 +64,9 @@ export const documentsFocus = (id: string): Promise<void> => invoke('documents_f
 
 export const onConnectionChanged = (
   handler: (state: ConnectionState) => void,
+): Promise<UnlistenFn> => listen<ConnectionState>('connection:changed', (e) => handler(e.payload));
+
+export const onWorkspaceChanged = (
+  handler: (workspace: WorkspaceReference | null) => void,
 ): Promise<UnlistenFn> =>
-  listen<ConnectionState>('connection:changed', (e) => handler(e.payload));
+  listen<WorkspaceReference | null>('workspace:changed', (e) => handler(e.payload));

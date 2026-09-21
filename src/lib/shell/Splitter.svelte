@@ -12,8 +12,14 @@
     label: string;
     onresize: (extent: number) => void;
   }
-  let { orientation, extent, min, max = Number.POSITIVE_INFINITY, label, onresize }: Props =
-    $props();
+  let {
+    orientation,
+    extent,
+    min,
+    max = Number.POSITIVE_INFINITY,
+    label,
+    onresize,
+  }: Props = $props();
 
   const KEYBOARD_STEP = 16;
   let dragging = $state(false);

@@ -79,3 +79,4 @@ src-tauri/gen/
 # artifact under mockups/ is the tracked source of truth; this is its build
 # output, and tracking both would create two copies that can disagree.
 src/lib/ds/
+.e2e-profile/

@@ -1,31 +1,55 @@
 import './app.css';
 import { mount } from 'svelte';
 import Window from './lib/shell/Window.svelte';
-import { onConnectionChanged, sessionGet, shellReady, type ConnectionState } from './lib/ipc';
+import { shellState } from './lib/state.svelte';
+import { onConnectionChanged, onWorkspaceChanged, sessionGet, shellReady } from './lib/ipc';
 
-// The window is created hidden. It is shown only after styles have applied and the first
-// render has committed, which is what makes FR-020 a structural guarantee rather than a
-// race that usually resolves in our favour (research.md, "Preventing a light or unstyled
-// first frame").
-async function start() {
-  const session = await sessionGet();
-  let connection: ConnectionState = 'unknown';
-
-  const app = mount(Window, {
-    target: document.getElementById('app')!,
-    props: { session, connection },
-  });
-
-  await onConnectionChanged((state) => {
-    connection = state;
-    app.$set?.({ connection: state });
-  });
+/**
+ * Startup order is load-bearing.
+ *
+ * The window is created hidden and shown only by the readiness signal, which is what makes
+ * "no unstyled frame" (FR-020) a structural property. The corollary is unforgiving: anything
+ * that can block before the signal can leave the application invisible forever, with nothing
+ * reported anywhere a user can see.
+ *
+ * So the signal is sent as soon as the styled DOM has painted, and BEFORE any optional
+ * wiring. Event subscriptions are not a precondition for showing a window; a shell with a
+ * stale status bar is a defect, a shell nobody can see is unusable. An awaited subscription
+ * that hangs rather than rejects would otherwise never reach a `finally`.
+ */
+async function start(): Promise<void> {
+  try {
+    const session = await sessionGet();
+    shellState.session = session;
+    shellState.workspace = session.workspace;
+    mount(Window, { target: document.getElementById('app')!, props: { session } });
+  } catch (error) {
+    console.error('shell startup failed before render', error);
+  }
 
   // Two frames: the first commits the styled DOM, the second guarantees it has painted.
-  await new Promise<void>((resolve) =>
+  //
+  // Raced against a deadline, because a HIDDEN window produces no animation frames. Waiting
+  // on rAF alone deadlocks: no frames until the window is shown, and the window is not shown
+  // until this resolves. The frames are the better signal when they arrive; the deadline is
+  // what stops their absence being fatal.
+  const painted = new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
-  await shellReady();
+  const deadline = new Promise<void>((resolve) => setTimeout(resolve, 150));
+  await Promise.race([painted, deadline]);
+
+  await shellReady().catch((e) => console.error('could not show the window', e));
+
+  // Optional wiring, after the window is visible. Both events fire once with their current
+  // value, so nothing here polls.
+  onConnectionChanged((state) => {
+    shellState.connection = state;
+  }).catch((e) => console.error('connection events unavailable', e));
+
+  onWorkspaceChanged((workspace) => {
+    shellState.workspace = workspace;
+  }).catch((e) => console.error('workspace events unavailable', e));
 }
 
 void start();

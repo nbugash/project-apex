@@ -36,12 +36,19 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
     let source: Arc<dyn ConnectionStatusSource> = stub.clone();
     let connection = Arc::new(ObserveConnection::new(source));
 
-    Wiring {
-        shell: Shell {
-            persist,
-            connection,
-            window,
-        },
-        stub,
-    }
+    #[cfg(debug_assertions)]
+    let shell = Shell {
+        persist,
+        connection,
+        window,
+        stub: stub.clone(),
+    };
+    #[cfg(not(debug_assertions))]
+    let shell = Shell {
+        persist,
+        connection,
+        window,
+    };
+
+    Wiring { shell, stub }
 }

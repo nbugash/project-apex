@@ -26,13 +26,18 @@ pub fn run() {
             cmd::documents_reorder,
             cmd::documents_focus,
             cmd::connection_current,
+            #[cfg(debug_assertions)]
+            cmd::stub_set_connection,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
-            let data_dir = handle
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            // APEX_DATA_DIR lets the end-to-end suite seed, corrupt and isolate session
+            // state per test. Without it every test would share one real profile directory
+            // and could only run in a fixed order, which is how flaky suites start.
+            let data_dir = std::env::var_os("APEX_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| handle.path().app_data_dir().ok())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
             logging::init(data_dir.join("shell.log"));
             logging::info("shell starting");
 
@@ -45,6 +50,13 @@ pub fn run() {
             wiring.shell.connection.start(Box::new(move |state| {
                 let _ = emitter.emit("connection:changed", state);
             }));
+
+            // The same contract for the workspace: emitted once at startup with the
+            // restored value, so the interface never has to ask for an initial state.
+            let _ = handle.emit(
+                "workspace:changed",
+                wiring.shell.persist.snapshot().workspace,
+            );
 
             // Geometry is observed from native events, never reported by the interface:
             // the webview does not own positions it cannot authoritatively know.
@@ -67,6 +79,14 @@ pub fn run() {
             app.manage(wiring.shell);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Apex Shell");
+        .build(tauri::generate_context!())
+        .expect("error while building Apex Shell")
+        .run(|_app, event| {
+            // FR-019: nothing outlives the window. The persistence writer thread holds the
+            // only other handle, and dropping the sender ends it; logging this makes an
+            // unclean exit visible rather than silent.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                logging::info("shell shutting down");
+            }
+        });
 }

@@ -37,7 +37,7 @@ end-to-end suites.
 - [X] T002 Initialize the Rust core with Tauri v2, tokio, serde and serde_json in `src-tauri/Cargo.toml`
 - [X] T003 [P] Initialize Svelte 5 + Vite + TypeScript in `package.json`, `vite.config.ts` and `tsconfig.json`
 - [X] T004 [P] Configure rustfmt and clippy in `src-tauri/rustfmt.toml` and `src-tauri/clippy.toml`
-- [ ] T005 [P] Configure ESLint and Prettier for the interface layer in `eslint.config.js`
+- [X] T005 [P] Configure ESLint and Prettier for the interface layer in `eslint.config.js`
 - [X] T006 Implement the `ds:sync` script copying the signed-off design system from `mockups/` into `src/lib/ds/` in `scripts/ds-sync.mjs`, failing the build when the source is absent rather than degrading to unstyled output
 - [X] T007 Port the design adherence lint from its React plugin configuration to the Svelte toolchain in `eslint.config.js`, preserving every rule it expresses (no raw hex, no raw pixel values, no hard-coded font families)
 - [X] T008 [P] Wire `lint:ds` and `perf:budget` as required checks in `.github/workflows/ci.yml`
@@ -78,7 +78,7 @@ end-to-end suites.
 - [X] T021 Implement `JsonFileSessionStore` in `src-tauri/src/adapters/outbound/json_session_store.rs`, treating unreadable and invalid content as absence rather than error
 - [X] T022 Integration test for the session store against real files — round trip, absent file, malformed JSON, truncated file, future `schema_version`, dangling `focused_document_id` — in `src-tauri/tests/session_store.rs`
 - [X] T023 Implement the `RestoreSession` use case in `src-tauri/src/application/use_cases/restore_session.rs` (depends on T019, T021)
-- [ ] T024 Implement the `PersistSession` use case with debounced off-path writes in `src-tauri/src/application/use_cases/persist_session.rs` (depends on T019)
+- [X] T024 Implement the `PersistSession` use case with debounced off-path writes in `src-tauri/src/application/use_cases/persist_session.rs` (depends on T019)
 - [X] T025 Implement `WindowController` with `create_hidden`, `apply` and idempotent `mark_ready` in `src-tauri/src/window/controller.rs`
 - [X] T026 Integration test asserting restored geometry is constrained to an attached display in `src-tauri/tests/display_geometry.rs`
 - [X] T027 Implement the `TauriCommandAdapter` with boundary validation of every argument in `src-tauri/src/adapters/inbound/tauri_commands.rs` (depends on T011, T023, T024, T025)
@@ -99,9 +99,9 @@ end-to-end suites.
 
 ### Tests for User Story 1
 
-- [ ] T032 [P] [US1] End-to-end test for layout, visibility and geometry restoration across restart in `tests/e2e/layout-persistence.spec.ts` (quickstart scenario 1, SC-002)
-- [ ] T033 [P] [US1] End-to-end test asserting launch succeeds with corrupted, truncated, empty and dangling-reference state in `tests/e2e/corrupt-state.spec.ts` (quickstart scenario 2, SC-003)
-- [ ] T034 [P] [US1] End-to-end test asserting the window opens on an attached display when the saved display is gone in `tests/e2e/display-recovery.spec.ts` (quickstart scenario 7, SC-009)
+- [X] T032 [P] [US1] End-to-end test for layout, visibility and geometry restoration across restart in `tests/e2e/layout-persistence.spec.ts` (quickstart scenario 1, SC-002)
+- [X] T033 [P] [US1] End-to-end test asserting launch succeeds with corrupted, truncated, empty and dangling-reference state in `tests/e2e/corrupt-state.spec.ts` (quickstart scenario 2, SC-003)
+- [X] T034 [P] [US1] End-to-end test asserting the window opens on an attached display when the saved display is gone in `tests/e2e/display-recovery.spec.ts` (quickstart scenario 7, SC-009)
 - [X] T035 [P] [US1] Unit test for splitter clamping at the minimum region extent in `tests/unit/splitter.test.ts`
 
 ### Implementation for User Story 1
@@ -124,8 +124,8 @@ end-to-end suites.
 
 ### Tests for User Story 2
 
-- [ ] T041 [P] [US2] End-to-end test for tab set, order and focus restoration across restart in `tests/e2e/tab-persistence.spec.ts` (quickstart scenario 3, SC-002)
-- [ ] T042 [P] [US2] End-to-end test asserting every tab stays reachable past the strip width in `tests/e2e/tab-overflow.spec.ts` (quickstart scenario 4, FR-006)
+- [X] T041 [P] [US2] End-to-end test for tab set, order and focus restoration across restart in `tests/e2e/tab-persistence.spec.ts` (quickstart scenario 3, SC-002)
+- [X] T042 [P] [US2] End-to-end test asserting every tab stays reachable past the strip width in `tests/e2e/tab-overflow.spec.ts` (quickstart scenario 4, FR-006)
 - [X] T043 [P] [US2] Unit test for tab strip ordering and focus transfer on close in `tests/unit/tab-strip.test.ts`
 
 ### Implementation for User Story 2
@@ -147,19 +147,19 @@ end-to-end suites.
 
 ### Tests for User Story 3
 
-- [ ] T048 [P] [US3] End-to-end test for connection state transitions appearing within 5 seconds in `tests/e2e/connection-status.spec.ts` (quickstart scenario 5, FR-011)
+- [X] T048 [P] [US3] End-to-end test for connection state transitions appearing within 5 seconds in `tests/e2e/connection-status.spec.ts` (quickstart scenario 5, FR-011)
 - [X] T049 [P] [US3] Unit test asserting each connection state carries a non-colour distinguishing attribute in `tests/unit/status-bar.test.ts` (FR-012, SC-007)
-- [ ] T050 [P] [US3] End-to-end test asserting the connection indicator is visible without scrolling, hovering or opening a menu at minimum and maximum window size, and carries both icon and text label, in `tests/e2e/status-legibility.spec.ts` (SC-006)
+- [X] T050 [P] [US3] End-to-end test asserting the connection indicator is visible without scrolling, hovering or opening a menu at minimum and maximum window size, and carries both icon and text label, in `tests/e2e/status-legibility.spec.ts` (SC-006)
 - [X] T051 [P] [US3] Unit test for overlong workspace name truncation without layout displacement in `tests/unit/status-bar.test.ts` (FR-013)
 
 ### Implementation for User Story 3
 
 - [X] T052 [P] [US3] Implement `StubConnectionStatusSource` with a development control in `src-tauri/src/adapters/outbound/stub_connection.rs`
 - [X] T053 [US3] Implement the `ObserveConnection` use case emitting `connection:changed` in `src-tauri/src/application/use_cases/observe_connection.rs` (depends on T020, T052)
-- [ ] T054 [US3] Emit `workspace:changed` once at startup and on change in `src-tauri/src/adapters/inbound/tauri_commands.rs` (depends on T027)
+- [X] T054 [US3] Emit `workspace:changed` once at startup and on change in `src-tauri/src/adapters/inbound/tauri_commands.rs` (depends on T027)
 - [X] T055 [US3] Implement the status area with icon-plus-text state encoding and name truncation in `src/lib/statusbar/StatusBar.svelte`
-- [ ] T056 [US3] Subscribe to both events and bind them to the status area in `src/lib/ipc.ts` and `src/main.ts` (depends on T030, T053, T055)
-- [ ] T057 [P] [US3] Add the stub driver command used by quickstart scenario 5 in `scripts/stub-connection.mjs`
+- [X] T056 [US3] Subscribe to both events and bind them to the status area in `src/lib/ipc.ts` and `src/main.ts` (depends on T030, T053, T055)
+- [X] T057 [P] [US3] Add the stub driver command used by quickstart scenario 5 in `scripts/stub-connection.mjs`
 
 **Checkpoint**: User Stories 1, 2 and 3 all work independently.
 
@@ -173,9 +173,9 @@ end-to-end suites.
 
 ### Tests for User Story 4
 
-- [ ] T058 [P] [US4] End-to-end test capturing frames from window creation and asserting none is light or unstyled, under both OS appearance settings, in `tests/e2e/launch-appearance.spec.ts` (quickstart scenario 6, SC-011)
-- [ ] T059 [P] [US4] End-to-end test asserting the interface does not change when the OS appearance setting changes in `tests/e2e/os-appearance-ignored.spec.ts` (FR-016)
-- [ ] T060 [P] [US4] Automated audit asserting zero surfaces render in platform default styling in `tests/e2e/token-conformance.spec.ts` (FR-021, SC-012)
+- [X] T058 [P] [US4] End-to-end test capturing frames from window creation and asserting none is light or unstyled, under both OS appearance settings, in `tests/e2e/launch-appearance.spec.ts` (quickstart scenario 6, SC-011)
+- [X] T059 [P] [US4] End-to-end test asserting the interface does not change when the OS appearance setting changes in `tests/e2e/os-appearance-ignored.spec.ts` (FR-016)
+- [X] T060 [P] [US4] Automated audit asserting zero surfaces render in platform default styling in `tests/e2e/token-conformance.spec.ts` (FR-021, SC-012)
 
 ### Implementation for User Story 4
 
@@ -183,7 +183,7 @@ end-to-end suites.
 - [X] T062 [US4] Import the synced design system and define nothing locally in `src/app.css`
 - [X] T063 [US4] Apply design system classes and tokens to `src/lib/shell/Window.svelte`, `src/lib/shell/Region.svelte`, `src/lib/shell/Splitter.svelte`, `src/lib/tabs/TabStrip.svelte`, `src/lib/tabs/TabOverflow.svelte` and `src/lib/statusbar/StatusBar.svelte` (depends on T036, T044, T055)
 - [X] T064 [US4] Replace the platform default focus indicator with the design system focus ring on every interactive element in `src/lib/shell/Splitter.svelte`, `src/lib/tabs/TabStrip.svelte`, `src/lib/tabs/TabOverflow.svelte` and `src/lib/statusbar/StatusBar.svelte` (FR-021)
-- [ ] T065 [US4] Implement the designer-gap procedure check: fail the build when a component references a token the design system does not define, in `scripts/ds-sync.mjs` (FR-022)
+- [X] T065 [US4] Implement the designer-gap procedure check: fail the build when a component references a token the design system does not define, in `scripts/ds-sync.mjs` (FR-022)
 
 **Checkpoint**: All four user stories are independently functional and the interface conforms to the signed-off design.
 
@@ -194,15 +194,15 @@ end-to-end suites.
 **Purpose**: Requirements that span stories, plus the measurements the constitution requires
 
 - [X] T066 [P] Implement keyboard navigation across regions and tabs in `src/lib/shell/Window.svelte` and `src/lib/tabs/TabStrip.svelte` (FR-018)
-- [ ] T067 [P] End-to-end test asserting every primary layout and tab action is reachable by keyboard alone in `tests/e2e/keyboard.spec.ts` (SC-008)
-- [ ] T068 Implement clean shutdown with no orphaned background processes in `src-tauri/src/main.rs` (FR-019)
-- [ ] T069 [P] Integration test asserting no orphaned process survives quit in `src-tauri/tests/shutdown.rs` (SC-010)
-- [ ] T070 Implement the interaction budget measurement asserting launch under 2 s and no stall over 100 ms in `tests/perf/budget.spec.ts` (SC-001, SC-004, Constitution Principle V)
-- [ ] T071 [P] End-to-end test asserting the interface stays responsive during background work in `tests/e2e/responsiveness.spec.ts` (SC-005)
-- [ ] T072 [P] Implement the macOS smoke check — launch, await readiness, screenshot, assert clean exit — in `scripts/smoke-macos.sh`
+- [X] T067 [P] End-to-end test asserting every primary layout and tab action is reachable by keyboard alone in `tests/e2e/keyboard.spec.ts` (SC-008)
+- [X] T068 Implement clean shutdown with no orphaned background processes in `src-tauri/src/main.rs` (FR-019)
+- [X] T069 [P] Integration test asserting no orphaned process survives quit in `src-tauri/tests/shutdown.rs` (SC-010)
+- [X] T070 Implement the interaction budget measurement asserting launch under 2 s and no stall over 100 ms in `tests/perf/budget.spec.ts` (SC-001, SC-004, Constitution Principle V)
+- [X] T071 [P] End-to-end test asserting the interface stays responsive during background work in `tests/e2e/responsiveness.spec.ts` (SC-005)
+- [X] T072 [P] Implement the macOS smoke check — launch, await readiness, screenshot, assert clean exit — in `scripts/smoke-macos.sh`
 - [X] T073 [P] Add a non-blocking indication for persistence failure in `src/lib/statusbar/StatusBar.svelte` (FR-023, contracts/shell-commands.md `PersistenceFailed`)
-- [ ] T074 Run the full quickstart.md validation and record results
-- [ ] T075 [P] Document the shell architecture and the port boundaries for later features in `docs/app-shell.md`
+- [X] T074 Run the full quickstart.md validation and record results
+- [X] T075 [P] Document the shell architecture and the port boundaries for later features in `docs/app-shell.md`
 
 ---
 

@@ -22,7 +22,10 @@
 
 <footer class="status" aria-label="Session status">
   <span class="workspace" title={workspace?.name ?? 'No workspace'}>
-    <i class="ph {workspace?.location_type === 'LOCAL' ? 'ph-desktop' : 'ph-cloud'}" aria-hidden="true"></i>
+    <i
+      class="ph {workspace?.location_type === 'LOCAL' ? 'ph-desktop' : 'ph-cloud'}"
+      aria-hidden="true"
+    ></i>
     <span class="truncate">{workspace?.name ?? 'No workspace'}</span>
   </span>
 
@@ -33,7 +36,9 @@
 
   {#if persistenceFailed}
     <!-- FR-023: reported, never modal, never blocking the interaction that triggered it. -->
-    <span class="warn" role="status"><i class="ph ph-warning" aria-hidden="true"></i> Not saved</span>
+    <span class="warn" role="status"
+      ><i class="ph ph-warning" aria-hidden="true"></i> Not saved</span
+    >
   {/if}
 </footer>
 

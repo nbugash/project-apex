@@ -16,6 +16,10 @@ pub struct Shell {
     pub persist: Arc<PersistSession>,
     pub connection: Arc<ObserveConnection>,
     pub window: Arc<WindowController>,
+    /// Debug builds only: lets the end-to-end suite drive connection transitions. Absent
+    /// from release builds, so it cannot become a production surface by accident.
+    #[cfg(debug_assertions)]
+    pub stub: Arc<crate::adapters::outbound::stub_connection::StubConnectionStatusSource>,
 }
 
 /// Region identifiers arrive as strings from the bridge and are not trusted to be valid.
@@ -78,6 +82,22 @@ pub fn documents_reorder(
 #[tauri::command]
 pub fn documents_focus(id: String, shell: State<'_, Shell>) -> Result<(), ShellError> {
     shell.persist.focus_document(&DocumentId(id))
+}
+
+/// Debug-only test hook. See `Shell::stub`.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn stub_set_connection(state: String, shell: State<'_, Shell>) -> Result<(), ShellError> {
+    use crate::domain::connection::ConnectionState::*;
+    let next = match state.as_str() {
+        "unknown" => Unknown,
+        "connecting" => Connecting,
+        "connected" => Connected,
+        "disconnected" => Disconnected,
+        _ => return Err(ShellError::InvalidRegion),
+    };
+    shell.stub.set(next);
+    Ok(())
 }
 
 #[tauri::command]

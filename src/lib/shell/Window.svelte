@@ -4,13 +4,13 @@
   import TabStrip from '../tabs/TabStrip.svelte';
   import StatusBar from '../statusbar/StatusBar.svelte';
   import * as ipc from '../ipc';
-  import type { ConnectionState, SessionSnapshot } from '../ipc';
+  import type { SessionSnapshot } from '../ipc';
+  import { shellState } from '../state.svelte';
 
   interface Props {
     session: SessionSnapshot;
-    connection: ConnectionState;
   }
-  let { session, connection }: Props = $props();
+  let { session }: Props = $props();
 
   // Mirrors the core's MIN_REGION_EXTENT. The core rejects anything below it on a live
   // command, so clamping here keeps a drag from generating rejected round trips.
@@ -56,10 +56,17 @@
 
 <div class="shell">
   <div class="body">
-    <Region label="Project navigation" visible={layout.navigation.visible}
-            extent={layout.navigation.extent} axis="inline">
+    <Region
+      label="Project navigation"
+      visible={layout.navigation.visible}
+      extent={layout.navigation.extent}
+      axis="inline"
+    >
       <nav class="placeholder">
-        <button onclick={() => persist(() => ipc.documentsOpen(`untitled-${documents.length + 1}`)).then(reload)}>
+        <button
+          onclick={() =>
+            persist(() => ipc.documentsOpen(`untitled-${documents.length + 1}`)).then(reload)}
+        >
           <i class="ph ph-file-plus" aria-hidden="true"></i> New document
         </button>
         <button onclick={() => toggleRegion('output')}>
@@ -69,16 +76,23 @@
     </Region>
 
     {#if layout.navigation.visible}
-      <Splitter orientation="vertical" extent={layout.navigation.extent}
-                min={MIN_REGION_EXTENT} label="Resize navigation"
-                onresize={(e) => resizeRegion('navigation', e)} />
+      <Splitter
+        orientation="vertical"
+        extent={layout.navigation.extent}
+        min={MIN_REGION_EXTENT}
+        label="Resize navigation"
+        onresize={(e) => resizeRegion('navigation', e)}
+      />
     {/if}
 
     <main class="document-area" aria-label="Documents">
-      <TabStrip {documents} {focusedId}
-                onfocus={(id) => persist(() => ipc.documentsFocus(id)).then(reload)}
-                onclose={(id) => persist(() => ipc.documentsClose(id)).then(reload)}
-                onreorder={(id, to) => persist(() => ipc.documentsReorder(id, to)).then(reload)} />
+      <TabStrip
+        {documents}
+        {focusedId}
+        onfocus={(id) => persist(() => ipc.documentsFocus(id)).then(reload)}
+        onclose={(id) => persist(() => ipc.documentsClose(id)).then(reload)}
+        onreorder={(id, to) => persist(() => ipc.documentsReorder(id, to)).then(reload)}
+      />
       <div class="content">
         {#if activeDocument}
           <p>{activeDocument.display_name}</p>
@@ -88,18 +102,30 @@
       </div>
 
       {#if layout.output.visible}
-        <Splitter orientation="horizontal" extent={layout.output.extent}
-                  min={MIN_REGION_EXTENT} label="Resize output"
-                  onresize={(e) => resizeRegion('output', e)} />
-        <Region label="Output" visible={layout.output.visible}
-                extent={layout.output.extent} axis="block">
+        <Splitter
+          orientation="horizontal"
+          extent={layout.output.extent}
+          min={MIN_REGION_EXTENT}
+          label="Resize output"
+          onresize={(e) => resizeRegion('output', e)}
+        />
+        <Region
+          label="Output"
+          visible={layout.output.visible}
+          extent={layout.output.extent}
+          axis="block"
+        >
           <pre class="placeholder">Output</pre>
         </Region>
       {/if}
     </main>
   </div>
 
-  <StatusBar {connection} workspace={session.workspace} {persistenceFailed} />
+  <StatusBar
+    connection={shellState.connection}
+    workspace={shellState.workspace}
+    {persistenceFailed}
+  />
 </div>
 
 <style>

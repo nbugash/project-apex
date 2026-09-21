@@ -99,11 +99,17 @@ impl WindowController {
     /// development would otherwise fail spuriously.
     pub fn mark_ready(&self) -> Result<(), WindowError> {
         if self.ready.swap(true, Ordering::SeqCst) {
+            crate::logging::info("readiness signal repeated; window already shown");
             return Ok(());
         }
+        crate::logging::info("readiness signal received; showing window");
         self.window
             .show()
             .map_err(|e| WindowError::Platform(e.to_string()))?;
+        self.window
+            .set_focus()
+            .map_err(|e| WindowError::Platform(e.to_string()))?;
+        crate::logging::info("window shown");
         Ok(())
     }
 }

@@ -86,8 +86,10 @@ fn a_dangling_focus_reference_invalidates_the_whole_file() {
 fn a_future_schema_version_is_discarded() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(&dir);
-    let mut session = PersistedSession::default();
-    session.schema_version = 99;
+    let session = PersistedSession {
+        schema_version: 99,
+        ..PersistedSession::default()
+    };
     store.save(&session).unwrap();
 
     let restored = RestoreSession::new(Arc::new(store_in(&dir))).execute(&primary());

@@ -150,6 +150,9 @@ defaults.
   follow the system setting and offers no control to change it.
 - **A required surface has no coverage in the approved design.** Construction of that surface
   stops until the designer resolves the gap; it is not improvised from adjacent styles.
+- **Startup work fails or hangs before the window is shown.** The window is still shown, in
+  whatever state it reached, rather than the application remaining invisible. A shell with a
+  stale status bar is a defect; a shell nobody can see is unusable.
 
 ## Requirements *(mandatory)*
 
@@ -201,6 +204,16 @@ defaults.
 - **FR-023**: When persisted state cannot be written, the application MUST continue operating
   and MUST NOT block or reverse the interaction that triggered the write. The failure MUST be
   indicated to the user without a modal interruption.
+- **FR-024** (qualifies FR-020): Nothing that can fail, hang, or depend on the window already
+  being visible may block the point at which the window is shown. The readiness signal MUST be
+  sent as early as correctness allows, and anything optional — event subscriptions, background
+  wiring, telemetry — MUST happen after it.
+
+  FR-020 is satisfied by keeping the window hidden until the interface reports readiness,
+  which turns every pre-signal failure into total invisibility with nothing reported anywhere
+  a user can see. During implementation this produced three distinct defects, including a
+  deadlock where the signal waited on an animation frame that a hidden window never produces.
+  Stated separately so it is not rediscovered by each implementer.
 
 ### Key Entities
 
