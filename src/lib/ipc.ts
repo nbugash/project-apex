@@ -46,6 +46,20 @@ export interface SessionSnapshot {
   focused_document_id: string | null;
 }
 
+export interface RailDestination {
+  id: string;
+  label: string;
+  icon: string;
+  available: boolean;
+  order: number;
+}
+
+export interface ToolWindowState {
+  active_destination_id: string | null;
+  collapsed: boolean;
+  width: number;
+}
+
 export const shellReady = (): Promise<void> => invoke('shell_ready');
 export const sessionGet = (): Promise<SessionSnapshot> => invoke('session_get');
 
@@ -70,3 +84,9 @@ export const onWorkspaceChanged = (
   handler: (workspace: WorkspaceReference | null) => void,
 ): Promise<UnlistenFn> =>
   listen<WorkspaceReference | null>('workspace:changed', (e) => handler(e.payload));
+
+export const railSelect = (destinationId: string): Promise<ToolWindowState> =>
+  invoke('rail_select', { destinationId });
+export const toolWindowResize = (width: number): Promise<void> =>
+  invoke('tool_window_resize', { width });
+export const railDestinations = (): Promise<RailDestination[]> => invoke('rail_destinations');

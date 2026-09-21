@@ -45,6 +45,18 @@ jobs:
       # dev port, because a debug build loads devUrl and would otherwise show a blank
       # webview with every selector timing out for no visible reason.
       - run: xvfb-run -a npm run e2e
+      # The fidelity gate needs a rendered window, so it runs where the e2e suite runs.
+      - run: xvfb-run -a npm run gate:fidelity
+      # Screenshots and any difference image are the evidence for a failed visual run.
+      # Without them a reviewer has to reproduce the failure locally to see anything.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-evidence
+          path: |
+            reports/screenshots/
+            tools/gate-fidelity/out/
+          retention-days: 14
 
   smoke-macos:
     # Not an end-to-end run: no WebDriver exists for WKWebView. This proves the app starts

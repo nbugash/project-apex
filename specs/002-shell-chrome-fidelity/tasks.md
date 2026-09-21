@@ -36,11 +36,11 @@ application boundary and never ships.
 
 ## Phase 1: Setup
 
-- [ ] T001 Extend the design system sync to write the prototype's layout dimensions to `src/lib/ds/layout-tokens.css` in `scripts/ds-sync.mjs` (FR-009). The path is inside the design-system directory deliberately: `lint:ds` skips only `src/lib/ds`, and a token file necessarily contains raw pixel values, so anywhere else fails the lint it is meant to satisfy
-- [ ] T002 Import the generated layout tokens alongside the design system in `src/app.css` (FR-009)
-- [ ] T003 [P] Add `gate:fidelity` and `gate:fidelity:update` scripts in `package.json` (FR-012, FR-016)
-- [ ] T004 [P] Add the fidelity gate as a required check in `.github/workflows/ci.yml` (FR-012)
-- [ ] T005 [P] Publish the end-to-end screenshot directory as a CI artifact on failure in `.github/workflows/ci.yml`, so a failed run's captures are reviewable without reproducing locally
+- [X] T001 Extend the design system sync to write the prototype's layout dimensions to `src/lib/ds/layout-tokens.css` in `scripts/ds-sync.mjs` (FR-009). The path is inside the design-system directory deliberately: `lint:ds` skips only `src/lib/ds`, and a token file necessarily contains raw pixel values, so anywhere else fails the lint it is meant to satisfy
+- [X] T002 Import the generated layout tokens alongside the design system in `src/app.css` (FR-009)
+- [X] T003 [P] Add `gate:fidelity` and `gate:fidelity:update` scripts in `package.json` (FR-012, FR-016)
+- [X] T004 [P] Add the fidelity gate as a required check in `.github/workflows/ci.yml` (FR-012)
+- [X] T005 [P] Publish the end-to-end screenshot directory as a CI artifact on failure in `.github/workflows/ci.yml`, so a failed run's captures are reviewable without reproducing locally
 
 **Checkpoint**: Prototype dimensions are tokens; a literal is now a lint failure
 
@@ -52,27 +52,27 @@ application boundary and never ships.
 
 ### Domain
 
-- [ ] T006 Define `DestinationId`, `Availability` and `RailDestination` in `src-tauri/src/domain/rail.rs` (FR-002, FR-008)
-- [ ] T007 Define `ToolWindowState` with select, resize and repair rules in `src-tauri/src/domain/rail.rs` (FR-004, FR-006)
-- [ ] T008 Define `RailCatalogue` holding the static destination set in `src-tauri/src/domain/rail.rs` (FR-002)
-- [ ] T009 [P] Unit tests for destination ordering, uniqueness and unavailable-destination behaviour in `src-tauri/src/domain/rail.rs` (FR-008)
-- [ ] T010 [P] Unit tests for collapse toggling and width retention across collapse in `src-tauri/src/domain/rail.rs` (FR-006)
+- [X] T006 Define `DestinationId`, `Availability` and `RailDestination` in `src-tauri/src/domain/rail.rs` (FR-002, FR-008)
+- [X] T007 Define `ToolWindowState` with select, resize and repair rules in `src-tauri/src/domain/rail.rs` (FR-004, FR-006)
+- [X] T008 Define `RailCatalogue` holding the static destination set in `src-tauri/src/domain/rail.rs` (FR-002)
+- [X] T009 [P] Unit tests for destination ordering, uniqueness and unavailable-destination behaviour in `src-tauri/src/domain/rail.rs` (FR-008)
+- [X] T010 [P] Unit tests for collapse toggling and width retention across collapse in `src-tauri/src/domain/rail.rs` (FR-006)
 
 ### Session migration — the riskiest change in this feature
 
-- [ ] T011 Extend `PersistedSession` with tool window state and raise the schema version in `src-tauri/src/domain/session.rs` (FR-011)
-- [ ] T012 Implement forward migration — fill defaults for older versions, discard only newer ones — in `src-tauri/src/domain/session.rs`
-- [ ] T013 [P] Unit tests asserting an older version migrates, the current loads unchanged, and a newer version is discarded, in `src-tauri/src/domain/session.rs`
-- [ ] T014 Integration test asserting a real older session file keeps its window geometry, layout and open tabs through the upgrade, in `src-tauri/tests/session_migration.rs`
+- [X] T011 Extend `PersistedSession` with tool window state and raise the schema version in `src-tauri/src/domain/session.rs` (FR-011)
+- [X] T012 Implement forward migration — fill defaults for older versions, discard only newer ones — in `src-tauri/src/domain/session.rs`
+- [X] T013 [P] Unit tests asserting an older version migrates, the current loads unchanged, and a newer version is discarded, in `src-tauri/src/domain/session.rs`
+- [X] T014 Integration test asserting a real older session file keeps its window geometry, layout and open tabs through the upgrade, in `src-tauri/tests/session_migration.rs`
 
 ### Application and adapters
 
-- [ ] T015 Extend the persist use case with destination selection and tool window resize in `src-tauri/src/application/use_cases/persist_session.rs` (FR-004, FR-011)
-- [ ] T016 Add `rail_select`, `tool_window_resize` and `rail_destinations` with boundary validation in `src-tauri/src/adapters/inbound/tauri_commands.rs` (FR-004)
-- [ ] T017 [P] Unit tests asserting unknown destination identifiers are rejected at the boundary in `src-tauri/src/adapters/inbound/tauri_commands.rs`
-- [ ] T018 Add typed wrappers for the three rail commands in `src/lib/ipc.ts`
-- [ ] T019 [P] Implement rail ordering and keyboard-navigation helpers in `src/lib/rail.ts` (FR-007)
-- [ ] T020 [P] Unit tests for rail ordering and neighbour resolution in `tests/unit/rail.test.ts` (FR-007)
+- [X] T015 Extend the persist use case with destination selection and tool window resize in `src-tauri/src/application/use_cases/persist_session.rs` (FR-004, FR-011)
+- [X] T016 Add `rail_select`, `tool_window_resize` and `rail_destinations` with boundary validation in `src-tauri/src/adapters/inbound/tauri_commands.rs` (FR-004)
+- [X] T017 [P] Unit tests asserting unknown destination identifiers are rejected at the boundary in `src-tauri/src/adapters/inbound/tauri_commands.rs`
+- [X] T018 Add typed wrappers for the three rail commands in `src/lib/ipc.ts`
+- [X] T019 [P] Implement rail ordering and keyboard-navigation helpers in `src/lib/rail.ts` (FR-007)
+- [X] T020 [P] Unit tests for rail ordering and neighbour resolution in `tests/unit/rail.test.ts` (FR-007)
 
 **Checkpoint**: An older session survives the upgrade; rail state is drivable from the interface
 
