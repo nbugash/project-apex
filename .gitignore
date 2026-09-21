@@ -67,3 +67,15 @@ mockups/fonts/ttf/
 reports/macos/*
 !reports/macos/.gitkeep
 project-apex-predator.md.bak
+# ---- Node / interface layer -------------------------------------------------
+# Added when the Tauri + Svelte toolchain landed; the patterns above predate it.
+node_modules/
+dist/
+
+# Tauri v2 writes generated schemas and platform scaffolding here on build.
+src-tauri/gen/
+
+# Copied from mockups/ by `npm run ds:sync` on every build. The signed-off
+# artifact under mockups/ is the tracked source of truth; this is its build
+# output, and tracking both would create two copies that can disagree.
+src/lib/ds/

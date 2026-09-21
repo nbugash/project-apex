@@ -1,0 +1,4 @@
+# Keep the interaction path honest: flag anything that could block it.
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "blocks the caller; use tokio::time::sleep" },
+]

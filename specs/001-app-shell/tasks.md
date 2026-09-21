@@ -33,16 +33,16 @@ end-to-end suites.
 
 **Purpose**: Project skeleton, toolchain, and the design-system pipeline every later phase depends on
 
-- [ ] T001 Create the two source trees and directory skeleton per plan.md Structure Decision
-- [ ] T002 Initialize the Rust core with Tauri v2, tokio, serde and serde_json in `src-tauri/Cargo.toml`
-- [ ] T003 [P] Initialize Svelte 5 + Vite + TypeScript in `package.json`, `vite.config.ts` and `tsconfig.json`
-- [ ] T004 [P] Configure rustfmt and clippy in `src-tauri/rustfmt.toml` and `src-tauri/clippy.toml`
+- [X] T001 Create the two source trees and directory skeleton per plan.md Structure Decision
+- [X] T002 Initialize the Rust core with Tauri v2, tokio, serde and serde_json in `src-tauri/Cargo.toml`
+- [X] T003 [P] Initialize Svelte 5 + Vite + TypeScript in `package.json`, `vite.config.ts` and `tsconfig.json`
+- [X] T004 [P] Configure rustfmt and clippy in `src-tauri/rustfmt.toml` and `src-tauri/clippy.toml`
 - [ ] T005 [P] Configure ESLint and Prettier for the interface layer in `eslint.config.js`
-- [ ] T006 Implement the `ds:sync` script copying the signed-off design system from `mockups/` into `src/lib/ds/` in `scripts/ds-sync.mjs`, failing the build when the source is absent rather than degrading to unstyled output
-- [ ] T007 Port the design adherence lint from its React plugin configuration to the Svelte toolchain in `eslint.config.js`, preserving every rule it expresses (no raw hex, no raw pixel values, no hard-coded font families)
-- [ ] T008 [P] Wire `lint:ds` and `perf:budget` as required checks in `.github/workflows/ci.yml`
-- [ ] T009 [P] Define the least-privilege capability set in `src-tauri/capabilities/default.json`
-- [ ] T010 [P] Configure structured file logging to the application data directory in `src-tauri/src/logging.rs`
+- [X] T006 Implement the `ds:sync` script copying the signed-off design system from `mockups/` into `src/lib/ds/` in `scripts/ds-sync.mjs`, failing the build when the source is absent rather than degrading to unstyled output
+- [X] T007 Port the design adherence lint from its React plugin configuration to the Svelte toolchain in `eslint.config.js`, preserving every rule it expresses (no raw hex, no raw pixel values, no hard-coded font families)
+- [X] T008 [P] Wire `lint:ds` and `perf:budget` as required checks in `.github/workflows/ci.yml`
+- [X] T009 [P] Define the least-privilege capability set in `src-tauri/capabilities/default.json`
+- [X] T010 [P] Configure structured file logging to the application data directory in `src-tauri/src/logging.rs`
 
 **Checkpoint**: Toolchain builds, design system syncs, adherence lint runs and passes on an empty tree
 
@@ -56,36 +56,36 @@ end-to-end suites.
 
 ### Domain types
 
-- [ ] T011 [P] Define `ShellError` and its variants in `src-tauri/src/application/error.rs` per contracts/shell-commands.md
-- [ ] T012 [P] Define `RegionId`, `RegionState` and `Layout` with minimum-extent rules in `src-tauri/src/domain/layout.rs`
-- [ ] T013 [P] Define `WindowGeometry` and the display-intersection rule in `src-tauri/src/domain/geometry.rs`
-- [ ] T014 [P] Define `DocumentId`, `OpenDocumentReference`, `WorkspaceReference`, `PersistedSession` and `SessionSnapshot` in `src-tauri/src/domain/session.rs`
-- [ ] T015 [P] Define `ConnectionState` and its permitted transitions in `src-tauri/src/domain/connection.rs`
+- [X] T011 [P] Define `ShellError` and its variants in `src-tauri/src/application/error.rs` per contracts/shell-commands.md
+- [X] T012 [P] Define `RegionId`, `RegionState` and `Layout` with minimum-extent rules in `src-tauri/src/domain/layout.rs`
+- [X] T013 [P] Define `WindowGeometry` and the display-intersection rule in `src-tauri/src/domain/geometry.rs`
+- [X] T014 [P] Define `DocumentId`, `OpenDocumentReference`, `WorkspaceReference`, `PersistedSession` and `SessionSnapshot` in `src-tauri/src/domain/session.rs`
+- [X] T015 [P] Define `ConnectionState` and its permitted transitions in `src-tauri/src/domain/connection.rs`
 
 ### Domain unit tests
 
-- [ ] T016 [P] Unit tests for region extent clamping and the document-area-not-hideable rule in `src-tauri/src/domain/layout.rs`
-- [ ] T017 [P] Unit tests for title-bar-within-working-area intersection, including the detached-display case, in `src-tauri/src/domain/geometry.rs`
-- [ ] T018 [P] Unit tests for document ordering contiguity, re-packing on close, and focus reassignment in `src-tauri/src/domain/session.rs`
+- [X] T016 [P] Unit tests for region extent clamping and the document-area-not-hideable rule in `src-tauri/src/domain/layout.rs`
+- [X] T017 [P] Unit tests for title-bar-within-working-area intersection, including the detached-display case, in `src-tauri/src/domain/geometry.rs`
+- [X] T018 [P] Unit tests for document ordering contiguity, re-packing on close, and focus reassignment in `src-tauri/src/domain/session.rs`
 
 ### Ports
 
-- [ ] T019 [P] Define the `SessionStore` port in `src-tauri/src/application/ports/session_store.rs`
-- [ ] T020 [P] Define the `ConnectionStatusSource` port in `src-tauri/src/application/ports/connection.rs`
+- [X] T019 [P] Define the `SessionStore` port in `src-tauri/src/application/ports/session_store.rs`
+- [X] T020 [P] Define the `ConnectionStatusSource` port in `src-tauri/src/application/ports/connection.rs`
 
 ### Adapters and use cases
 
-- [ ] T021 Implement `JsonFileSessionStore` in `src-tauri/src/adapters/outbound/json_session_store.rs`, treating unreadable and invalid content as absence rather than error
-- [ ] T022 Integration test for the session store against real files — round trip, absent file, malformed JSON, truncated file, future `schema_version`, dangling `focused_document_id` — in `src-tauri/tests/session_store.rs`
-- [ ] T023 Implement the `RestoreSession` use case in `src-tauri/src/application/use_cases/restore_session.rs` (depends on T019, T021)
+- [X] T021 Implement `JsonFileSessionStore` in `src-tauri/src/adapters/outbound/json_session_store.rs`, treating unreadable and invalid content as absence rather than error
+- [X] T022 Integration test for the session store against real files — round trip, absent file, malformed JSON, truncated file, future `schema_version`, dangling `focused_document_id` — in `src-tauri/tests/session_store.rs`
+- [X] T023 Implement the `RestoreSession` use case in `src-tauri/src/application/use_cases/restore_session.rs` (depends on T019, T021)
 - [ ] T024 Implement the `PersistSession` use case with debounced off-path writes in `src-tauri/src/application/use_cases/persist_session.rs` (depends on T019)
-- [ ] T025 Implement `WindowController` with `create_hidden`, `apply` and idempotent `mark_ready` in `src-tauri/src/window/controller.rs`
-- [ ] T026 Integration test asserting restored geometry is constrained to an attached display in `src-tauri/tests/display_geometry.rs`
-- [ ] T027 Implement the `TauriCommandAdapter` with boundary validation of every argument in `src-tauri/src/adapters/inbound/tauri_commands.rs` (depends on T011, T023, T024, T025)
-- [ ] T028 Implement the composition root binding adapters to use cases in `src-tauri/src/composition.rs`
-- [ ] T029 Wire the entry point to create the window hidden and restore session before showing in `src-tauri/src/main.rs` (depends on T025, T028)
-- [ ] T030 [P] Implement the typed IPC wrapper over the command surface in `src/lib/ipc.ts`
-- [ ] T031 Implement the `shell_ready` readiness handshake end to end, from `src/main.ts` through `src-tauri/src/adapters/inbound/tauri_commands.rs` to `WindowController::mark_ready`
+- [X] T025 Implement `WindowController` with `create_hidden`, `apply` and idempotent `mark_ready` in `src-tauri/src/window/controller.rs`
+- [X] T026 Integration test asserting restored geometry is constrained to an attached display in `src-tauri/tests/display_geometry.rs`
+- [X] T027 Implement the `TauriCommandAdapter` with boundary validation of every argument in `src-tauri/src/adapters/inbound/tauri_commands.rs` (depends on T011, T023, T024, T025)
+- [X] T028 Implement the composition root binding adapters to use cases in `src-tauri/src/composition.rs`
+- [X] T029 Wire the entry point to create the window hidden and restore session before showing in `src-tauri/src/main.rs` (depends on T025, T028)
+- [X] T030 [P] Implement the typed IPC wrapper over the command surface in `src/lib/ipc.ts`
+- [X] T031 Implement the `shell_ready` readiness handshake end to end, from `src/main.ts` through `src-tauri/src/adapters/inbound/tauri_commands.rs` to `WindowController::mark_ready`
 
 **Checkpoint**: The window opens hidden, restores or defaults its session, and becomes visible on the readiness signal. User stories can now proceed in parallel.
 
@@ -102,15 +102,15 @@ end-to-end suites.
 - [ ] T032 [P] [US1] End-to-end test for layout, visibility and geometry restoration across restart in `tests/e2e/layout-persistence.spec.ts` (quickstart scenario 1, SC-002)
 - [ ] T033 [P] [US1] End-to-end test asserting launch succeeds with corrupted, truncated, empty and dangling-reference state in `tests/e2e/corrupt-state.spec.ts` (quickstart scenario 2, SC-003)
 - [ ] T034 [P] [US1] End-to-end test asserting the window opens on an attached display when the saved display is gone in `tests/e2e/display-recovery.spec.ts` (quickstart scenario 7, SC-009)
-- [ ] T035 [P] [US1] Unit test for splitter clamping at the minimum region extent in `tests/unit/splitter.test.ts`
+- [X] T035 [P] [US1] Unit test for splitter clamping at the minimum region extent in `tests/unit/splitter.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T036 [P] [US1] Implement the region composition grid in `src/lib/shell/Window.svelte`
-- [ ] T037 [P] [US1] Implement a single dockable region with visibility handling in `src/lib/shell/Region.svelte`
-- [ ] T038 [US1] Implement the pointer-driven divider with minimum-extent enforcement in `src/lib/shell/Splitter.svelte` (depends on T037)
-- [ ] T039 [US1] Wire `layout_set_region` from the splitter and visibility toggles through `src/lib/ipc.ts` (depends on T030, T038)
-- [ ] T040 [US1] Subscribe to native window move and resize events and record geometry in `src-tauri/src/window/controller.rs` (depends on T024)
+- [X] T036 [P] [US1] Implement the region composition grid in `src/lib/shell/Window.svelte`
+- [X] T037 [P] [US1] Implement a single dockable region with visibility handling in `src/lib/shell/Region.svelte`
+- [X] T038 [US1] Implement the pointer-driven divider with minimum-extent enforcement in `src/lib/shell/Splitter.svelte` (depends on T037)
+- [X] T039 [US1] Wire `layout_set_region` from the splitter and visibility toggles through `src/lib/ipc.ts` (depends on T030, T038)
+- [X] T040 [US1] Subscribe to native window move and resize events and record geometry in `src-tauri/src/window/controller.rs` (depends on T024)
 
 **Checkpoint**: User Story 1 is fully functional and independently testable. This is the MVP.
 
@@ -126,14 +126,14 @@ end-to-end suites.
 
 - [ ] T041 [P] [US2] End-to-end test for tab set, order and focus restoration across restart in `tests/e2e/tab-persistence.spec.ts` (quickstart scenario 3, SC-002)
 - [ ] T042 [P] [US2] End-to-end test asserting every tab stays reachable past the strip width in `tests/e2e/tab-overflow.spec.ts` (quickstart scenario 4, FR-006)
-- [ ] T043 [P] [US2] Unit test for tab strip ordering and focus transfer on close in `tests/unit/tab-strip.test.ts`
+- [X] T043 [P] [US2] Unit test for tab strip ordering and focus transfer on close in `tests/unit/tab-strip.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T044 [P] [US2] Implement the scrolling tab strip with drag-to-reorder in `src/lib/tabs/TabStrip.svelte`
-- [ ] T045 [P] [US2] Implement the overflow control listing every open document in `src/lib/tabs/TabOverflow.svelte`
-- [ ] T046 [US2] Wire `documents_open`, `documents_close`, `documents_reorder` and `documents_focus` through `src/lib/ipc.ts` (depends on T030, T044, T045)
-- [ ] T047 [US2] Render the focused document reference in the document area placeholder in `src/lib/shell/Window.svelte` (depends on T036)
+- [X] T044 [P] [US2] Implement the scrolling tab strip with drag-to-reorder in `src/lib/tabs/TabStrip.svelte`
+- [X] T045 [P] [US2] Implement the overflow control listing every open document in `src/lib/tabs/TabOverflow.svelte`
+- [X] T046 [US2] Wire `documents_open`, `documents_close`, `documents_reorder` and `documents_focus` through `src/lib/ipc.ts` (depends on T030, T044, T045)
+- [X] T047 [US2] Render the focused document reference in the document area placeholder in `src/lib/shell/Window.svelte` (depends on T036)
 
 **Checkpoint**: User Stories 1 and 2 both work independently.
 
@@ -148,16 +148,16 @@ end-to-end suites.
 ### Tests for User Story 3
 
 - [ ] T048 [P] [US3] End-to-end test for connection state transitions appearing within 5 seconds in `tests/e2e/connection-status.spec.ts` (quickstart scenario 5, FR-011)
-- [ ] T049 [P] [US3] Unit test asserting each connection state carries a non-colour distinguishing attribute in `tests/unit/status-bar.test.ts` (FR-012, SC-007)
+- [X] T049 [P] [US3] Unit test asserting each connection state carries a non-colour distinguishing attribute in `tests/unit/status-bar.test.ts` (FR-012, SC-007)
 - [ ] T050 [P] [US3] End-to-end test asserting the connection indicator is visible without scrolling, hovering or opening a menu at minimum and maximum window size, and carries both icon and text label, in `tests/e2e/status-legibility.spec.ts` (SC-006)
-- [ ] T051 [P] [US3] Unit test for overlong workspace name truncation without layout displacement in `tests/unit/status-bar.test.ts` (FR-013)
+- [X] T051 [P] [US3] Unit test for overlong workspace name truncation without layout displacement in `tests/unit/status-bar.test.ts` (FR-013)
 
 ### Implementation for User Story 3
 
-- [ ] T052 [P] [US3] Implement `StubConnectionStatusSource` with a development control in `src-tauri/src/adapters/outbound/stub_connection.rs`
-- [ ] T053 [US3] Implement the `ObserveConnection` use case emitting `connection:changed` in `src-tauri/src/application/use_cases/observe_connection.rs` (depends on T020, T052)
+- [X] T052 [P] [US3] Implement `StubConnectionStatusSource` with a development control in `src-tauri/src/adapters/outbound/stub_connection.rs`
+- [X] T053 [US3] Implement the `ObserveConnection` use case emitting `connection:changed` in `src-tauri/src/application/use_cases/observe_connection.rs` (depends on T020, T052)
 - [ ] T054 [US3] Emit `workspace:changed` once at startup and on change in `src-tauri/src/adapters/inbound/tauri_commands.rs` (depends on T027)
-- [ ] T055 [US3] Implement the status area with icon-plus-text state encoding and name truncation in `src/lib/statusbar/StatusBar.svelte`
+- [X] T055 [US3] Implement the status area with icon-plus-text state encoding and name truncation in `src/lib/statusbar/StatusBar.svelte`
 - [ ] T056 [US3] Subscribe to both events and bind them to the status area in `src/lib/ipc.ts` and `src/main.ts` (depends on T030, T053, T055)
 - [ ] T057 [P] [US3] Add the stub driver command used by quickstart scenario 5 in `scripts/stub-connection.mjs`
 
@@ -179,10 +179,10 @@ end-to-end suites.
 
 ### Implementation for User Story 4
 
-- [ ] T061 [US4] Set the window background to the design system ground value and `visible: false` at creation in `src-tauri/tauri.conf.json` (research.md, "Preventing a light or unstyled first frame")
-- [ ] T062 [US4] Import the synced design system and define nothing locally in `src/app.css`
-- [ ] T063 [US4] Apply design system classes and tokens to `src/lib/shell/Window.svelte`, `src/lib/shell/Region.svelte`, `src/lib/shell/Splitter.svelte`, `src/lib/tabs/TabStrip.svelte`, `src/lib/tabs/TabOverflow.svelte` and `src/lib/statusbar/StatusBar.svelte` (depends on T036, T044, T055)
-- [ ] T064 [US4] Replace the platform default focus indicator with the design system focus ring on every interactive element in `src/lib/shell/Splitter.svelte`, `src/lib/tabs/TabStrip.svelte`, `src/lib/tabs/TabOverflow.svelte` and `src/lib/statusbar/StatusBar.svelte` (FR-021)
+- [X] T061 [US4] Set the window background to the design system ground value and `visible: false` at creation in `src-tauri/tauri.conf.json` (research.md, "Preventing a light or unstyled first frame")
+- [X] T062 [US4] Import the synced design system and define nothing locally in `src/app.css`
+- [X] T063 [US4] Apply design system classes and tokens to `src/lib/shell/Window.svelte`, `src/lib/shell/Region.svelte`, `src/lib/shell/Splitter.svelte`, `src/lib/tabs/TabStrip.svelte`, `src/lib/tabs/TabOverflow.svelte` and `src/lib/statusbar/StatusBar.svelte` (depends on T036, T044, T055)
+- [X] T064 [US4] Replace the platform default focus indicator with the design system focus ring on every interactive element in `src/lib/shell/Splitter.svelte`, `src/lib/tabs/TabStrip.svelte`, `src/lib/tabs/TabOverflow.svelte` and `src/lib/statusbar/StatusBar.svelte` (FR-021)
 - [ ] T065 [US4] Implement the designer-gap procedure check: fail the build when a component references a token the design system does not define, in `scripts/ds-sync.mjs` (FR-022)
 
 **Checkpoint**: All four user stories are independently functional and the interface conforms to the signed-off design.
@@ -193,14 +193,14 @@ end-to-end suites.
 
 **Purpose**: Requirements that span stories, plus the measurements the constitution requires
 
-- [ ] T066 [P] Implement keyboard navigation across regions and tabs in `src/lib/shell/Window.svelte` and `src/lib/tabs/TabStrip.svelte` (FR-018)
+- [X] T066 [P] Implement keyboard navigation across regions and tabs in `src/lib/shell/Window.svelte` and `src/lib/tabs/TabStrip.svelte` (FR-018)
 - [ ] T067 [P] End-to-end test asserting every primary layout and tab action is reachable by keyboard alone in `tests/e2e/keyboard.spec.ts` (SC-008)
 - [ ] T068 Implement clean shutdown with no orphaned background processes in `src-tauri/src/main.rs` (FR-019)
 - [ ] T069 [P] Integration test asserting no orphaned process survives quit in `src-tauri/tests/shutdown.rs` (SC-010)
 - [ ] T070 Implement the interaction budget measurement asserting launch under 2 s and no stall over 100 ms in `tests/perf/budget.spec.ts` (SC-001, SC-004, Constitution Principle V)
 - [ ] T071 [P] End-to-end test asserting the interface stays responsive during background work in `tests/e2e/responsiveness.spec.ts` (SC-005)
 - [ ] T072 [P] Implement the macOS smoke check — launch, await readiness, screenshot, assert clean exit — in `scripts/smoke-macos.sh`
-- [ ] T073 [P] Add a non-blocking indication for persistence failure in `src/lib/statusbar/StatusBar.svelte` (FR-023, contracts/shell-commands.md `PersistenceFailed`)
+- [X] T073 [P] Add a non-blocking indication for persistence failure in `src/lib/statusbar/StatusBar.svelte` (FR-023, contracts/shell-commands.md `PersistenceFailed`)
 - [ ] T074 Run the full quickstart.md validation and record results
 - [ ] T075 [P] Document the shell architecture and the port boundaries for later features in `docs/app-shell.md`
 
