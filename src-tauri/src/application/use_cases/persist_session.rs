@@ -4,6 +4,7 @@ use crate::application::error::ShellError;
 use crate::application::ports::session_store::SessionStore;
 use crate::domain::geometry::WindowGeometry;
 use crate::domain::layout::RegionId;
+use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use crate::domain::session::{DocumentId, PersistedSession, SessionSnapshot};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -76,6 +77,32 @@ impl PersistSession {
 
     pub fn focus_document(&self, id: &DocumentId) -> Result<(), ShellError> {
         self.mutate(|s| s.focus_document(id).map_err(Into::into))
+    }
+
+    pub fn select_destination(
+        &self,
+        id: &DestinationId,
+        catalogue: &RailCatalogue,
+    ) -> Result<ToolWindowState, ShellError> {
+        let mut guard = self.state.lock().expect("session state lock");
+        guard.tool_window.select(id, catalogue)?;
+        let resulting = guard.tool_window.clone();
+        let copy = guard.clone();
+        drop(guard);
+        self.schedule(copy);
+        Ok(resulting)
+    }
+
+    pub fn resize_tool_window(&self, width: u32) -> Result<(), ShellError> {
+        self.mutate(|s| s.tool_window.resize(width).map_err(Into::into))
+    }
+
+    pub fn tool_window(&self) -> ToolWindowState {
+        self.state
+            .lock()
+            .expect("session state lock")
+            .tool_window
+            .clone()
     }
 
     /// Geometry is observed from native window events, so it cannot fail and is not a

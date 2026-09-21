@@ -16,7 +16,9 @@
     "smoke:macos": "bash scripts/smoke-macos.sh",
     "stub:connection": "node scripts/stub-connection.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "gate:fidelity": "node tools/gate-fidelity/compare.mjs",
+    "gate:fidelity:update": "node tools/gate-fidelity/update.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

@@ -2,5 +2,6 @@
    Constitution Principle I: this file imports and defines nothing of its own. Any rule
    added below is a divergence from an artifact that carries stakeholder sign-off. */
 @import './lib/ds/system/styles.css';
+@import './lib/ds/layout-tokens.css';
 @import './lib/ds/fonts/inter.css';
 @import './lib/ds/icons/phosphor.css';

@@ -3,9 +3,11 @@
 
 use super::geometry::{DisplayBounds, WindowGeometry};
 use super::layout::Layout;
+use super::rail::{RailCatalogue, ToolWindowState};
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+/// Raised to 2 by the tool window fields F018 added.
+pub const SCHEMA_VERSION: u32 = 2;
 const MAX_NAME: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,6 +63,11 @@ pub struct PersistedSession {
     pub layout: Layout,
     pub documents: Vec<OpenDocumentReference>,
     pub focused_document_id: Option<DocumentId>,
+    /// Added at schema version 2. `serde(default)` is the migration: a version 1 file has
+    /// no such field and gets the default rather than failing to parse, which is what
+    /// keeps an existing user's geometry, layout and tabs through the upgrade.
+    #[serde(default)]
+    pub tool_window: ToolWindowState,
 }
 
 impl Default for PersistedSession {
@@ -72,6 +79,7 @@ impl Default for PersistedSession {
             layout: Layout::default(),
             documents: Vec::new(),
             focused_document_id: None,
+            tool_window: ToolWindowState::default(),
         }
     }
 }
@@ -104,7 +112,12 @@ impl PersistedSession {
     /// in full rather than partially recovered — a half-restored layout is harder to reason
     /// about than a default one.
     pub fn is_coherent(&self) -> bool {
-        if self.schema_version != SCHEMA_VERSION {
+        // A file from the FUTURE is discarded: this build cannot interpret a shape it does
+        // not know, and guessing risks corrupting it on the next write. An OLDER file is
+        // migrated forward, not discarded — the previous rule rejected anything that was
+        // not exactly current, which was right with one version and became data loss the
+        // moment a second existed.
+        if self.schema_version > SCHEMA_VERSION {
             return false;
         }
         let mut ids: Vec<&DocumentId> = self.documents.iter().map(|d| &d.id).collect();
@@ -129,6 +142,9 @@ impl PersistedSession {
     pub fn repaired(mut self, displays: &[DisplayBounds]) -> Self {
         self.layout = self.layout.clamped();
         self.window = self.window.constrained_to(displays);
+        self.tool_window = self.tool_window.repaired(&RailCatalogue::default());
+        // Rewritten at the current version, so the migration happens once.
+        self.schema_version = SCHEMA_VERSION;
         self
     }
 
@@ -293,6 +309,73 @@ mod tests {
         let (mut s, _) = with_docs(2);
         s.schema_version = 99;
         assert!(!s.is_coherent(), "future schema version");
+    }
+
+    #[test]
+    fn a_version_one_file_migrates_forward_keeping_everything_else() {
+        // The exact shape a previous release wrote: no tool_window field at all.
+        let v1 = r#"{
+            "schema_version": 1,
+            "workspace": null,
+            "window": {"x": 240, "y": 160, "width": 1100, "height": 760, "maximized": false},
+            "layout": {
+                "navigation": {"visible": true, "extent": 300},
+                "output": {"visible": false, "extent": 220},
+                "document_area": {"visible": true, "extent": 0}
+            },
+            "documents": [{"id": "d1", "display_name": "main.rs", "order": 0}],
+            "focused_document_id": "d1"
+        }"#;
+
+        let parsed: PersistedSession =
+            serde_json::from_str(v1).expect("a version 1 file must still parse");
+        assert!(
+            parsed.is_coherent(),
+            "an older version is valid, not incoherent"
+        );
+
+        // A real display must be supplied: with none attached, geometry correctly falls
+        // back to the default, which would mask what this test is checking.
+        let screen = [DisplayBounds {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }];
+        let migrated = parsed.repaired(&screen);
+        assert_eq!(
+            migrated.schema_version, SCHEMA_VERSION,
+            "rewritten at the current version"
+        );
+        // The whole point: nothing the user had is lost.
+        assert_eq!(migrated.window.width, 1100);
+        assert_eq!(migrated.layout.navigation.extent, 300);
+        assert!(!migrated.layout.output.visible);
+        assert_eq!(migrated.documents.len(), 1);
+        assert_eq!(migrated.focused_document_id, Some(DocumentId("d1".into())));
+        assert_eq!(migrated.tool_window, ToolWindowState::default());
+    }
+
+    #[test]
+    fn the_current_version_loads_unchanged() {
+        let mut s = PersistedSession::default();
+        s.open_document("a.rs").unwrap();
+        let round_tripped: PersistedSession =
+            serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(round_tripped, s);
+        assert!(round_tripped.is_coherent());
+    }
+
+    #[test]
+    fn a_future_version_is_still_discarded() {
+        let s = PersistedSession {
+            schema_version: SCHEMA_VERSION + 1,
+            ..PersistedSession::default()
+        };
+        assert!(
+            !s.is_coherent(),
+            "a build cannot interpret a shape it does not know; guessing risks corrupting it"
+        );
     }
 
     #[test]
