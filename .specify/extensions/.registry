@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "featuremap": {
+      "version": "1.1.0",
+      "source": "local",
+      "manifest_hash": "sha256:53adad9768af2dd4a0b8be49289da88590299c13a999591534bae58859bb8b57",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.featuremap.check",
+          "speckit.featuremap.add"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-09-20T22:29:13.137898+00:00"
+    }
+  }
+}

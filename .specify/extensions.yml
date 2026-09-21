@@ -1,0 +1,14 @@
+installed:
+- featuremap
+settings:
+  auto_execute_hooks: true
+hooks:
+  before_specify:
+  - extension: featuremap
+    command: speckit.featuremap.check
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute speckit.featuremap.check?
+    description: Enforce feature map sequencing before specification
+    condition: null

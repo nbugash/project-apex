@@ -1,0 +1,135 @@
+# Feature Map
+
+Ordered backlog. Work top to bottom: every feature's dependencies sit above it.
+
+Identities such as `F000` are immutable and never renumbered or reused; file
+position conveys build order. A checkbox is evidence that the work is done, not
+an intention to do it.
+
+## Features
+
+- [ ] **F000 app-shell** [P]
+  - Spec: specs/001-app-shell
+  - [ ] Tauri v2 scaffold with scoped capabilities and permissions
+  - [ ] Window, dockable panel layout and tab management
+  - [ ] Webview to Rust core async IPC bridge
+  - [ ] Status bar with connection and workspace state
+  - [ ] Theme system and IntelliJ-style chrome
+- [ ] **F001 ssh-transport-core**
+  - Spec: not yet specified
+  - [ ] OpenSSH subprocess invocation, master connection lifecycle and startup preflight
+  - [ ] Two-phase connect sequence with the bundled askpass helper
+  - [ ] Content-Length framing codec over the child process stdio
+  - [ ] Request correlation registry with timeouts and cancellation
+  - [ ] Failure classification from exit codes and locale-pinned stderr
+  - [ ] Mock SSH daemon harness simulating 250ms RTT and 5% packet loss
+- [ ] **F002 daemon-bootstrap** (depends: F001)
+  - Spec: not yet specified
+  - [ ] Engine binary deployment and integrity verification on first connect
+  - [ ] auth/handshake request and response with capability exchange
+  - [ ] Protocol version negotiation and mismatch policy
+  - [ ] In-place binary replacement and re-execution
+  - [ ] Recovery of active task and LSP session state after restart
+- [ ] **F003 workspace-cache** (depends: F002)
+  - Spec: not yet specified
+  - [ ] WorkspaceProvider trait with local and remote implementations
+  - [ ] Canonical SQLite schema with WAL, FTS index and migrations
+  - [ ] Workspace registration and path mapping
+  - [ ] Lazy shallow directory fetch and tree projection
+  - [ ] Ranged file read with hash-based cache validity
+  - [ ] Zstd content blobs with access-time eviction
+- [ ] **F004 file-watch-sync** [P] (depends: F003)
+  - Spec: not yet specified
+  - [ ] Engine-side inotify watcher scoped to the workspace
+  - [ ] Configurable ignore set shared with the indexer
+  - [ ] workspace/onFileEvent emission with event coalescing
+  - [ ] Client cache invalidation and open-file refresh
+  - [ ] Bulk invalidateAll handling for large changes
+- [ ] **F005 ec2-lifecycle** [P] (depends: F000, F001)
+  - Spec: not yet specified
+  - [ ] Instance wake and stop via the AWS SDK
+  - [ ] Dynamic address resolution on wake
+  - [ ] Idle detection and proactive stop policy
+  - [ ] Security group and provisioning verification
+  - [ ] Wake progress and cost state surfaced in the UI
+- [ ] **F006 editor-integration** (depends: F000, F003)
+  - Spec: not yet specified
+  - [ ] Monaco text model bound to cached content with local echo
+  - [ ] Write path with baseSha256 conflict rejection
+  - [ ] Large-file chunked loading on scroll
+  - [ ] Tab and layout state persistence
+- [ ] **F007 lsp-multiplexing** (depends: F006)
+  - Spec: not yet specified
+  - [ ] Engine-side language server spawn, supervision and cgroup isolation
+  - [ ] lsp/request envelope routing by language and workspace
+  - [ ] Monaco completion, hover, definition and diagnostic providers
+  - [ ] Server state notifications surfaced in the UI
+  - [ ] Debounce and cancellation wired to $/cancelRequest
+- [ ] **F008 language-toolchains** (depends: F007)
+  - Spec: not yet specified
+  - [ ] Language manifest: toolchain, server binary, init options, file associations
+  - [ ] Per-language workspace root resolution and server configuration contract
+  - [ ] Tree-sitter grammar bundling and client-side highlighting registration
+  - [ ] Engine image toolchain provisioning and verification
+  - [ ] Go end-to-end as the reference integration
+- [ ] **F009 language-pack** [P] (depends: F008)
+  - Spec: not yet specified
+  - [ ] Python: Pyright with Ruff linting and virtualenv resolution
+  - [ ] Rust: rust-analyzer with cargo metadata resolution
+  - [ ] JVM: Eclipse JDT LS with workspace data directory
+  - [ ] C and C++: clangd with compile_commands discovery
+  - [ ] Zig: zls
+  - [ ] Elixir: Lexical with mix project resolution
+- [ ] **F010 execution-terminals** [P] (depends: F000, F003)
+  - Spec: not yet specified
+  - [ ] Task spawn with pty, working directory and environment
+  - [ ] Stdout and stderr streaming notifications
+  - [ ] Stdin, resize and terminate control path
+  - [ ] Xterm.js panel integration with ANSI handling
+  - [ ] Exit reporting and task cleanup on disconnect
+- [ ] **F011 git-integration** [P] (depends: F000, F003)
+  - Spec: not yet specified
+  - [ ] Engine-side porcelain v2 parsing and watch triggers
+  - [ ] git_status projection with transactional merge
+  - [ ] File tree colouring from cached status
+  - [ ] Diff gutter coordinates via git/getFileDiff
+  - [ ] Bulk invalidation on branch switch
+- [ ] **F012 offline-readonly** [P] (depends: F006)
+  - Spec: not yet specified
+  - [ ] Connection state detection from keepalive expiry and pipe EOF
+  - [ ] Read-only editor lock and offline UI state
+  - [ ] Cached-only tree, file and FTS path search behaviour
+  - [ ] Background prefetch of recent-commit and manifest files
+  - [ ] Reconnection with hash reconciliation and editor unlock
+- [ ] **F013 global-search** [P] (depends: F000, F003)
+  - Spec: not yet specified
+  - [ ] Command palette and fuzzy path search UI
+  - [ ] Engine-side ripgrep content search with bounded results
+  - [ ] Offline FTS fallback over cached paths
+  - [ ] Result navigation and jump-to-location
+- [ ] **F014 client-packaging** (depends: F000)
+  - Spec: not yet specified
+  - [ ] Release build profile and bundle targets for dmg and deb
+  - [ ] macOS signing, hardened runtime and notarization
+  - [ ] Linux package metadata and dependencies
+  - [ ] Client update channel and version skew handling
+- [ ] **F015 local-mode** [P] (depends: F006)
+  - Spec: not yet specified
+  - [ ] Local provider over native syscalls with containment checks
+  - [ ] Workspace mode selection and path mapping
+  - [ ] Local pty task execution
+  - [ ] Local language server discovery and spawn
+  - [ ] Toolchain detection with remediation banner
+- [ ] **F016 cloud-burst** (depends: F015)
+  - Spec: not yet specified
+  - [ ] Instance reachability and engine readiness check
+  - [ ] SFTP delta upload with exclusion rules
+  - [ ] Remote workspace registration and path remap
+  - [ ] Provider swap from local to remote
+  - [ ] Remote toolchain warm-up and status reporting
+- [ ] **F017 previews-artifacts** [P] (depends: F010)
+  - Spec: not yet specified
+  - [ ] Dynamic local forward allocation and teardown
+  - [ ] Preview pane bound to a loopback forward
+  - [ ] File artifact event handling and SFTP fetch
+  - [ ] Image, PDF and media rendering panes

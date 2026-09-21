@@ -1,0 +1,25 @@
+{
+  "integration": "speckit",
+  "version": "1.0.9.dev0",
+  "installed_at": "2026-09-20T22:16:14.472637+00:00",
+  "files": {
+    ".specify/scripts/python/create_new_feature.py": "c348aa02883188308de637f96b51d9861fa0379dbafcb5c0ed1d4c098b3e34ec",
+    ".specify/scripts/python/common.py": "47ffdec25e99aeb863b5e25ed5e9d47c49e09e0afc69183021b0cfc47f286074",
+    ".specify/scripts/python/setup_plan.py": "f689361f041ad68ce96d32f6c04dd095236236c07a8b36659cc29c767a175e9b",
+    ".specify/scripts/python/resolve_template.py": "2e80e872519609b21480e16f1b1ad7620e4469b4faf88af1ecefa8f778c768a0",
+    ".specify/scripts/python/setup_tasks.py": "0ee62ad49746fe016f68d143240e1cdb2c6d69490172f74320456b7e18818254",
+    ".specify/scripts/python/check_prerequisites.py": "e2048d5e4085079aa5f819b118ad7946da535dd5a7e94146d79a5c390595071f",
+    ".specify/scripts/bash/setup-tasks.sh": "b29ce2295ca60c5bbf7a43b75f83a6f710da5569f6084d94503cc7d86cabba46",
+    ".specify/scripts/bash/check-prerequisites.sh": "7d72e834f517c1c924af34d8521dfd1a85dec3566669c7f59cf0af27f1b4d933",
+    ".specify/scripts/bash/common.sh": "461265b41a4f22111745dd3efa1348a026358216ceeff794dd0ead1b6dbc1dfa",
+    ".specify/scripts/bash/setup-plan.sh": "86b3e5423d60500a8806d6d8e386c225584aa201635b143cff3c5e3d6a33a6de",
+    ".specify/scripts/bash/resolve-template.sh": "829e227096abc8bf0889889ec9f792f503ca5d395b7836a8a7eb739ee75214e7",
+    ".specify/scripts/bash/create-new-feature.sh": "f4244c6cf95025e5726669938e9152d4a557cc7c1e8b027a43cb4de72677da16",
+    ".specify/templates/constitution-template.md": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+    ".specify/templates/spec-template.md": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e",
+    ".specify/templates/tasks-template.md": "fc29a233f6f5a27ca31f1aa46b596af6500c627441c6e62b2bc4a1d721525842",
+    ".specify/templates/checklist-template.md": "856532b3cb66171c662cc16f16b31a5856e4655a8666aad1e545bbfc7f603ca1",
+    ".specify/templates/plan-template.md": "bfc6b57b089a8939273e0f7286391f17a1be33398327ddda3b2d89a63e33274c",
+    ".specify/.gitignore": "8c908410d177a1ef3d0dee16d7ad55f2ac3333df3104c4d4adee1c9b82f1dbc1"
+  }
+}

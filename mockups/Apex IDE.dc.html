@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-85583080-aa1c-49ca-9469-934d1899d563/styles.css">
+<script src="_ds/nocturne-85583080-aa1c-49ca-9469-934d1899d563/_ds_bundle.js"></script>
+<link rel="stylesheet" href="fonts/inter.css">
+<link rel="stylesheet" href="icons/phosphor-subset.css">
+<style>
+html,body{margin:0;height:100%;overflow:hidden}
+a{color:var(--color-accent);text-decoration:none}
+a:hover{color:var(--color-accent-300)}
+@keyframes vkpulse{0%,100%{opacity:.35}50%{opacity:1}}
+</style>
+</helmet>
+
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#161826"/><rect x="30" y="30" width="40" height="40" rx="6" fill="#2b2741"/><rect x="36" y="42" width="9" height="9" rx="2" fill="#9184d9"/><rect x="50" y="44" width="16" height="4" rx="2" fill="#d2cefd"/><rect x="36" y="56" width="30" height="3" rx="1.5" fill="#595d6c"/><rect x="36" y="63" width="20" height="3" rx="1.5" fill="#595d6c"/></svg></template>
+
+<div style="height:100vh;min-height:0;display:flex;flex-direction:column;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-size:var(--vk-fs,13px);line-height:1.45;overflow:hidden;position:relative;-webkit-font-smoothing:antialiased">
+
+<header data-screen-label="Chrome" style="flex:none;display:flex;align-items:center;gap:12px;height:46px;padding:0 10px 0 12px;white-space:nowrap;background:var(--color-surface);box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--color-text) 9%,transparent);position:relative;z-index:6">
+  <div style="display:flex;align-items:center;gap:8px">
+    <span style="width:9px;height:9px;border-radius:2px;background:var(--color-accent);box-shadow:0 0 12px var(--color-accent)"></span>
+    <span style="font-family:var(--font-heading);font-weight:500;font-size:11px;letter-spacing:.18em;text-transform:uppercase">Apex</span>
+  </div>
+  <button onClick="{{ openFiles }}" style="display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--color-text);font:inherit;cursor:pointer;padding:5px 7px;border-radius:var(--radius-sm)" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent)">
+    <i class="ph ph-cube" style="font-size:14px;color:var(--color-neutral-400)"></i>payments-platform<i class="ph ph-caret-down" style="font-size:10px;color:var(--color-neutral-500)"></i>
+  </button>
+  <span style="width:1px;height:20px;background:color-mix(in srgb,var(--color-text) 12%,transparent)"></span>
+  <div style="display:flex;align-items:center;gap:2px">
+    <button onClick="{{ openRunConfig }}" style="display:flex;align-items:center;gap:7px;border:1px solid {{ runBorder }};background:transparent;color:var(--color-text);font:inherit;font-size:12px;cursor:pointer;padding:4px 9px;border-radius:var(--radius-sm)" style-hover="border-color:var(--color-accent)">
+      <i class="ph ph-play-circle" style="font-size:13px;color:var(--color-accent)"></i>{{ runConfigName }}<i class="ph ph-caret-down" style="font-size:9px;color:var(--color-neutral-500)"></i>
+    </button>
+    <button title="Run" style="width:28px;height:28px;display:grid;place-items:center;border:0;background:transparent;color:var(--color-neutral-300);cursor:pointer;border-radius:var(--radius-sm)" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent);color:var(--color-text)"><i class="ph ph-play" style="font-size:14px"></i></button>
+    <button title="Debug (F9)" onClick="{{ toggleDebug }}" style="width:28px;height:28px;display:grid;place-items:center;border:0;background:transparent;color:{{ debugIconColor }};cursor:pointer;border-radius:var(--radius-sm)" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent)"><i class="ph ph-bug" style="font-size:15px"></i></button>
+  </div>
+  <button onClick="{{ openFiles }}" style="flex:1;max-width:400px;margin:0 auto;display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;background:var(--color-bg);border:1px solid color-mix(in srgb,var(--color-text) 10%,transparent);border-radius:var(--radius-md);color:color-mix(in srgb,var(--color-text) 50%,transparent);font:inherit;font-size:12px;cursor:pointer;text-align:left" style-hover="border-color:var(--color-accent)">
+    <i class="ph ph-magnifying-glass" style="flex:none;font-size:13px"></i><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Search everywhere</span><span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10.5px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--color-text) 8%,transparent)">⌘K</span>
+  </button>
+  <button onClick="{{ toggleAnnot }}" title="Show spec annotations" style="display:flex;align-items:center;gap:6px;border:1px solid {{ annotBorder }};background:transparent;color:{{ annotColor }};font:inherit;font-size:11.5px;cursor:pointer;padding:4px 9px;border-radius:var(--radius-sm)">
+    <i class="ph ph-crosshair" style="font-size:13px"></i>Spec pins
+  </button>
+  <button onClick="{{ toggleRemote }}" title="Switch host — the UI is identical either way" style="display:flex;align-items:center;gap:7px;border:1px solid {{ hostBorder }};background:{{ hostBg }};color:{{ hostColor }};font:inherit;font-size:11.5px;cursor:pointer;padding:4px 9px;border-radius:var(--radius-sm)">
+    <i class="{{ hostIcon }}" style="font-size:13px"></i>{{ hostLabel }}
+  </button>
+  <button onClick="{{ openSettings }}" title="Settings" style="width:28px;height:28px;display:grid;place-items:center;border:0;background:{{ settingsBg }};color:{{ settingsColor }};cursor:pointer;border-radius:var(--radius-sm)" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent);color:var(--color-text)"><i class="ph ph-sliders-horizontal" style="font-size:15px"></i></button>
+</header>
+
+<sc-if value="{{ showRemoteBanner }}" hint-placeholder-val="{{ false }}">
+<div style="flex:none;display:flex;align-items:center;gap:9px;height:26px;padding:0 12px;background:color-mix(in srgb,var(--color-accent) 14%,transparent);box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--color-accent) 40%,transparent);font-size:11.5px;color:var(--color-accent-200)">
+  <i class="ph ph-cloud-check" style="flex:none;font-size:13px;color:var(--color-accent)"></i>
+  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">build-01.euw1</span> — buffers, undo and highlighting stay local; servers, terminals and the debug target run there.</span>
+  <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;color:var(--color-accent-300);white-space:nowrap">18 ms RTT · 0 queued saves</span>
+</div>
+</sc-if>
+
+<div style="flex:1;min-height:0;display:flex;flex-direction:{{ rowDir }}">
+
+  <nav style="flex:none;width:44px;background:var(--color-surface);box-shadow:inset -1px 0 0 color-mix(in srgb,var(--color-text) 9%,transparent);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px;z-index:5">
+    <sc-for list="{{ rail }}" as="r" hint-placeholder-count="6">
+      <button onClick="{{ r.go }}" title="{{ r.title }}" style="position:relative;width:34px;height:34px;display:grid;place-items:center;border:0;background:{{ r.bg }};color:{{ r.color }};cursor:pointer;border-radius:var(--radius-sm)" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent)">
+        <i class="{{ r.icon }}" style="font-size:17px"></i>
+        <span style="position:absolute;left:-6px;top:9px;width:2px;height:16px;border-radius:1px;background:{{ r.mark }}"></span>
+      </button>
+    </sc-for>
+    <span style="flex:1"></span>
+    <button onClick="{{ toggleTool }}" title="Collapse tool window" style="width:34px;height:34px;display:grid;place-items:center;border:0;background:transparent;color:var(--color-neutral-500);cursor:pointer;border-radius:var(--radius-sm)" style-hover="color:var(--color-text)"><i class="ph ph-sidebar-simple" style="font-size:16px"></i></button>
+  </nav>
+
+  <sc-if value="{{ toolOpen }}" hint-placeholder-val="{{ true }}">
+  <aside data-screen-label="Tool window" style="flex:none;width:var(--vk-tool,276px);min-width:0;background:var(--color-neutral-900);box-shadow:inset -1px 0 0 color-mix(in srgb,var(--color-text) 9%,transparent);display:flex;flex-direction:column;overflow:hidden;position:relative">
+    <div style="flex:none;display:flex;align-items:center;gap:8px;height:32px;padding:0 4px 0 12px">
+      <span style="font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ toolTitle }}</span>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 52%,transparent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ toolMeta }}</span>
+      <button onClick="{{ toggleTool }}" title="Collapse panel" style="flex:none;width:24px;height:24px;display:grid;place-items:center;border:0;background:transparent;color:var(--color-neutral-500);cursor:pointer;border-radius:3px" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent);color:var(--color-text)"><i class="{{ collapseIcon }}" style="font-size:13px"></i></button>
+    </div>
+
+    <sc-if value="{{ isProject }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:1;overflow:auto;padding-bottom:10px">
+      <sc-for list="{{ tree }}" as="n" hint-placeholder-count="12">
+        <div onClick="{{ n.go }}" style="display:flex;align-items:center;gap:7px;height:var(--vk-row,25px);padding-right:10px;padding-left:{{ n.pad }};background:{{ n.bg }};cursor:pointer;white-space:nowrap" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+          <i class="{{ n.icon }}" style="flex:none;font-size:14px;color:{{ n.iconColor }}"></i>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;color:{{ n.color }}">{{ n.n }}</span>
+          <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10px;color:{{ n.vcsColor }}">{{ n.vcs }}</span>
+        </div>
+      </sc-for>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ isStructure }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:1;overflow:auto;padding-bottom:10px">
+      <div style="padding:0 12px 8px;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">From tree-sitter tags — available while indexing.</div>
+      <sc-for list="{{ structure }}" as="s" hint-placeholder-count="8">
+        <div style="display:flex;align-items:center;gap:8px;height:var(--vk-row,25px);padding-left:{{ s.pad }};padding-right:10px;white-space:nowrap" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+          <span style="flex:none;width:15px;text-align:center;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10px;color:var(--color-accent-400)">{{ s.k }}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis">{{ s.n }}</span>
+          <span style="flex:none;font-size:11px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ s.t }}</span>
+        </div>
+      </sc-for>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ isVcs }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+      <div style="flex:1;overflow:auto">
+        <sc-for list="{{ changes }}" as="c" hint-placeholder-count="4">
+          <div onClick="{{ c.go }}" style="display:flex;align-items:center;gap:8px;height:var(--vk-row,25px);padding:0 10px 0 12px;cursor:pointer" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+            <i class="ph ph-check-square" style="flex:none;font-size:14px;color:var(--color-accent)"></i>
+            <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10px;width:10px;color:{{ c.color }}">{{ c.s }}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.n }}</span>
+            <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ c.d }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="flex:none;padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+        <textarea class="input" style="min-height:64px;font-size:12.5px;background:var(--color-bg)">orders: retry confirm when the pricing quote is stale</textarea>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-primary" style="font-size:12px;padding:5px 10px">Commit</button>
+          <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px">Commit and Push</button>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ isSearch }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+      <div style="flex:none;padding:0 12px 8px;display:flex;flex-direction:column;gap:6px">
+        <input class="input" value="quote.isStale" style="height:30px;min-height:30px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;background:var(--color-bg)">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+          <i class="ph ph-spinner" style="font-size:12px;color:var(--color-accent);animation:vkpulse 1.1s infinite"></i>streaming — 38 of ~120 files scanned
+        </div>
+      </div>
+      <div style="flex:1;overflow:auto">
+        <sc-for list="{{ results }}" as="m" hint-placeholder-count="6">
+          <div style="padding:5px 12px;cursor:pointer;display:flex;flex-direction:column;gap:2px" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+            <div style="display:flex;gap:6px;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.f }}</span><span>{{ m.l }}</span></div>
+            <div style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-neutral-300)">{{ m.t }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ isHistory }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:1;overflow:auto;padding:0 12px 12px">
+      <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent);padding-bottom:10px">Rope snapshots, grouped by typing run. Independent of git.</div>
+      <sc-for list="{{ history }}" as="h" hint-placeholder-count="6">
+        <div style="display:flex;gap:10px;padding:4px 0;cursor:pointer" style-hover="opacity:.75">
+          <div style="flex:none;display:flex;flex-direction:column;align-items:center;width:10px;padding-top:5px">
+            <span style="width:7px;height:7px;border-radius:50%;background:{{ h.dot }}"></span>
+            <span style="flex:1;width:1px;background:color-mix(in srgb,var(--color-text) 14%,transparent)"></span>
+          </div>
+          <div style="flex:1;min-width:0;padding-bottom:8px">
+            <div style="font-size:12px;color:{{ h.color }}">{{ h.n }}</div>
+            <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ h.t }}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ annot }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;right:8px;bottom:8px;max-width:210px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--color-accent-900);box-shadow:0 0 0 1px var(--color-accent-700);font-size:10.5px;line-height:1.35;color:var(--color-accent-200)">§9.5 VFS snapshots feed the tree; watcher-driven, ignore-aware.</div>
+    </sc-if>
+  </aside>
+  </sc-if>
+
+  <main style="flex:1;min-width:0;min-height:0;display:flex;flex-direction:column">
+
+    <div style="flex:none;display:flex;align-items:stretch;height:34px;background:var(--color-surface);box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+        <button onClick="{{ t.go }}" style="display:flex;align-items:center;gap:7px;padding:0 10px 0 12px;border:0;border-radius:0;background:{{ t.bg }};color:{{ t.color }};font:inherit;font-size:12.5px;cursor:pointer;position:relative" style-hover="background:color-mix(in srgb,var(--color-text) 7%,transparent)">
+          <i class="{{ t.icon }}" style="font-size:13px;color:{{ t.iconColor }}"></i>{{ t.n }}
+          <span style="width:6px;height:6px;border-radius:50%;background:{{ t.dirty }}"></span>
+          <span style="position:absolute;left:0;right:0;top:0;height:2px;background:{{ t.mark }}"></span>
+        </button>
+      </sc-for>
+      <span style="flex:1"></span>
+      <button onClick="{{ openStructural }}" title="Structural search (⌘⇧S)" style="width:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--color-neutral-400);cursor:pointer" style-hover="color:var(--color-text)"><i class="ph ph-tree-structure" style="font-size:15px"></i></button>
+      <button onClick="{{ openDiff }}" title="Diff against HEAD" style="width:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--color-neutral-400);cursor:pointer" style-hover="color:var(--color-text)"><i class="ph ph-columns" style="font-size:15px"></i></button>
+    </div>
+
+    <div style="flex:none;display:flex;align-items:center;gap:2px;height:24px;padding:0 10px;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent);white-space:nowrap;overflow:hidden">
+      <div style="flex:1;min-width:0;display:flex;align-items:center;gap:2px;overflow:hidden">
+        <sc-for list="{{ crumbs }}" as="c" hint-placeholder-count="4">
+          <button onClick="{{ c.go }}" style="flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:6px;border:0;background:{{ c.bg }};color:{{ c.color }};font:inherit;font-size:11px;cursor:pointer;padding:2px 5px;border-radius:3px" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent);color:var(--color-text)">
+            <i class="{{ c.icon }}" style="flex:none;font-size:11px;color:{{ c.iconColor }}"></i>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.n }}</span>
+            <i class="ph ph-caret-right" style="flex:none;font-size:8px;opacity:.45"></i>
+          </button>
+        </sc-for>
+      </div>
+      <span style="flex:none;padding-left:8px;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ crumbSource }}</span>
+    </div>
+
+    <div style="flex:1;min-height:0;position:relative;display:flex;overflow:hidden">
+
+      <sc-if value="{{ isEditor }}" hint-placeholder-val="{{ true }}">
+      <div data-screen-label="Editor" style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;position:relative">
+
+        <sc-if value="{{ indexing }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;margin:8px 12px 0;padding:6px 10px;border-radius:var(--radius-sm);background:var(--color-accent-900);box-shadow:0 0 0 1px var(--color-accent-800);font-size:11.5px">
+          <i class="ph ph-database" style="font-size:14px;color:var(--color-accent-300)"></i>
+          <span style="color:var(--color-accent-100)">Indexing <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">{{ idxPct }}</span> — <span style="color:var(--color-accent-300)">every feature stays available</span>; symbols come from tree-sitter tags until the index lands.</span>
+          <span style="flex:1"></span>
+          <span style="width:90px;height:3px;border-radius:2px;background:color-mix(in srgb,var(--color-text) 12%,transparent);overflow:hidden"><span style="display:block;height:100%;width:{{ idxPct }};background:var(--color-accent)"></span></span>
+        </div>
+        </sc-if>
+
+        <div style="flex:1;min-height:0;display:flex;overflow:hidden;font-family:'JetBrains Mono','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:var(--vk-code,13px);line-height:var(--vk-line,21px)">
+          <div style="flex:1;min-width:0;overflow:auto;padding:8px 0 40px">
+
+            <sc-if value="{{ isJava }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">126</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre;color:#75798c">    // §9.1 anchors keep these positions valid across edits</span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">127</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">@Transactional</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">128</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">public</span> <span style="color:#d2cefd">Receipt</span> <span style="color:#e4e7f5">confirm</span><span style="color:#9397ab">(</span><span style="color:#d2cefd">OrderId</span> id<span style="color:#9397ab">,</span> <span style="color:#d2cefd">PaymentRef</span> ref<span style="color:#9397ab">) {</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">129</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">var</span> order<span style="color:#e6e6ea">{{ hintOrder }}</span> <span style="color:#9397ab">=</span> orders<span style="color:#9397ab">.</span><span style="color:#e4e7f5">require</span><span style="color:#9397ab">(</span>id<span style="color:#9397ab">);</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">130</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    order<span style="color:#9397ab">.</span><span style="color:#e4e7f5">assertConfirmable</span><span style="color:#9397ab">();</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">131</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">132</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">var</span> quote<span style="color:#e6e6ea">{{ hintQuote }}</span> <span style="color:#9397ab">=</span> pricing<span style="color:#9397ab">.</span><span style="color:#e4e7f5">quote</span><span style="color:#9397ab">(</span>order<span style="color:#9397ab">.</span><span style="color:#e4e7f5">lines</span><span style="color:#9397ab">());</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">133</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">if</span> <span style="color:#9397ab">(</span>quote<span style="color:#9397ab">.</span><span style="color:#e4e7f5">isStale</span><span style="color:#9397ab">()) {</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">134</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre">        <span style="color:#b5abfc">return</span> <span style="color:#d2cefd">Receipt</span><span style="color:#9397ab">.</span><span style="color:#e4e7f5">retry</span><span style="color:#9397ab">(</span>quote<span style="color:#9397ab">.</span><span style="color:#e4e7f5">ttl</span><span style="color:#9397ab">());</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">135</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#9397ab">}</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">136</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px);background:{{ caretLineBg }}"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-500)">137</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">var</span> charge <span style="color:#9397ab">=</span> payments<span style="color:#9397ab">.</span><span style="text-decoration:underline wavy #d4736a;text-decoration-skip-ink:none;text-underline-offset:4px"><span style="color:#e4e7f5">capture</span><span style="color:#9397ab">(</span>ref<span style="color:#9397ab">,</span> quote<span style="color:#9397ab">.</span><span style="color:#e4e7f5">total</span><span style="color:#9397ab">()</span></span><span style="color:#9397ab">);</span><span style="border-left:1.5px solid var(--color-accent);margin-left:1px"></span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">138</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    order<span style="color:#9397ab">.</span><span style="color:#e4e7f5">confirm</span><span style="color:#9397ab">(</span>charge<span style="color:#9397ab">.</span><span style="color:#e4e7f5">id</span><span style="color:#9397ab">(),</span> clock<span style="color:#9397ab">.</span><span style="color:#e4e7f5">now</span><span style="color:#9397ab">());</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">139</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px);background:{{ execLineBg }}"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-500);position:relative"><span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);width:9px;height:9px;border-radius:50%;background:#d4736a"></span>140</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    events<span style="color:#9397ab">.</span><span style="color:#e4e7f5">publish</span><span style="color:#9397ab">(</span><span style="color:#b5abfc">new</span> <span style="color:#d2cefd">OrderConfirmed</span><span style="color:#9397ab">(</span>order<span style="color:#9397ab">.</span><span style="color:#e4e7f5">id</span><span style="color:#9397ab">(),</span> charge<span style="color:#9397ab">.</span><span style="color:#e4e7f5">id</span><span style="color:#9397ab">()));</span><span style="color:{{ execHintColor }};padding-left:16px">{{ execHint }}</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">141</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">return</span> <span style="color:#d2cefd">Receipt</span><span style="color:#9397ab">.</span><span style="color:#e4e7f5">of</span><span style="color:#9397ab">(</span>order<span style="color:#9397ab">,</span> charge<span style="color:#9397ab">);</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">142</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"><span style="color:#9397ab">}</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">143</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">144</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"><span style="color:#75798c">    /* pricing.quote is remote — the editor never waits on it (§13) */</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">145</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">private</span> <span style="color:#b5abfc">void</span> <span style="color:#e4e7f5">assertLimits</span><span style="color:#9397ab">(</span><span style="color:#d2cefd">Order</span> order<span style="color:#9397ab">) {</span></span></div>
+            </div>
+            </sc-if>
+
+            <sc-if value="{{ isGo }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">41</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"><span style="color:#75798c">// Quote prices a basket. Called over gRPC by the orders service.</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">42</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">func</span> <span style="color:#9397ab">(</span>s <span style="color:#9397ab">*</span><span style="color:#d2cefd">Server</span><span style="color:#9397ab">)</span> <span style="color:#e4e7f5">Quote</span><span style="color:#9397ab">(</span>ctx <span style="color:#d2cefd">context.Context</span><span style="color:#9397ab">,</span> in <span style="color:#9397ab">*</span><span style="color:#d2cefd">pb.Basket</span><span style="color:#9397ab">) (*</span><span style="color:#d2cefd">pb.Quote</span><span style="color:#9397ab">,</span> <span style="color:#b5abfc">error</span><span style="color:#9397ab">) {</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">43</span><span style="flex:none;width:3px;background:var(--color-accent-600)"></span><span style="padding-left:12px;white-space:pre">    lines <span style="color:#9397ab">:=</span> s<span style="color:#9397ab">.</span><span style="color:#e4e7f5">expand</span><span style="color:#9397ab">(</span>in<span style="color:#9397ab">.</span>Items<span style="color:#9397ab">)</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">44</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    total<span style="color:#9397ab">,</span> err <span style="color:#9397ab">:=</span> s<span style="color:#9397ab">.</span>rules<span style="color:#9397ab">.</span><span style="color:#e4e7f5">Apply</span><span style="color:#9397ab">(</span>ctx<span style="color:#9397ab">,</span> lines<span style="color:#9397ab">)</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">45</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">if</span> err <span style="color:#9397ab">!=</span> <span style="color:#b5abfc">nil</span> <span style="color:#9397ab">{</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">46</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">        <span style="color:#b5abfc">return</span> <span style="color:#b5abfc">nil</span><span style="color:#9397ab">,</span> <span style="color:#e4e7f5">fmt</span><span style="color:#9397ab">.</span><span style="color:#e4e7f5">Errorf</span><span style="color:#9397ab">(</span><span style="color:#b2b6ca">"pricing: %w"</span><span style="color:#9397ab">,</span> err<span style="color:#9397ab">)</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">47</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#9397ab">}</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">48</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre">    <span style="color:#b5abfc">return</span> <span style="color:#9397ab">&amp;</span><span style="color:#d2cefd">pb.Quote</span><span style="color:#9397ab">{</span>Total<span style="color:#9397ab">:</span> total<span style="color:#9397ab">,</span> Ttl<span style="color:#9397ab">:</span> <span style="color:#cfd3e5">30</span><span style="color:#9397ab">},</span> <span style="color:#b5abfc">nil</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">49</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"><span style="color:#9397ab">}</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">50</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">51</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"><span style="color:#75798c">// gopls is running on build-01; highlighting is local either way.</span></span></div>
+            </div>
+            </sc-if>
+
+            <sc-if value="{{ isToml }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">1</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"><span style="color:#75798c"># A language pack is data. No host code, no rebuild. (§17.5)</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">2</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">[pack]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">3</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">name <span style="color:#9397ab">=</span> <span style="color:#b2b6ca">"java"</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">4</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">extensions <span style="color:#9397ab">= [</span><span style="color:#b2b6ca">"java"</span><span style="color:#9397ab">]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">5</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">6</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">[grammar]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">7</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">source <span style="color:#9397ab">=</span> <span style="color:#b2b6ca">"tree-sitter-java@0.21"</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">8</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">queries <span style="color:#9397ab">= [</span><span style="color:#b2b6ca">"highlights"</span><span style="color:#9397ab">,</span> <span style="color:#b2b6ca">"folds"</span><span style="color:#9397ab">,</span> <span style="color:#b2b6ca">"indents"</span><span style="color:#9397ab">,</span> <span style="color:#b2b6ca">"tags"</span><span style="color:#9397ab">,</span> <span style="color:#b2b6ca">"injections"</span><span style="color:#9397ab">]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">9</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">10</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">[language_server]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">11</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">command <span style="color:#9397ab">= [</span><span style="color:#b2b6ca">"jdtls"</span><span style="color:#9397ab">,</span> <span style="color:#b2b6ca">"-data"</span><span style="color:#9397ab">,</span> <span style="color:#b2b6ca">"{workspace}/.apex/jdt"</span><span style="color:#9397ab">]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">12</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">start_on <span style="color:#9397ab">=</span> <span style="color:#b2b6ca">"first_file_of_language"</span>  <span style="color:#75798c"># never on project open</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">13</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">idle_stop <span style="color:#9397ab">=</span> <span style="color:#b2b6ca">"10m"</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">14</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">memory_hint <span style="color:#9397ab">=</span> <span style="color:#b2b6ca">"1200M"</span>            <span style="color:#75798c"># shown in the resource panel</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">15</span><span style="flex:none;width:3px"></span><span style="padding-left:12px;white-space:pre"> </span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">16</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre"><span style="color:#b5abfc">[debug_adapter]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">17</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">command <span style="color:#9397ab">= [</span><span style="color:#b2b6ca">"java-debug-adapter"</span><span style="color:#9397ab">]</span></span></div>
+              <div style="display:flex;height:var(--vk-line,21px)"><span style="flex:none;width:52px;text-align:right;padding-right:12px;color:var(--color-neutral-600)">18</span><span style="flex:none;width:3px;background:#7fa98f"></span><span style="padding-left:12px;white-space:pre">runs <span style="color:#9397ab">=</span> <span style="color:#b2b6ca">"beside_target"</span>            <span style="color:#75798c"># local or remote, same config</span></span></div>
+            </div>
+            </sc-if>
+          </div>
+
+          <div style="flex:none;width:12px;position:relative;background:color-mix(in srgb,var(--color-text) 3%,transparent)">
+            <span style="position:absolute;left:3px;right:3px;top:22%;height:3px;border-radius:2px;background:#d4736a"></span>
+            <span style="position:absolute;left:3px;right:3px;top:34%;height:3px;border-radius:2px;background:#c9a96a"></span>
+            <span style="position:absolute;left:3px;right:3px;top:12%;height:26%;border-radius:3px;background:var(--color-accent-700)"></span>
+          </div>
+        </div>
+
+        <sc-if value="{{ comp }}" hint-placeholder-val="{{ true }}">
+        <div data-screen-label="Completion" style="position:absolute;left:170px;bottom:10px;width:{{ compWidth }};max-width:calc(100% - 186px);min-width:0;max-height:min(250px,calc(100% - 56px));display:flex;flex-direction:column;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-md);overflow:hidden;z-index:4;font-family:var(--font-body)">
+          <div style="flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--color-text) 10%,transparent)">
+            <span style="flex:none;width:6px;height:6px;border-radius:50%;background:{{ compDot }}"></span>
+            <span style="color:color-mix(in srgb,var(--color-text) 60%,transparent)">jdtls · {{ compTiming }}</span>
+            <span style="flex:1"></span>
+            <span style="color:{{ cancelColor }};font-size:10.5px">{{ cancelNote }}</span>
+          </div>
+          <div style="flex:none;display:flex;align-items:center;gap:8px;padding:5px 10px;box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--color-text) 8%,transparent)">
+            <i class="ph ph-keyboard" style="font-size:13px;color:var(--color-neutral-500)"></i>
+            <input value="{{ compQ }}" onChange="{{ onType }}" placeholder="type to filter — watch the request get cancelled" style="flex:1;background:transparent;border:0;color:var(--color-text);font:inherit;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;outline:none">
+          </div>
+          <div style="flex:1;display:flex;max-height:192px;min-height:0">
+            <div style="flex:1 1 300px;min-width:230px;overflow:auto">
+            <sc-for list="{{ completions }}" as="c" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:9px;padding:4px 10px;background:{{ c.bg }};cursor:pointer;opacity:{{ c.op }}" style-hover="background:color-mix(in srgb,var(--color-accent) 14%,transparent)">
+                <span style="flex:none;width:16px;height:16px;border-radius:3px;display:grid;place-items:center;font-size:9px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;background:{{ c.kbg }};color:{{ c.kfg }}">{{ c.k }}</span>
+                <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12.5px">{{ c.n }}</span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent);text-align:right">{{ c.d }}</span>
+                <span style="flex:none;font-size:10px;color:{{ c.srcColor }}">{{ c.src }}</span>
+              </div>
+            </sc-for>
+            </div>
+            <sc-if value="{{ compDetail }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:0 1 258px;min-width:0;overflow:auto;padding:8px 11px;box-shadow:inset 1px 0 0 color-mix(in srgb,var(--color-text) 10%,transparent)">
+              <div style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.5;color:var(--color-accent-300)">Charge capture(<br>&nbsp;&nbsp;PaymentRef ref,<br>&nbsp;&nbsp;Money amount)</div>
+              <div style="padding-top:7px;font-size:11.5px;line-height:1.45;color:color-mix(in srgb,var(--color-text) 62%,transparent)">Captures an authorised payment. Idempotent on <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">ref</span>; throws <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">ExpiredAuthorization</span> after 7 days.</div>
+              <div style="padding-top:7px;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Documentation resolved on selection — a separate, cancellable request.</div>
+            </div>
+            </sc-if>
+          </div>
+          <div style="flex:none;display:flex;align-items:center;gap:10px;padding:5px 10px;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 8%,transparent)">
+            <span>⏎ insert</span><span>⇥ replace</span><span style="flex:1"></span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ staleNote }}</span>
+          </div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ annot }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;right:26px;bottom:14px;max-width:260px;padding:7px 9px;border-radius:var(--radius-sm);background:var(--color-accent-900);box-shadow:0 0 0 1px var(--color-accent-700);font-family:var(--font-body);font-size:10.5px;line-height:1.4;color:var(--color-accent-200)">§9.2–9.3 display map → shaped glyphs → damaged rect. Gutter bars are change marks from the background diff (§9.9); the dot is a DAP breakpoint stored as an anchor.</div>
+        </sc-if>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ isDiff }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Diff" style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;padding:8px 12px;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+          <span>OrderService.java — HEAD ↔ working tree</span><span style="flex:1"></span>
+          <span style="color:#7fa98f">+6</span><span style="color:#d4736a">−2</span>
+          <span style="font-size:10.5px">diff computed off-thread on the buffer snapshot</span>
+        </div>
+        <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:color-mix(in srgb,var(--color-text) 9%,transparent);overflow:hidden;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:var(--vk-code,13px);line-height:var(--vk-line,21px)">
+          <div style="background:var(--color-bg);overflow:auto;padding:6px 0">
+            <sc-for list="{{ diffLeft }}" as="l" hint-placeholder-count="12">
+              <div style="display:flex;height:var(--vk-line,21px);background:{{ l.bg }}"><span style="flex:none;width:44px;text-align:right;padding-right:10px;color:var(--color-neutral-600)">{{ l.n }}</span><span style="padding-left:10px;white-space:pre;color:{{ l.color }}">{{ l.t }}</span></div>
+            </sc-for>
+          </div>
+          <div style="background:var(--color-bg);overflow:auto;padding:6px 0">
+            <sc-for list="{{ diffRight }}" as="l" hint-placeholder-count="12">
+              <div style="display:flex;height:var(--vk-line,21px);background:{{ l.bg }}"><span style="flex:none;width:44px;text-align:right;padding-right:10px;color:var(--color-neutral-600)">{{ l.n }}</span><span style="padding-left:10px;white-space:pre;color:{{ l.color }}">{{ l.t }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ isPlugins }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Plugins" style="flex:1;min-width:0;overflow:auto;padding:20px 24px 28px">
+        <div style="max-width:880px;display:flex;flex-direction:column;gap:16px">
+          <div>
+            <h4 style="margin:0 0 4px">Packs and extensions</h4>
+            <p style="margin:0;font-size:12.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent);max-width:60ch">Two kinds only. <span style="color:var(--color-accent-300)">Declarative packs</span> are manifests plus assets — grammars, queries, server and adapter definitions, themes, keymaps. <span style="color:var(--color-accent-300)">WASM extensions</span> run sandboxed off the UI thread and declare every capability they need up front. Apex's own Java pack ships through this system.</p>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="input" placeholder="Search packs…" style="max-width:260px;height:30px;min-height:30px;font-size:12.5px">
+            <span style="flex:1"></span>
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px"><i class="ph ph-folder-open" style="font-size:13px"></i>Install from file</button>
+            <button class="btn btn-primary" style="font-size:12px;padding:5px 10px"><i class="ph ph-plus" style="font-size:13px"></i>New pack from template</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px">
+            <sc-for list="{{ plugins }}" as="p" hint-placeholder-count="6">
+              <div class="card elev-sm" style="gap:8px;background:var(--color-surface)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <i class="{{ p.icon }}" style="font-size:16px;color:var(--color-accent)"></i>
+                  <span class="card-title" style="font-size:14.5px;flex:1">{{ p.n }}</span>
+                  <span class="tag {{ p.tagClass }}" style="font-size:10px;padding:2px 7px">{{ p.kind }}</span>
+                </div>
+                <p class="card-body" style="font-size:12px;margin:0">{{ p.d }}</p>
+                <div style="display:flex;flex-wrap:wrap;gap:4px">
+                  <sc-for list="{{ p.caps }}" as="cap" hint-placeholder-count="2">
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10px;padding:2px 6px;border-radius:3px;background:color-mix(in srgb,var(--color-text) 8%,transparent);color:color-mix(in srgb,var(--color-text) 62%,transparent)">{{ cap }}</span>
+                  </sc-for>
+                </div>
+                <div class="card-meta" style="font-size:10.5px">
+                  <span style="width:6px;height:6px;border-radius:50%;background:{{ p.dot }}"></span>{{ p.meta }}
+                  <span style="flex:1"></span>
+                  <button class="btn btn-ghost" style="font-size:11px">{{ p.action }}</button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ dockOpen }}" hint-placeholder-val="{{ true }}">
+    <section data-screen-label="Dock" style="flex:none;height:min(var(--vk-dock,236px),max(140px,26vh));min-height:0;display:flex;flex-direction:column;background:var(--color-neutral-900);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent);overflow:hidden;position:relative">
+      <div style="flex:none;display:flex;align-items:center;gap:8px;height:30px;padding:0 8px 0 12px">
+        <span style="font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ dockTitle }}</span>
+        <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ dockMeta }}</span>
+        <span style="flex:1"></span>
+        <button onClick="{{ closeDock }}" style="width:24px;height:24px;display:grid;place-items:center;border:0;background:transparent;color:var(--color-neutral-500);cursor:pointer;border-radius:3px" style-hover="color:var(--color-text)"><i class="ph ph-minus" style="font-size:14px"></i></button>
+      </div>
+
+      <sc-if value="{{ isTerminal }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;overflow:auto;padding:2px 12px 12px;font-family:'JetBrains Mono','JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.6">
+        <sc-for list="{{ term }}" as="t" hint-placeholder-count="8">
+          <div style="white-space:pre-wrap;color:{{ t.color }}">{{ t.t }}</div>
+        </sc-for>
+        <div style="display:flex;gap:6px"><span style="color:var(--color-accent)">{{ shellPrompt }}</span><span style="width:7px;height:15px;background:var(--color-accent);animation:vkpulse 1.1s steps(1,end) infinite"></span></div>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ isDebugPanel }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;display:flex;overflow:hidden">
+        <div style="flex:none;width:46px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0;box-shadow:inset -1px 0 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+          <sc-for list="{{ debugBtns }}" as="b" hint-placeholder-count="5">
+            <button title="{{ b.title }}" style="width:30px;height:30px;display:grid;place-items:center;border:0;background:transparent;color:{{ b.color }};cursor:pointer;border-radius:3px" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent)"><i class="{{ b.icon }}" style="font-size:15px"></i></button>
+          </sc-for>
+        </div>
+        <div style="flex:none;width:300px;min-width:0;overflow:auto;padding:4px 0 10px;box-shadow:inset -1px 0 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+          <div style="padding:0 12px 4px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Frames — main@build-01</div>
+          <sc-for list="{{ frames }}" as="f" hint-placeholder-count="5">
+            <div style="display:flex;align-items:baseline;gap:8px;height:var(--vk-row,25px);padding:0 12px;background:{{ f.bg }};cursor:pointer;white-space:nowrap" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:{{ f.color }}">{{ f.n }}</span>
+              <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ f.l }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="flex:1;min-width:0;overflow:auto;padding:4px 0 10px">
+          <div style="padding:0 12px 4px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Variables — fetched lazily on expand</div>
+          <sc-for list="{{ vars }}" as="v" hint-placeholder-count="7">
+            <div style="display:flex;align-items:center;gap:7px;height:var(--vk-row,25px);padding-right:12px;padding-left:{{ v.pad }};white-space:nowrap" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+              <i class="{{ v.icon }}" style="flex:none;font-size:11px;color:var(--color-neutral-500)"></i>
+              <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:var(--color-accent-300)">{{ v.n }}</span>
+              <span style="flex:none;font-size:11px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ v.t }}</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:var(--color-neutral-300)">{{ v.v }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ isProblems }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;overflow:auto;padding:0 0 12px">
+        <sc-for list="{{ problems }}" as="p" hint-placeholder-count="5">
+          <div style="display:flex;align-items:baseline;gap:9px;padding:5px 12px;opacity:{{ p.op }};cursor:pointer" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+            <i class="{{ p.icon }}" style="flex:none;font-size:14px;color:{{ p.color }};position:relative;top:2px"></i>
+            <span style="flex:1;min-width:0;font-size:12.5px"><span style="color:var(--color-text)">{{ p.t }}</span> <span style="color:color-mix(in srgb,var(--color-text) 52%,transparent);font-size:11px">{{ p.where }}</span></span>
+            <span style="flex:none;font-size:10.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb,var(--color-text) 8%,transparent);color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ p.src }}</span>
+          </div>
+        </sc-for>
+        <div style="margin:8px 12px 0;padding:6px 9px;border-radius:var(--radius-sm);font-size:11px;color:color-mix(in srgb,var(--color-text) 50%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-text) 9%,transparent)">Dimmed rows are stale — computed for v1482, mapped forward through anchors. They are never waited on.</div>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ isResources }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;overflow:auto;padding:0 12px 14px">
+        <div style="display:flex;align-items:baseline;gap:10px;padding-bottom:8px;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+          <span>IDE budget <span style="color:var(--color-text);font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">4.6 GB</span> of 12 GB — <span style="color:var(--color-accent-300)">{{ budgetUsed }} in use</span></span>
+          <span style="flex:1"></span>
+          <span>{{ hostLabel }}</span>
+        </div>
+        <sc-for list="{{ servers }}" as="s" hint-placeholder-count="5">
+          <div style="display:grid;grid-template-columns:200px 1fr 82px 62px 74px;align-items:center;gap:10px;height:var(--vk-row,25px);font-size:12px">
+            <span style="display:flex;align-items:center;gap:7px;overflow:hidden"><span style="flex:none;width:6px;height:6px;border-radius:50%;background:{{ s.dot }}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.n }}</span></span>
+            <span style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--color-text) 10%,transparent);overflow:hidden"><span style="display:block;height:100%;width:{{ s.w }};background:{{ s.bar }}"></span></span>
+            <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;text-align:right;color:var(--color-neutral-300)">{{ s.mem }}</span>
+            <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;text-align:right;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ s.cpu }}</span>
+            <span style="text-align:right"><button class="btn btn-ghost" style="font-size:11px">{{ s.action }}</button></span>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+
+      <sc-if value="{{ annot }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;right:10px;bottom:10px;max-width:250px;padding:7px 9px;border-radius:var(--radius-sm);background:var(--color-accent-900);box-shadow:0 0 0 1px var(--color-accent-700);font-size:10.5px;line-height:1.4;color:var(--color-accent-200)">{{ dockAnnot }}</div>
+      </sc-if>
+    </section>
+    </sc-if>
+
+    <div style="flex:none;display:flex;align-items:stretch;height:28px;background:var(--color-surface);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <sc-for list="{{ dockTabs }}" as="d" hint-placeholder-count="4">
+        <button onClick="{{ d.go }}" style="display:flex;align-items:center;gap:6px;padding:0 11px;border:0;background:{{ d.bg }};color:{{ d.color }};font:inherit;font-size:11.5px;cursor:pointer;position:relative" style-hover="background:color-mix(in srgb,var(--color-text) 7%,transparent)">
+          <i class="{{ d.icon }}" style="font-size:13px"></i>{{ d.n }}
+          <span style="font-size:10px;color:{{ d.badgeColor }}">{{ d.badge }}</span>
+        </button>
+      </sc-for>
+      <span style="flex:1"></span>
+      <button onClick="{{ openCommands }}" style="display:flex;align-items:center;gap:6px;padding:0 11px;border:0;background:transparent;color:color-mix(in srgb,var(--color-text) 55%,transparent);font:inherit;font-size:11.5px;cursor:pointer" style-hover="color:var(--color-text)"><i class="ph ph-command" style="font-size:12px"></i>Commands</button>
+    </div>
+  </main>
+</div>
+
+<footer style="flex:none;display:flex;align-items:center;gap:12px;height:26px;padding:0 10px;white-space:nowrap;overflow:hidden;background:var(--color-surface);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent);font-size:11px;color:color-mix(in srgb,var(--color-text) 58%,transparent);position:relative;z-index:6">
+  <button onClick="{{ toggleRemote }}" style="display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;border:0;background:transparent;color:{{ hostColor }};font:inherit;font-size:11px;cursor:pointer;padding:0"><i class="{{ hostIcon }}" style="flex:none;font-size:12px"></i><span style="overflow:hidden;text-overflow:ellipsis">{{ hostStatus }}</span></button>
+  <span style="flex:none;width:0"></span>
+  <button onClick="{{ openBranch }}" title="Branch — click to switch" style="display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden;border:0;background:{{ branchBg }};color:{{ branchColor }};font:inherit;font-size:11px;cursor:pointer;padding:2px 6px;border-radius:3px" style-hover="background:color-mix(in srgb,var(--color-text) 8%,transparent);color:var(--color-text)">
+    <i class="ph ph-git-branch" style="flex:none;font-size:12px"></i>
+    <span style="overflow:hidden;text-overflow:ellipsis">feat/stale-quote-retry</span>
+    <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;color:var(--color-accent-300)">↑2</span>
+    <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;color:#c9a96a">↓1</span>
+  </button>
+  <sc-if value="{{ indexing }}" hint-placeholder-val="{{ true }}">
+    <span style="display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--color-accent-300)"><span style="width:52px;height:3px;border-radius:2px;background:color-mix(in srgb,var(--color-text) 12%,transparent);overflow:hidden"><span style="display:block;height:100%;width:{{ idxPct }};background:var(--color-accent)"></span></span>indexing {{ idxPct }} · nothing disabled</span>
+  </sc-if>
+  <span style="flex:1"></span>
+  <sc-for list="{{ statusServers }}" as="s" hint-placeholder-count="2">
+    <span style="display:flex;align-items:center;gap:5px"><span style="width:6px;height:6px;border-radius:50%;background:{{ s.dot }}"></span>{{ s.label }}</span>
+  </sc-for>
+  <sc-if value="{{ perfVisible }}" hint-placeholder-val="{{ true }}">
+    <button onClick="{{ toggleHud }}" title="Keystroke-to-paint, p99" style="display:flex;align-items:center;gap:6px;border:0;background:transparent;color:{{ latColor }};font:inherit;font-size:11px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;cursor:pointer;padding:0"><i class="ph ph-gauge" style="font-size:13px"></i>{{ latLabel }}</button>
+  </sc-if>
+  <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">137:34</span>
+  <span>LF</span><span>UTF-8</span><span>4 spaces</span>
+</footer>
+
+<sc-if value="{{ hud }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="Latency HUD" style="position:absolute;right:12px;bottom:34px;width:310px;padding:11px 12px 12px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-md);z-index:8">
+  <div style="display:flex;align-items:baseline;gap:8px;padding-bottom:8px">
+    <span style="font-family:var(--font-heading);font-size:12.5px">Keystroke → paint</span>
+    <span style="flex:1"></span>
+    <button onClick="{{ toggleHud }}" style="border:0;background:transparent;color:var(--color-neutral-500);cursor:pointer;padding:0;font:inherit"><i class="ph ph-x" style="font-size:12px"></i></button>
+  </div>
+  <div style="display:flex;align-items:flex-end;gap:2px;height:52px;padding-bottom:6px">
+    <sc-for list="{{ latBars }}" as="b" hint-placeholder-count="30">
+      <span style="flex:1;height:{{ b.h }};min-height:2px;border-radius:1px;background:{{ b.c }}"></span>
+    </sc-for>
+  </div>
+  <div style="display:flex;gap:14px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:color-mix(in srgb,var(--color-text) 60%,transparent)">
+    <span>p50 <span style="color:var(--color-text)">{{ p50 }}</span></span>
+    <span>p99 <span style="color:var(--color-text)">{{ p99 }}</span></span>
+    <span>budget <span style="color:var(--color-accent-300)">8.3ms</span></span>
+  </div>
+  <div style="padding-top:8px;font-size:10.5px;line-height:1.4;color:color-mix(in srgb,var(--color-text) 55%,transparent)">One 120 Hz frame is the SLO (§16). Regressions fail CI, not review.</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePalette }}" style="position:absolute;inset:0;background:color-mix(in srgb,#0d0f18 62%,transparent);z-index:10;display:flex;justify-content:center;align-items:flex-start;padding-top:82px">
+  <div data-screen-label="Palette" onClick="{{ stop }}" style="width:min(680px,88%);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-lg);overflow:hidden">
+    <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;box-shadow:inset 0 -1px 0 color-mix(in srgb,var(--color-text) 10%,transparent)">
+      <sc-for list="{{ paletteModes }}" as="m" hint-placeholder-count="3">
+        <button onClick="{{ m.go }}" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:0;border-radius:var(--radius-sm);background:{{ m.bg }};color:{{ m.color }};font:inherit;font-size:12px;cursor:pointer"><i class="{{ m.icon }}" style="font-size:13px"></i>{{ m.n }}</button>
+      </sc-for>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px">
+      <i class="ph ph-magnifying-glass" style="font-size:16px;color:var(--color-neutral-500)"></i>
+      <input value="{{ q }}" onChange="{{ onQuery }}" placeholder="{{ palettePlaceholder }}" autoFocus="{{ true }}" style="flex:1;background:transparent;border:0;outline:none;color:var(--color-text);font:inherit;font-size:16px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">
+      <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ paletteCount }}</span>
+    </div>
+    <div style="max-height:326px;overflow:auto;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <sc-for list="{{ paletteRows }}" as="r" hint-placeholder-count="7">
+        <div style="display:flex;align-items:center;gap:11px;padding:7px 14px;background:{{ r.bg }};cursor:pointer" style-hover="background:color-mix(in srgb,var(--color-accent) 12%,transparent)">
+          <i class="{{ r.icon }}" style="flex:none;font-size:15px;color:{{ r.iconColor }}"></i>
+          <span style="flex:none;font-size:13px">{{ r.n }}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ r.d }}</span>
+          <span style="flex:none;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ r.k }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:7px 14px;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <span>{{ paletteFooter }}</span><span style="flex:1"></span><span>name index in memory-mapped file · {{ paletteTiming }}</span>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ structuralOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePalette }}" style="position:absolute;inset:0;background:color-mix(in srgb,#0d0f18 62%,transparent);z-index:10;display:flex;justify-content:center;align-items:flex-start;padding-top:70px">
+  <div data-screen-label="Structural search" onClick="{{ stop }}" style="width:min(780px,90%);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-lg);overflow:hidden">
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 14px 9px">
+      <i class="ph ph-tree-structure" style="font-size:16px;color:var(--color-accent)"></i>
+      <span style="font-family:var(--font-heading);font-size:14px">Structural search and replace</span>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">tree-sitter query · every language with a grammar</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <div style="background:var(--color-bg);padding:9px 12px">
+        <div style="font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent);padding-bottom:5px">Pattern</div>
+        <pre style="margin:0;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre;color:var(--color-neutral-200)">(method_invocation
+  object: (identifier) @recv
+  name:   (identifier) @m
+  (#eq? @m "isStale"))</pre>
+      </div>
+      <div style="background:var(--color-bg);padding:9px 12px">
+        <div style="font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent);padding-bottom:5px">Replacement</div>
+        <pre style="margin:0;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre;color:var(--color-neutral-200)">@recv.expiredAt(clock.now())</pre>
+        <div style="padding-top:8px;display:flex;gap:6px">
+          <span class="tag tag-neutral" style="font-size:10px">java</span>
+          <span class="tag tag-neutral" style="font-size:10px">go</span>
+          <span class="tag tag-outline" style="font-size:10px">+ 9 packs</span>
+        </div>
+      </div>
+    </div>
+    <div style="max-height:220px;overflow:auto">
+      <sc-for list="{{ structuralHits }}" as="h" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 14px" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+          <i class="ph ph-check-square" style="flex:none;font-size:14px;color:var(--color-accent)"></i>
+          <span style="flex:none;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ h.f }}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:var(--color-neutral-300)">{{ h.t }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">14 matches in 9 files · matched on snapshot v1483, 21 ms</span>
+      <span style="flex:none"></span>
+      <span style="flex:1"></span>
+      <button onClick="{{ closePalette }}" class="btn btn-secondary" style="font-size:12px;padding:5px 10px">Close</button>
+      <button class="btn btn-primary" style="font-size:12px;padding:5px 10px">Replace all</button>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ runPopOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePop }}" style="position:absolute;inset:0;z-index:9">
+  <div onClick="{{ stop }}" data-screen-label="Run configurations" style="position:absolute;left:{{ popLeft }};top:{{ popTop }};width:318px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-md);overflow:hidden">
+    <div style="padding:7px 12px 6px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Run configurations</div>
+    <sc-for list="{{ runConfigs }}" as="r" hint-placeholder-count="4">
+      <button onClick="{{ r.go }}" style="width:100%;display:flex;align-items:center;gap:9px;padding:6px 12px;border:0;background:{{ r.bg }};color:var(--color-text);font:inherit;font-size:12.5px;cursor:pointer;text-align:left" style-hover="background:color-mix(in srgb,var(--color-accent) 14%,transparent)">
+        <i class="{{ r.icon }}" style="flex:none;font-size:14px;color:{{ r.iconColor }}"></i>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.n }}</span>
+        <span style="flex:none;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ r.where }}</span>
+      </button>
+    </sc-for>
+    <div style="box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent);margin-top:5px">
+      <button onClick="{{ openRunEdit }}" style="width:100%;display:flex;align-items:center;gap:9px;padding:7px 12px;border:0;background:transparent;color:var(--color-accent);font:inherit;font-size:12.5px;cursor:pointer;text-align:left" style-hover="background:color-mix(in srgb,var(--color-accent) 12%,transparent)">
+        <i class="ph ph-pencil-simple" style="font-size:14px"></i>Edit configurations…
+      </button>
+      <div style="padding:0 12px 9px;font-size:10.5px;line-height:1.4;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Configurations are declarative — the same file drives Run, Debug and the remote target.</div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ branchPopOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePop }}" style="position:absolute;inset:0;z-index:9">
+  <div onClick="{{ stop }}" data-screen-label="Branches" style="position:absolute;left:10px;bottom:30px;width:340px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-md);overflow:hidden">
+    <div style="padding:9px 12px 8px">
+      <div style="display:flex;align-items:center;gap:7px">
+        <i class="ph ph-git-branch" style="font-size:14px;color:var(--color-accent)"></i>
+        <span style="flex:1;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12.5px">feat/stale-quote-retry</span>
+        <span class="tag tag-accent" style="font-size:10px;padding:2px 7px">current</span>
+      </div>
+      <div style="padding-top:6px;display:flex;gap:12px;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+        <span><span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;color:var(--color-accent-300)">↑2</span> to push</span>
+        <span><span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;color:#c9a96a">↓1</span> to pull</span>
+        <span>tracking <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">origin/feat/stale-quote-retry</span></span>
+      </div>
+      <div style="padding-top:8px;display:flex;gap:6px">
+        <button class="btn btn-primary" style="font-size:11.5px;padding:4px 9px">Update</button>
+        <button class="btn btn-secondary" style="font-size:11.5px;padding:4px 9px">Push</button>
+        <button class="btn btn-secondary" style="font-size:11.5px;padding:4px 9px">New branch here</button>
+      </div>
+    </div>
+    <div style="box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent);padding-top:5px">
+      <div style="padding:2px 12px 4px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Recent</div>
+      <sc-for list="{{ branches }}" as="b" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:9px;padding:5px 12px;cursor:pointer" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+          <i class="{{ b.icon }}" style="flex:none;font-size:13px;color:{{ b.color }}"></i>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px">{{ b.n }}</span>
+          <span style="flex:none;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ b.meta }}</span>
+        </div>
+      </sc-for>
+      <div style="padding:7px 12px 10px;font-size:10.5px;line-height:1.4;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Switching rebuilds file-tree decorations and change gutters from the VCS watcher; open buffers keep their undo history.</div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ crumbPopOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePop }}" style="position:absolute;inset:0;z-index:9">
+  <div onClick="{{ stop }}" data-screen-label="Breadcrumb menu" style="position:absolute;left:{{ crumbLeft }};top:{{ crumbTop }};width:280px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-md);overflow:hidden">
+    <div style="padding:7px 12px 5px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ crumbPopTitle }}</div>
+    <sc-for list="{{ crumbSiblings }}" as="s" hint-placeholder-count="4">
+      <div style="display:flex;align-items:center;gap:9px;padding:5px 12px;background:{{ s.bg }};cursor:pointer" style-hover="background:color-mix(in srgb,var(--color-accent) 14%,transparent)">
+        <span style="flex:none;width:15px;text-align:center;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10px;color:var(--color-accent-400)">{{ s.k }}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px">{{ s.n }}</span>
+        <span style="flex:none;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ s.t }}</span>
+      </div>
+    </sc-for>
+    <div style="padding:7px 12px 9px;font-size:10.5px;line-height:1.4;color:color-mix(in srgb,var(--color-text) 52%,transparent);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent);margin-top:4px">Siblings come from tree-sitter tags, so the trail works before the index is built.</div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePop }}" style="position:absolute;inset:0;background:color-mix(in srgb,#0d0f18 62%,transparent);z-index:11;display:flex;justify-content:center;align-items:center;padding:24px">
+  <div onClick="{{ stop }}" data-screen-label="Settings" style="width:min(860px,100%);max-height:100%;display:flex;flex-direction:column;border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-lg);overflow:hidden">
+    <div style="flex:none;display:flex;align-items:center;gap:10px;padding:11px 14px">
+      <i class="ph ph-sliders-horizontal" style="font-size:16px;color:var(--color-accent)"></i>
+      <span style="font-family:var(--font-heading);font-size:14.5px">Settings</span>
+      <input class="input" placeholder="Search settings…" style="max-width:220px;height:28px;min-height:28px;font-size:12px;margin-left:8px;background:var(--color-bg)">
+      <span style="flex:1"></span>
+      <span style="font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">layered: default → user → workspace · hot-reloaded</span>
+      <button onClick="{{ closePop }}" style="border:0;background:transparent;color:var(--color-neutral-500);cursor:pointer;padding:0;font:inherit"><i class="ph ph-x" style="font-size:14px"></i></button>
+    </div>
+    <div style="flex:1;min-height:0;display:flex;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <div style="flex:none;width:208px;padding:8px 0;overflow:auto;box-shadow:inset -1px 0 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+        <sc-for list="{{ settingsNav }}" as="s" hint-placeholder-count="7">
+          <button onClick="{{ s.go }}" style="width:100%;display:flex;align-items:center;gap:9px;padding:6px 14px;border:0;background:{{ s.bg }};color:{{ s.color }};font:inherit;font-size:12.5px;cursor:pointer;text-align:left" style-hover="background:color-mix(in srgb,var(--color-text) 6%,transparent)">
+            <i class="{{ s.icon }}" style="flex:none;font-size:14px"></i>{{ s.n }}
+          </button>
+        </sc-for>
+      </div>
+      <div style="flex:1;min-width:0;overflow:auto;padding:14px 18px 18px">
+        <h5 style="margin:0 0 3px">{{ settingsPaneTitle }}</h5>
+        <p style="margin:0 0 14px;font-size:12px;color:color-mix(in srgb,var(--color-text) 55%,transparent);max-width:64ch">{{ settingsPaneNote }}</p>
+
+        <sc-if value="{{ settingsServers }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <sc-for list="{{ settingsRows }}" as="r" hint-placeholder-count="4">
+            <div style="display:grid;grid-template-columns:180px 1fr 116px;align-items:center;gap:12px">
+              <span style="font-size:12.5px">{{ r.n }}</span>
+              <span style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ r.d }}</span>
+              <input class="input" value="{{ r.v }}" style="height:28px;min-height:28px;font-size:12px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;background:var(--color-bg)">
+            </div>
+          </sc-for>
+          <div style="display:flex;flex-direction:column;gap:7px;padding-top:6px">
+            <label class="radio"><input type="radio" name="vk-start" defaultChecked="{{ true }}"><span class="dot"></span><span>Start a server on the first file of its language</span></label>
+            <label class="radio"><input type="radio" name="vk-start"><span class="dot"></span><span>Start every server on project open</span></label>
+          </div>
+          <div style="padding-top:8px;display:flex;gap:6px;align-items:center">
+            <span class="tag tag-outline" style="font-size:10px">indexes memory-mapped on disk</span>
+            <span class="tag tag-neutral" style="font-size:10px">background pool: 3 workers, low priority</span>
+          </div>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ settingsEditor }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:11px;max-width:520px">
+          <sc-for list="{{ settingsToggles }}" as="t" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="flex:1;font-size:12.5px">{{ t.n }}<span style="display:block;font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ t.d }}</span></span>
+              <span style="flex:none;width:34px;height:18px;border-radius:9px;background:{{ t.trackBg }};box-shadow:inset 0 0 0 1px {{ t.trackBorder }};position:relative"><span style="position:absolute;top:2px;left:{{ t.knob }};width:14px;height:14px;border-radius:50%;background:{{ t.knobBg }}"></span></span>
+            </div>
+          </sc-for>
+        </div>
+        </sc-if>
+      </div>
+    </div>
+    <div style="flex:none;display:flex;align-items:center;gap:8px;padding:10px 14px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <span style="font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Written to <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">.apex/settings.toml</span> — commit it to share with the team</span>
+      <span style="flex:1"></span>
+      <button onClick="{{ closePop }}" class="btn btn-secondary" style="font-size:12px;padding:5px 10px">Cancel</button>
+      <button onClick="{{ closePop }}" class="btn btn-primary" style="font-size:12px;padding:5px 10px">Apply</button>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ runEditOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closePop }}" style="position:absolute;inset:0;background:color-mix(in srgb,#0d0f18 62%,transparent);z-index:12;display:flex;justify-content:center;align-items:center;padding:24px">
+  <div onClick="{{ stop }}" data-screen-label="Run configuration" style="width:min(780px,100%);max-height:100%;overflow:auto;border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-lg)">
+    <div style="display:flex;align-items:center;gap:10px;padding:11px 14px">
+      <i class="ph ph-play-circle" style="font-size:16px;color:var(--color-accent)"></i>
+      <span style="font-family:var(--font-heading);font-size:14.5px">Run configuration — PaymentsApp</span>
+      <span style="flex:1"></span>
+      <span class="tag tag-neutral" style="font-size:10px">java app</span>
+      <button onClick="{{ closePop }}" style="border:0;background:transparent;color:var(--color-neutral-500);cursor:pointer;padding:0;font:inherit"><i class="ph ph-x" style="font-size:14px"></i></button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 14px 4px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <div class="field"><label>Name</label><input class="input" value="PaymentsApp" style="height:30px;min-height:30px;font-size:12.5px;background:var(--color-bg)"></div>
+      <div class="field"><label>Module</label><input class="input" value="services/orders" style="height:30px;min-height:30px;font-size:12.5px;background:var(--color-bg)"></div>
+      <div class="field"><label>Main class</label><input class="input" value="com.acme.payments.OrdersApplication" style="height:30px;min-height:30px;font-size:12.5px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;background:var(--color-bg)"></div>
+      <div class="field"><label>Working directory</label><input class="input" value="$WORKSPACE/services/orders" style="height:30px;min-height:30px;font-size:12.5px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;background:var(--color-bg)"></div>
+      <div class="field"><label>VM options</label><input class="input" value="-Xmx512m -Dspring.profiles.active=local" style="height:30px;min-height:30px;font-size:12.5px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;background:var(--color-bg)"></div>
+      <div class="field"><label>Environment</label><input class="input" value="DB_URL=postgres://localhost:5432/orders" style="height:30px;min-height:30px;font-size:12.5px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;background:var(--color-bg)"></div>
+    </div>
+    <div style="padding:6px 14px 12px;display:flex;flex-direction:column;gap:10px">
+      <div class="field">
+        <label>Run on</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="seg">
+            <label class="seg-opt"><input type="radio" name="vk-runon" defaultChecked="{{ runOnLocal }}"><i class="ph ph-desktop" style="font-size:13px"></i>This machine</label>
+            <label class="seg-opt"><input type="radio" name="vk-runon" defaultChecked="{{ runOnRemote }}"><i class="ph ph-cloud" style="font-size:13px"></i>build-01.euw1</label>
+          </span>
+          <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">The debug adapter runs beside the target; the configuration is identical either way.</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>Before launch</label>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <sc-for list="{{ beforeLaunch }}" as="b" hint-placeholder-count="2">
+            <div style="display:flex;align-items:center;gap:9px;padding:5px 9px;border-radius:var(--radius-sm);background:var(--color-bg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-text) 9%,transparent)">
+              <i class="{{ b.icon }}" style="flex:none;font-size:13px;color:var(--color-accent)"></i>
+              <span style="flex:1;font-size:12px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">{{ b.n }}</span>
+              <span style="flex:none;font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">{{ b.meta }}</span>
+            </div>
+          </sc-for>
+          <button class="btn btn-ghost" style="font-size:11.5px;align-self:flex-start"><i class="ph ph-plus" style="font-size:12px"></i>Add task</button>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--color-text) 9%,transparent)">
+      <span style="font-size:10.5px;color:color-mix(in srgb,var(--color-text) 52%,transparent)">Stored as <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace">.apex/run/PaymentsApp.toml</span></span>
+      <span style="flex:1"></span>
+      <button onClick="{{ closePop }}" class="btn btn-secondary" style="font-size:12px;padding:5px 10px">Cancel</button>
+      <button onClick="{{ closePop }}" class="btn btn-secondary" style="font-size:12px;padding:5px 10px">Apply</button>
+      <button onClick="{{ runFromEdit }}" class="btn btn-primary" style="font-size:12px;padding:5px 10px"><i class="ph ph-play" style="font-size:12px"></i>Run</button>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ annot }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;right:12px;top:52px;width:238px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--color-accent-900);box-shadow:0 0 0 1px var(--color-accent-700);font-size:10.5px;line-height:1.4;color:var(--color-accent-200);z-index:7">
+  <span style="display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-400);padding-bottom:3px">Spec pins — on</span>
+  Each pin ties a region of the UI to the section of the design doc that governs it. §9.10 commands, keymaps and settings are data; this toolbar only dispatches commands from the registry.
+</div>
+</sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;compact&quot;,&quot;default&quot;,&quot;roomy&quot;],&quot;default&quot;:&quot;roomy&quot;,&quot;tsType&quot;:&quot;'compact'|'default'|'roomy'&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;toolSide&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;left&quot;,&quot;right&quot;],&quot;default&quot;:&quot;left&quot;,&quot;tsType&quot;:&quot;'left'|'right'&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;perfReadout&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;status&quot;,&quot;hud&quot;,&quot;off&quot;],&quot;default&quot;:&quot;hud&quot;,&quot;tsType&quot;:&quot;'status'|'hud'|'off'&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;completionStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;list&quot;,&quot;detail&quot;],&quot;default&quot;:&quot;detail&quot;,&quot;tsType&quot;:&quot;'list'|'detail'&quot;,&quot;section&quot;:&quot;Editor&quot;},&quot;showInlay&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Editor&quot;},&quot;remoteBanner&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Remote&quot;}}">
+const A='var(--color-accent)', AC='var(--color-accent-300)', MUT='color-mix(in srgb,var(--color-text) 55%,transparent)';
+const ERR='#d4736a', WARN='#c9a96a', OK='#7fa98f';
+const SEL='color-mix(in srgb,var(--color-accent) 18%,transparent)';
+const DENS={compact:{line:19,row:22,fs:12.5,code:12.5,tool:250,dock:206},default:{line:21,row:25,fs:13,code:13,tool:276,dock:236},roomy:{line:25,row:30,fs:13.5,code:13.5,tool:310,dock:268}};
+
+class Component extends DCLogic {
+  state={tool:'project',toolOpen:true,view:'editor',tab:0,dock:'terminal',dockOpen:true,
+    pop:null,setg:'servers',runCfg:'PaymentsApp',crumb:-1,anchor:{left:206,top:44},
+    palette:null,q:'',compQ:'',comp:true,cancelled:false,remote:false,hud:false,debug:false,annot:false,
+    lat:Array.from({length:34},(_,i)=>2.4+((i*7)%11)/4),idx:0.62};
+
+  componentDidMount(){
+    this.applyDensity();
+    this._k=(e)=>{
+      const m=e.metaKey||e.ctrlKey;
+      if(m&&e.key.toLowerCase()==='k'){e.preventDefault();this.setState({palette:'files',q:''});}
+      else if(m&&e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();this.setState({palette:'commands',q:''});}
+      else if(m&&e.shiftKey&&e.key.toLowerCase()==='s'){e.preventDefault();this.setState({palette:'structural'});}
+      else if(e.key==='Escape'){this.setState({palette:null,hud:false,pop:null,crumb:-1});}
+      else if(e.key==='F9'){e.preventDefault();this.toggleDebug();}
+    };
+    window.addEventListener('keydown',this._k);
+    this._t=setInterval(()=>this.setState(s=>({
+      lat:[...s.lat.slice(1),Math.round((2.2+Math.random()*3.6+(Math.random()>0.94?4.4:0))*10)/10],
+      idx:s.idx>=1?0.34:Math.round((s.idx+0.02)*100)/100
+    })),950);
+  }
+  componentWillUnmount(){window.removeEventListener('keydown',this._k);clearInterval(this._t);clearTimeout(this._c);}
+  componentDidUpdate(p){if(p.density!==this.props.density)this.applyDensity();}
+  applyDensity(){
+    const d=DENS[this.props.density||'default']||DENS.default, r=document.documentElement.style;
+    r.setProperty('--vk-line',d.line+'px');r.setProperty('--vk-row',d.row+'px');
+    r.setProperty('--vk-fs',d.fs+'px');r.setProperty('--vk-code',d.code+'px');
+    r.setProperty('--vk-tool',d.tool+'px');r.setProperty('--vk-dock',d.dock+'px');
+  }
+  toggleDebug=()=>this.setState(s=>({debug:!s.debug,dock:!s.debug?'debug':'terminal',dockOpen:true,view:'editor'}));
+  go=(k,v)=>()=>this.setState({[k]:v});
+  anchorTo=(e,w,gap)=>{
+    const r=e.currentTarget.getBoundingClientRect();
+    return {left:Math.max(8,Math.min(r.left,window.innerWidth-w-8)),top:r.bottom+(gap||4)};
+  };
+  openDock=(d)=>()=>this.setState({dock:d,dockOpen:true});
+  onType=(e)=>{
+    const v=e.target.value; clearTimeout(this._c);
+    this.setState({compQ:v,cancelled:true});
+    this._c=setTimeout(()=>this.setState({cancelled:false}),900);
+  };
+
+  renderVals(){
+    const s=this.state, p=this.props;
+    const file=['OrderService.java','pricing.go','apex.toml'][s.tab];
+    const remote=s.remote, perf=p.perfReadout||'status';
+    const lat=s.lat, sorted=[...lat].sort((a,b)=>a-b);
+    const p99=sorted[Math.floor(sorted.length*0.99)-1]||sorted[sorted.length-1], p50=sorted[Math.floor(sorted.length/2)];
+    const idxRunning=s.idx<1;
+    const hostName=remote?'build-01.euw1':'this machine';
+
+    const railItems=[['project','ph ph-folder-open','Project'],['structure','ph ph-list-dashes','Structure'],
+      ['vcs','ph ph-git-branch','Commit'],['search','ph ph-magnifying-glass','Find in project'],
+      ['history','ph ph-clock-counter-clockwise','Local history'],['plugins','ph ph-puzzle-piece','Packs and extensions']];
+    const activeRail=s.view==='plugins'?'plugins':s.tool;
+
+    const tabMeta=[['ph ph-file-code',AC,true],['ph ph-file-code','#8fb3a5',false],['ph ph-gear-six','#c9a96a',true]];
+    const crumbSrc=[['services','orders','src/main/java','OrderService','confirm()'],
+      ['services','pricing','pricing.go','Server.Quote'],['packs','apex.toml','[language_server]']][s.tab];
+
+    const treeSrc=[[0,'payments-platform','ph ph-cube',''],[1,'services','ph ph-folder',''],
+      [2,'orders','ph ph-package',''],[3,'OrderService.java','ph ph-file-code','M'],
+      [3,'OrderRepository.java','ph ph-file-code',''],[3,'OrderConfirmed.java','ph ph-file-code',''],
+      [2,'pricing','ph ph-package',''],[3,'pricing.go','ph ph-file-code','M'],
+      [3,'pricing_test.go','ph ph-file-code',''],[1,'packs','ph ph-folder',''],
+      [2,'apex.toml','ph ph-gear-six','A'],[2,'go.toml','ph ph-gear-six',''],
+      [1,'deploy','ph ph-folder',''],[1,'README.md','ph ph-file-text','']];
+
+    const compAll=[
+      ['capture','(PaymentRef ref, Money amount) → Charge','M','jdtls',1],
+      ['captureAsync','(PaymentRef ref, Money amount) → CompletableFuture<Charge>','M','jdtls',1],
+      ['capturePartial','(PaymentRef ref, Money amount, Split split) → Charge','M','jdtls',1],
+      ['capturedAt','() → Instant','M','jdtls',1],
+      ['CAPTURE_TIMEOUT','Duration — static field','F','jdtls',1],
+      ['capture_ref','payments.capture_ref — column','C','sql pack',0.55]];
+    const compQ=s.compQ.trim().toLowerCase();
+    const compList=compQ?compAll.filter(c=>c[0].toLowerCase().includes(compQ)):compAll;
+
+    const files=[['OrderService.java','services/orders/src/main/java/…','ph ph-file-code',AC,'⏎'],
+      ['OrderConfirmed.java','services/orders/src/main/java/events/','ph ph-file-code',AC,''],
+      ['pricing.go','services/pricing/','ph ph-file-code','#8fb3a5',''],
+      ['order_service_test.go','services/pricing/internal/','ph ph-file-code','#8fb3a5',''],
+      ['apex.toml','packs/ — language pack manifest','ph ph-gear-six',WARN,''],
+      ['OrderService.confirm()','symbol · from tree-sitter tags','ph ph-function',AC,''],
+      ['orders-ordering.md','docs/adr/','ph ph-file-text',MUT,'']];
+    const cmds=[['Reload language pack','packs/apex.toml — no restart','ph ph-arrows-clockwise',AC,'⌘⇧R'],
+      ['Restart language server','jdtls · 1.14 GB','ph ph-power',AC,''],
+      ['Structural search and replace','tree-sitter query across packs','ph ph-tree-structure',AC,'⌘⇧S'],
+      ['Toggle local history','per-file rope snapshots','ph ph-clock-counter-clockwise',AC,''],
+      ['Attach to remote host','build-01.euw1 · SSH','ph ph-cloud',AC,'⌘⇧H'],
+      ['Show frame timings','keystroke → paint p99','ph ph-gauge',AC,''],
+      ['Extract method','jdtls refactoring','ph ph-scissors',AC,'⌘⌥M']];
+    const q=s.q.trim().toLowerCase();
+    const rows=(s.palette==='commands'?cmds:files).filter(r=>!q||r[0].toLowerCase().includes(q)||r[1].toLowerCase().includes(q));
+
+    const srvSrc=[
+      ['jdtls — java · '+(remote?'remote':'local'),'1.14 GB','18%',72,A,'Restart',OK],
+      ['gopls — go · '+(remote?'remote':'local'),'214 MB','3%',14,A,'Restart',OK],
+      ['gradle daemon','1.61 GB','41%',88,WARN,'Stop',WARN],
+      ['apex (UI, buffers, glyph atlas)','268 MB','6%',17,'var(--color-accent-600)','',OK],
+      ['tree-sitter pool — 11 grammars','34 MB','2%',4,'var(--color-accent-600)','',OK]];
+
+    return {
+      density:p.density||'default',
+      rail:railItems.map(([k,icon,title])=>({icon,title,
+        bg:activeRail===k?'color-mix(in srgb,var(--color-text) 8%,transparent)':'transparent',
+        color:activeRail===k?'var(--color-text)':'var(--color-neutral-500)',
+        mark:activeRail===k?A:'transparent',
+        go:()=>this.setState(k==='plugins'?{view:'plugins'}:{tool:k,toolOpen:true,view:'editor'})})),
+      toolOpen:s.toolOpen, toggleTool:()=>this.setState(x=>({toolOpen:!x.toolOpen})),
+      toolTitle:{project:'Project',structure:'Structure',vcs:'Commit',search:'Find in project',history:'Local history'}[s.tool]||'Project',
+      toolMeta:{project:remote?'build-01 · 12 480 files':'12 480 files',structure:'tree-sitter tags',vcs:'4 changed',search:'streaming',history:'last 3 days'}[s.tool]||'',
+      isProject:s.tool==='project',isStructure:s.tool==='structure',isVcs:s.tool==='vcs',isSearch:s.tool==='search',isHistory:s.tool==='history',
+
+      tree:treeSrc.map(([d,n,icon,vcs])=>({n,icon,pad:(10+d*13)+'px',
+        bg:n===file?SEL:'transparent', color:n===file?'var(--color-text)':'var(--color-neutral-300)',
+        iconColor:vcs==='M'?WARN:(vcs==='A'?OK:'var(--color-neutral-500)'),
+        vcs, vcsColor:vcs==='M'?WARN:OK,
+        go:()=>{const i=['OrderService.java','pricing.go','apex.toml'].indexOf(n); if(i>=0)this.setState({tab:i,view:'editor'});}})),
+      structure:[['C','OrderService','class',0],['f','orders','OrderRepository',1],['f','pricing','PricingClient',1],
+        ['m','confirm(OrderId, PaymentRef)','Receipt',1],['m','assertLimits(Order)','void',1],
+        ['m','cancel(OrderId, Reason)','Receipt',1],['C','TooManyLines','class',0],['m','message()','String',1]]
+        .map(([k,n,t,d])=>({k,n,t,pad:(12+d*16)+'px'})),
+      changes:[['M','OrderService.java','services/orders',WARN],['M','pricing.go','services/pricing',WARN],
+        ['A','apex.toml','packs',OK],['M','OrderServiceTest.java','services/orders',WARN]]
+        .map(([st,n,d,color])=>({s:st,n,d,color,go:()=>this.setState({view:'diff'})})),
+      results:[['services/orders/…/OrderService.java','132','    if (quote.isStale()) {'],
+        ['services/orders/…/OrderService.java','207','    return quote.isStale() ? retry() : ok();'],
+        ['services/pricing/pricing.go','88','\tif q.IsStale() { return s.refresh(ctx, q) }'],
+        ['services/orders/…/OrderServiceTest.java','44','    when(quote.isStale()).thenReturn(true);'],
+        ['docs/adr/orders-ordering.md','12','quote.isStale() drives the retry path'],
+        ['services/pricing/internal/cache.go','19','\t// stale entries are swept lazily']]
+        .map(([f,l,t])=>({f,l,t})),
+      history:[['Typing run — confirm() retry branch','2 minutes ago',A,'var(--color-text)'],
+        ['Saved','14 minutes ago','var(--color-accent-600)',MUT],
+        ['External change — git pull','1 hour ago','var(--color-neutral-600)',MUT],
+        ['Typing run — assertLimits()','1 hour ago','var(--color-accent-600)',MUT],
+        ['Refactoring — extract method','yesterday 18:40','var(--color-neutral-600)',MUT],
+        ['File created','3 days ago','var(--color-neutral-600)',MUT]]
+        .map(([n,t,dot,color])=>({n,t,dot,color})),
+
+      tabs:['OrderService.java','pricing.go','apex.toml'].map((n,i)=>({n,
+        icon:tabMeta[i][0],iconColor:tabMeta[i][1],
+        dirty:tabMeta[i][2]?'var(--color-accent)':'transparent',
+        bg:s.tab===i&&s.view!=='plugins'?'var(--color-bg)':'transparent',
+        color:s.tab===i&&s.view!=='plugins'?'var(--color-text)':'color-mix(in srgb,var(--color-text) 55%,transparent)',
+        mark:s.tab===i&&s.view!=='plugins'?A:'transparent',
+        go:()=>this.setState({tab:i,view:'editor'})})),
+      crumbs:crumbSrc.map((n,i)=>{
+        const last=i===crumbSrc.length-1;
+        const icon=i===0?'ph ph-folder':(n.includes('.')?'ph ph-file-code':(last?(n.endsWith('()')?'ph ph-function':'ph ph-brackets-curly'):'ph ph-package'));
+        return {n,icon,
+          iconColor:last?AC:'var(--color-neutral-600)',
+          color:last?'var(--color-text)':'inherit',
+          bg:s.crumb===i?'color-mix(in srgb,var(--color-accent) 16%,transparent)':'transparent',
+          go:(e)=>this.setState({pop:'crumb',crumb:i,anchor:this.anchorTo(e,280,2)})};
+      }),
+      crumbSource:'from tree-sitter tags',
+      crumbPopOpen:s.pop==='crumb',
+      crumbPopTitle:s.crumb<=2?'Siblings in '+(crumbSrc[s.crumb-1]||'payments-platform'):'Members of '+(s.tab===0?'OrderService':(s.tab===1?'Server':'apex.toml')),
+      crumbLeft:s.anchor.left+'px', crumbTop:s.anchor.top+'px',
+      popLeft:s.anchor.left+'px', popTop:s.anchor.top+'px',
+      crumbSiblings:(s.crumb<=2
+        ?[['▸','orders','module',true],['▸','pricing','module',false],['▸','ledger','module',false],
+          ['·','build.gradle.kts','file',false],['·','settings.gradle.kts','file',false]]
+        :[['m','confirm(OrderId, PaymentRef)','Receipt',true],['m','cancel(OrderId, Reason)','Receipt',false],
+          ['m','assertLimits(Order)','void',false],['f','orders','OrderRepository',false],['C','TooManyLines','nested class',false]])
+        .map(([k,n,t,act])=>({k,n,t,bg:act?'color-mix(in srgb,var(--color-accent) 18%,transparent)':'transparent'})),
+
+      runConfigName:s.runCfg,
+      runBorder:s.pop==='run'?'var(--color-accent)':'color-mix(in srgb,var(--color-text) 12%,transparent)',
+      openRunConfig:(e)=>this.setState({pop:'run',anchor:this.anchorTo(e,318,4)}),
+      runPopOpen:s.pop==='run',
+      runConfigs:[['PaymentsApp','ph ph-coffee',AC,remote?'build-01':'local'],
+        ['PaymentsApp (debug, remote)','ph ph-bug',AC,'build-01'],
+        ['OrderServiceTest','ph ph-test-tube','#8fb3a5','local'],
+        ['pricing service','ph ph-file-code','#8fb3a5',remote?'build-01':'local'],
+        ['gradle :orders:test','ph ph-wrench',WARN,'local']]
+        .map(([n,icon,iconColor,where])=>({n,icon,iconColor,where,
+          bg:s.runCfg===n?'color-mix(in srgb,var(--color-accent) 16%,transparent)':'transparent',
+          go:()=>this.setState({runCfg:n,pop:null})})),
+      openRunEdit:()=>this.setState({pop:'runEdit'}),
+      runEditOpen:s.pop==='runEdit',
+      runOnLocal:!remote, runOnRemote:remote,
+      runFromEdit:()=>this.setState({pop:null,dock:'terminal',dockOpen:true}),
+      beforeLaunch:[['gradle :orders:classes','ph ph-wrench','2.1 s cached'],['docker compose up -d postgres','ph ph-shipping-container','already running']]
+        .map(([n,icon,meta])=>({n,icon,meta})),
+
+      openBranch:()=>this.setState({pop:'branch'}),
+      branchPopOpen:s.pop==='branch',
+      branchBg:s.pop==='branch'?'color-mix(in srgb,var(--color-text) 8%,transparent)':'transparent',
+      branchColor:s.pop==='branch'?'var(--color-text)':'inherit',
+      branches:[['main','ph ph-git-branch','var(--color-neutral-500)','↓4 · protected'],
+        ['feat/pricing-cache','ph ph-git-branch','var(--color-neutral-500)','2 days ago'],
+        ['hotfix/idempotent-capture','ph ph-git-branch','var(--color-neutral-500)','last week'],
+        ['origin/release/24.3','ph ph-cloud','var(--color-neutral-600)','remote only']]
+        .map(([n,icon,color,meta])=>({n,icon,color,meta})),
+
+      openSettings:()=>this.setState({pop:'settings'}),
+      settingsOpen:s.pop==='settings',
+      settingsBg:s.pop==='settings'?'color-mix(in srgb,var(--color-text) 8%,transparent)':'transparent',
+      settingsColor:s.pop==='settings'?'var(--color-text)':'var(--color-neutral-400)',
+      settingsNav:[['servers','Servers and resources','ph ph-gauge'],['editor','Editor','ph ph-text-aa'],
+        ['keymap','Keymap','ph ph-keyboard'],['packs','Language packs','ph ph-puzzle-piece'],
+        ['appearance','Appearance','ph ph-palette'],['remote','Remote hosts','ph ph-cloud'],
+        ['vcs','Version control','ph ph-git-branch']]
+        .map(([k,n,icon])=>({n,icon,
+          bg:s.setg===k?'color-mix(in srgb,var(--color-accent) 16%,transparent)':'transparent',
+          color:s.setg===k?'var(--color-text)':'color-mix(in srgb,var(--color-text) 62%,transparent)',
+          go:()=>this.setState({setg:k==='editor'?'editor':'servers'})})),
+      settingsServers:s.setg!=='editor',
+      settingsEditor:s.setg==='editor',
+      settingsPaneTitle:s.setg==='editor'?'Editor':'Servers and resources',
+      settingsPaneNote:s.setg==='editor'
+        ?'Everything here is a setting, not a rebuild — the display map picks changes up on the next frame.'
+        :'Per-server limits and lifecycle. On a 12 GB machine these are the numbers that decide whether the IDE stays inside its budget.',
+      settingsRows:[['jdtls heap','-Xmx passed to the server process','1200M'],
+        ['gopls memory hint','soft cap before a restart is offered','512M'],
+        ['idle stop','stop a server unused for this long','10m'],
+        ['background workers','low priority, never starves the UI thread','3'],
+        ['glyph atlas ceiling','evicted, never grown without bound','96M']]
+        .map(([n,d,v])=>({n,d,v})),
+      settingsToggles:[['Inlay hints','inferred types and parameter names as virtual text',true],
+        ['Soft wrap','wrap at the viewport edge, layered over the buffer',false],
+        ['Show stale results dimmed','rather than hiding them until fresh ones arrive',true],
+        ['Highlight while typing','keep old colours until the new tree arrives',true],
+        ['Local history','rope snapshots per typing run',true]]
+        .map(([n,d,on])=>({n,d,
+          trackBg:on?'color-mix(in srgb,var(--color-accent) 30%,transparent)':'transparent',
+          trackBorder:on?'var(--color-accent)':'color-mix(in srgb,var(--color-text) 20%,transparent)',
+          knob:on?'18px':'2px',
+          knobBg:on?'var(--color-accent-200)':'var(--color-neutral-600)'})),
+
+      closePop:()=>this.setState({pop:null,crumb:-1}),
+      collapseIcon:'ph ph-caret-double-left',
+
+      isEditor:s.view==='editor',isDiff:s.view==='diff',isPlugins:s.view==='plugins',
+      isJava:s.view==='editor'&&s.tab===0,isGo:s.view==='editor'&&s.tab===1,isToml:s.view==='editor'&&s.tab===2,
+      openDiff:()=>this.setState({view:'diff'}),
+      hintOrder:p.showInlay===false?'':'  : Order',
+      hintQuote:p.showInlay===false?'':'  : Quote',
+      caretLineBg:s.debug?'transparent':'color-mix(in srgb,var(--color-text) 5%,transparent)',
+      execLineBg:s.debug?'color-mix(in srgb,var(--color-accent) 20%,transparent)':'transparent',
+      execHint:s.debug?'order = Order(id=41c9, total=128.40 EUR)':'',
+      execHintColor:s.debug?AC:'transparent',
+
+      indexing:idxRunning, idxPct:Math.round(s.idx*100)+'%',
+
+      rowDir:p.toolSide==='right'?'row-reverse':'row',
+      showRemoteBanner:remote&&p.remoteBanner!==false,
+      compDetail:p.completionStyle==='detail',
+      compWidth:p.completionStyle==='detail'?'620px':'430px',
+      comp:s.comp&&s.view==='editor'&&s.tab===0,
+      compQ:s.compQ, onType:this.onType,
+      compTiming:s.cancelled?'requesting…':'41 ms',
+      compDot:s.cancelled?WARN:OK,
+      cancelNote:s.cancelled?'⟲ previous request cancelled at v1483':'',
+      cancelColor:WARN,
+      staleNote:s.cancelled?'showing v1482 results while the new ones arrive':'jdtls + sql pack, merged by source',
+      completions:compList.map((c,i)=>({n:c[0],d:c[1],k:c[2],src:c[3],op:c[4],
+        bg:i===0?'color-mix(in srgb,var(--color-accent) 20%,transparent)':'transparent',
+        kbg:c[2]==='M'?'var(--color-accent-800)':'var(--color-neutral-800)',
+        kfg:c[2]==='M'?'var(--color-accent-200)':'var(--color-neutral-200)',
+        srcColor:c[4]<1?WARN:MUT})),
+
+      diffLeft:[[128,'public Receipt confirm(OrderId id) {','transparent',''],
+        [129,'    var order = orders.require(id);','transparent',''],
+        [130,'    order.assertConfirmable();','transparent',''],
+        [131,'','transparent',''],
+        [132,'    var quote = pricing.quote(order);','color-mix(in srgb,'+ERR+' 14%,transparent)',ERR],
+        [133,'','transparent',''],
+        [134,'    var charge = payments.capture(ref);','color-mix(in srgb,'+ERR+' 14%,transparent)',ERR],
+        [135,'    order.confirm(charge.id());','transparent',''],
+        [136,'    return Receipt.of(order, charge);','transparent',''],
+        [137,'}','transparent','']]
+        .map(([n,t,bg,c])=>({n,t,bg,color:c||'var(--color-neutral-300)'})),
+      diffRight:[[128,'public Receipt confirm(OrderId id, PaymentRef ref) {','color-mix(in srgb,'+OK+' 14%,transparent)',OK],
+        [129,'    var order = orders.require(id);','transparent',''],
+        [130,'    order.assertConfirmable();','transparent',''],
+        [131,'','transparent',''],
+        [132,'    var quote = pricing.quote(order.lines());','color-mix(in srgb,'+OK+' 14%,transparent)',OK],
+        [133,'    if (quote.isStale()) {','color-mix(in srgb,'+OK+' 14%,transparent)',OK],
+        [134,'        return Receipt.retry(quote.ttl());','color-mix(in srgb,'+OK+' 14%,transparent)',OK],
+        [135,'    }','color-mix(in srgb,'+OK+' 14%,transparent)',OK],
+        [136,'','transparent',''],
+        [137,'    var charge = payments.capture(ref, quote.total());','color-mix(in srgb,'+OK+' 14%,transparent)',OK]]
+        .map(([n,t,bg,c])=>({n,t,bg,color:c||'var(--color-neutral-300)'})),
+
+      plugins:[
+        ['Java pack','ph ph-coffee','Pack','tag-accent','Grammar, queries, jdtls and the java debug adapter — all declared in packs/apex.toml.',['fs.read'],'Bundled · ships as data',OK,'Edit manifest'],
+        ['Go pack','ph ph-file-code','Pack','tag-accent','gopls, delve, gofmt on save. Added by dropping one manifest in packs/.',['fs.read','process.spawn'],'Enabled',OK,'Disable'],
+        ['IntelliJ keymap','ph ph-keyboard','Pack','tag-neutral','The whole keymap is a data file resolved per key event — layered under your overrides.',['—'],'Active keymap',OK,'Open'],
+        ['Nocturne theme','ph ph-palette','Pack','tag-neutral','Palette plus scope → style mappings consumed by the highlight layer.',['—'],'Active theme',OK,'Open'],
+        ['Docker tools','ph ph-shipping-container','WASM','tag-outline','Containers panel and compose run configurations. Sandboxed, metered, killed if it hangs.',['fs.read','process.spawn','net'],'42 MB · 0.3% CPU',OK,'Permissions'],
+        ['SQL console','ph ph-database','WASM','tag-outline','Adds completion inside SQL strings via injections. Contributes a panel as data, never draws.',['fs.read','net','secrets'],'Update available 1.4.0',WARN,'Update']]
+        .map(([n,icon,kind,tagClass,d,caps,meta,dot,action])=>({n,icon,kind,tagClass,d,caps,meta,dot,action})),
+
+      dockOpen:s.dockOpen, closeDock:()=>this.setState({dockOpen:false}),
+      dockTitle:{terminal:remote?'Terminal — build-01.euw1':'Terminal — local',debug:'Debug — PaymentsApp',problems:'Problems',resources:'Resources'}[s.dock],
+      dockMeta:{terminal:'PTY · zsh',debug:s.debug?'paused at OrderService.java:140':'not running',problems:'1 error · 2 warnings · 1 stale',resources:'polled every 2 s'}[s.dock],
+      dockAnnot:{terminal:'§9.8 PTY spawned beside the target — local or remote, same code path.',
+        debug:'§9.7 DAP adapter runs beside the target; breakpoints are anchors, variables fetch lazily.',
+        problems:'§9.6 diagnostics merged by source; stale results labelled, never awaited.',
+        resources:'§17.1 every server\u2019s cost is visible — the 12 GB budget is a design constraint.'}[s.dock],
+      isTerminal:s.dock==='terminal',isDebugPanel:s.dock==='debug',isProblems:s.dock==='problems',isResources:s.dock==='resources',
+      dockTabs:[['terminal','Terminal','ph ph-terminal-window',''],['debug','Debug','ph ph-bug',s.debug?'paused':''],
+        ['problems','Problems','ph ph-warning-circle','1'],['resources','Resources','ph ph-gauge',remote?'remote':'']]
+        .map(([k,n,icon,badge])=>({n,icon,badge,
+          bg:s.dock===k&&s.dockOpen?'var(--color-neutral-900)':'transparent',
+          color:s.dock===k&&s.dockOpen?'var(--color-text)':'color-mix(in srgb,var(--color-text) 55%,transparent)',
+          badgeColor:badge==='paused'?AC:WARN, go:this.openDock(k)})),
+
+      term:[['ssh build-01.euw1 — connected in 240 ms, agent 0.4.2','color-mix(in srgb,var(--color-text) 55%,transparent)'],
+        ['~/payments-platform ❯ ./gradlew :orders:test --tests OrderServiceTest',  'var(--color-text)'],
+        ['> Task :orders:compileJava','var(--color-neutral-400)'],
+        ['> Task :orders:test','var(--color-neutral-400)'],
+        ['OrderServiceTest > confirmsWhenQuoteFresh() PASSED',OK],
+        ['OrderServiceTest > retriesWhenQuoteStale() PASSED',OK],
+        ['BUILD SUCCESSFUL in 6s',OK],
+        ['4 actionable tasks: 2 executed, 2 up-to-date','var(--color-neutral-500)']]
+        .map(([t,color])=>({t,color})),
+      shellPrompt:remote?'build-01 ❯':'~/payments-platform ❯',
+
+      debugBtns:[['ph ph-play','Resume',s.debug?A:'var(--color-neutral-600)'],['ph ph-pause','Pause','var(--color-neutral-500)'],
+        ['ph ph-arrow-down','Step over','var(--color-neutral-300)'],['ph ph-arrow-line-down','Step into','var(--color-neutral-300)'],
+        ['ph ph-arrow-line-up','Step out','var(--color-neutral-300)'],['ph ph-stop','Stop',ERR]]
+        .map(([icon,title,color])=>({icon,title,color})),
+      frames:[['OrderService.confirm','OrderService.java:140',true],
+        ['OrderCommandHandler.handle','OrderCommandHandler.java:58',false],
+        ['CommandBus.dispatch','CommandBus.java:112',false],
+        ['HttpAdapter.post','HttpAdapter.java:41',false],
+        ['ThreadPoolExecutor.runWorker','ThreadPoolExecutor.java:1144',false]]
+        .map(([n,l,act])=>({n,l,bg:act?SEL:'transparent',color:act?'var(--color-text)':'var(--color-neutral-400)'})),
+      vars:[['order','Order','id=41c9, total=128.40 EUR','ph ph-caret-down',0],
+        ['id','OrderId','41c9-7ab2','ph ph-dot-outline',1],
+        ['lines','List<Line>','size = 3','ph ph-caret-right',1],
+        ['customer','Customer','Customer(tier=PRO)','ph ph-caret-right',1],
+        ['quote','Quote','total=128.40, ttl=30s, stale=false','ph ph-caret-right',0],
+        ['ref','PaymentRef','pi_3PkQ…','ph ph-dot-outline',0],
+        ['this','OrderService','OrderService@6f2b','ph ph-caret-right',0]]
+        .map(([n,t,v,icon,d])=>({n,t,v,icon,pad:(12+d*16)+'px'})),
+
+      problems:[['Required type Money, provided BigDecimal','OrderService.java:137','jdtls',ERR,'ph ph-x-circle',1],
+        ['Unused import java.time.Duration','OrderService.java:14','jdtls',WARN,'ph ph-warning-circle',1],
+        ['err shadows outer err','pricing.go:44','gopls',WARN,'ph ph-warning-circle',1],
+        ['Prefer Receipt.retry over null return','OrderService.java:133','jdtls · stale v1482',MUT,'ph ph-info',0.5]]
+        .map(([t,where,src,color,icon,op])=>({t,where,src,color,icon,op})),
+
+      servers:srvSrc.map(([n,mem,cpu,w,bar,action,dot])=>({n,mem,cpu,w:w+'%',bar,action,dot})),
+      budgetUsed:'3.27 GB',
+      statusServers:[{dot:OK,label:'jdtls 1.14 GB'},{dot:OK,label:'gopls 214 MB'}],
+
+      perfVisible:perf!=='off',
+      latLabel:'p99 '+p99.toFixed(1)+' ms',
+      latColor:p99>8.3?WARN:AC,
+      hud:s.hud||perf==='hud', toggleHud:()=>this.setState(x=>({hud:!(x.hud||perf==='hud')})),
+      latBars:lat.map(v=>({h:Math.min(100,(v/11)*100)+'%',c:v>8.3?WARN:'var(--color-accent-600)'})),
+      p50:p50.toFixed(1)+' ms', p99:p99.toFixed(1)+' ms',
+
+      remote, toggleRemote:()=>this.setState(x=>({remote:!x.remote})),
+      hostLabel:remote?'build-01.euw1':'Local',
+      hostStatus:remote?'build-01.euw1 · 18 ms RTT':'Local machine',
+      hostIcon:remote?'ph ph-cloud-check':'ph ph-desktop',
+      hostIconName:hostName,
+      hostColor:remote?AC:'color-mix(in srgb,var(--color-text) 58%,transparent)',
+      hostBorder:remote?'var(--color-accent)':'color-mix(in srgb,var(--color-text) 12%,transparent)',
+      hostBg:remote?'color-mix(in srgb,var(--color-accent) 12%,transparent)':'transparent',
+
+      annot:s.annot, toggleAnnot:()=>this.setState(x=>({annot:!x.annot})),
+      annotColor:s.annot?A:'color-mix(in srgb,var(--color-text) 55%,transparent)',
+      annotBorder:s.annot?'var(--color-accent)':'color-mix(in srgb,var(--color-text) 12%,transparent)',
+      debugIconColor:s.debug?A:'var(--color-neutral-300)',
+      toggleDebug:this.toggleDebug,
+
+      paletteOpen:s.palette==='files'||s.palette==='commands',
+      structuralOpen:s.palette==='structural',
+      openFiles:()=>this.setState({palette:'files',q:''}),
+      openCommands:()=>this.setState({palette:'commands',q:''}),
+      openStructural:()=>this.setState({palette:'structural'}),
+      closePalette:()=>this.setState({palette:null}),
+      stop:(e)=>e.stopPropagation(),
+      q:s.q, onQuery:(e)=>this.setState({q:e.target.value}),
+      palettePlaceholder:s.palette==='commands'?'Run a command…':'Files, symbols, actions — everything, indexed or not',
+      paletteCount:rows.length+' of '+(s.palette==='commands'?cmds.length:'12 480'),
+      paletteTiming:s.palette==='commands'?'command registry · 0 ms':'6 ms for 12 480 files',
+      paletteFooter:idxRunning?'Index is '+Math.round(s.idx*100)+'% built — symbol results come from tree-sitter tags meanwhile':'⏎ open · ⇥ preview · ⌘⏎ open in split',
+      paletteModes:[['files','Files and symbols','ph ph-file-magnifying-glass'],['commands','Commands','ph ph-command'],['structural','Structural','ph ph-tree-structure']]
+        .map(([k,n,icon])=>({n,icon,
+          bg:s.palette===k?'color-mix(in srgb,var(--color-accent) 18%,transparent)':'transparent',
+          color:s.palette===k?'var(--color-text)':'color-mix(in srgb,var(--color-text) 55%,transparent)',
+          go:()=>this.setState({palette:k})})),
+      paletteRows:rows.map((r,i)=>({n:r[0],d:r[1],icon:r[2],iconColor:r[3],k:r[4],
+        bg:i===0?'color-mix(in srgb,var(--color-accent) 18%,transparent)':'transparent'})),
+      structuralHits:[['OrderService.java:132','    if (quote.isStale()) {'],
+        ['OrderService.java:207','    return quote.isStale() ? retry() : ok();'],
+        ['OrderServiceTest.java:44','    when(quote.isStale()).thenReturn(true);'],
+        ['CartPricing.java:88','    if (basketQuote.isStale()) refresh();']]
+        .map(([f,t])=>({f,t}))
+    };
+  }
+}
+
+</script>
+</body>
+</html>

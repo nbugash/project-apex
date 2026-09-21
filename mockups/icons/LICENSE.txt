@@ -1,0 +1,4 @@
+Phosphor Icons — MIT License
+Copyright (c) 2023 Phosphor Icons
+Upstream: https://github.com/phosphor-icons/web
+Full license: https://github.com/phosphor-icons/core/blob/main/LICENSE
