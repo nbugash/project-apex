@@ -16,7 +16,7 @@ an intention to do it.
   - [X] Status bar with connection and workspace state
   - [X] Theme system and appearance conformance (chrome is F018)
 - [ ] **F018 shell-chrome-fidelity** [P] (depends: F000)
-  - Spec: not yet specified
+  - Spec: specs/002-shell-chrome-fidelity
   - [ ] Activity icon rail at the prototype's 44px width, navigating between tool windows
   - [ ] Window chrome header row with its title, controls and metrics
   - [ ] Tool window header and tree row rhythm at the prototype's dimensions
