@@ -35,9 +35,9 @@ on any other feature.
 
 1. **Given** the application has never been run, **When** the user launches it, **Then** a
    window opens with a default arrangement and requires no configuration to be usable.
-2. **Given** the application is open, **When** the user resizes, hides, or repositions a
-   region, **Then** the change applies immediately and the arrangement remains stable during
-   and after the interaction.
+2. **Given** the application is open, **When** the user resizes a region or hides and shows
+   it, **Then** the change applies immediately and the arrangement remains stable during and
+   after the interaction.
 3. **Given** the user has customised the arrangement, **When** they quit and relaunch,
    **Then** the arrangement, window size and window position are restored as they were.
 4. **Given** saved arrangement data is missing or unreadable, **When** the user launches the
@@ -87,13 +87,13 @@ indicator reflects each one. Requires no real connection.
 
 **Acceptance Scenarios**:
 
-1. **Given** the application is open, **When** the user looks at the status area, **Then** the
+1. **Given** the application is open, **When** the user looks at the status bar, **Then** the
    active workspace name and current connection state are both visible.
 2. **Given** the application is connected, **When** the connection is lost, **Then** the
    indicator changes state within 5 seconds and without user action.
 3. **Given** the user has a colour vision deficiency, **When** the connection state changes,
    **Then** the change is distinguishable by more than colour alone.
-4. **Given** a workspace has a very long name, **When** it is shown in the status area,
+4. **Given** a workspace has a very long name, **When** it is shown in the status bar,
    **Then** the area does not expand, overlap adjacent content, or push it out of view.
 
 ---
@@ -158,8 +158,9 @@ defaults.
 - **FR-001**: The application MUST launch to an interactive window with no prior configuration.
 - **FR-002**: The application MUST present a default layout containing a primary document area,
   a navigation region, and an output region.
-- **FR-003**: Users MUST be able to resize, hide, show, and reposition regions within the
-  window.
+- **FR-003**: Users MUST be able to resize, hide and show regions within the window. Regions
+  occupy fixed positions; moving a region to a different edge is out of scope, consistent with
+  the exclusion of detachable panels in Assumptions.
 - **FR-004**: The application MUST enforce a minimum usable size for every region so that no
   region can be rendered unrecoverable by resizing.
 - **FR-005**: The application MUST support multiple concurrently open documents presented as
@@ -172,12 +173,12 @@ defaults.
   absent, unreadable, or incompatible, and MUST NOT fail to launch because of it.
 - **FR-009**: The application MUST constrain its window to a currently attached display on
   launch.
-- **FR-010**: The application MUST display a persistent status area showing the active
+- **FR-010**: The application MUST display a persistent status bar showing the active
   workspace and the current connection state.
-- **FR-011**: The status area MUST reflect connection state changes without user action, within
+- **FR-011**: The status bar MUST reflect connection state changes without user action, within
   5 seconds of the change occurring.
 - **FR-012**: Connection state MUST be distinguishable by more than colour alone.
-- **FR-013**: The status area MUST handle overlong content without expanding, overlapping, or
+- **FR-013**: The status bar MUST handle overlong content without expanding, overlapping, or
   displacing adjacent content.
 - **FR-014**: The interface MUST remain responsive to input while background work is in
   progress; no background operation may block interaction.
@@ -197,6 +198,9 @@ defaults.
 - **FR-022**: Where the approved design does not cover a surface the feature requires, the gap
   MUST be resolved with the designer and the resolution recorded before that surface is
   built.
+- **FR-023**: When persisted state cannot be written, the application MUST continue operating
+  and MUST NOT block or reverse the interaction that triggered the write. The failure MUST be
+  indicated to the user without a modal interruption.
 
 ### Key Entities
 
@@ -225,9 +229,9 @@ defaults.
   a visible stall longer than 100 ms.
 - **SC-005**: The interface accepts and responds to input during background work in 100% of
   test scenarios; there is no state in which the window stops responding.
-- **SC-006**: A developer unfamiliar with the application can correctly state whether it is
-  connected, within 5 seconds of being shown the window and without instruction, in at least 9
-  of 10 trials.
+- **SC-006**: Connection state is legible without interaction: the indicator is visible in the
+  status bar at every supported window size without scrolling, hovering or opening a menu, and
+  carries both an icon and a text label naming the state.
 - **SC-007**: Connection state remains correctly distinguishable when the display is rendered in
   greyscale.
 - **SC-008**: Every primary layout and tab action is reachable by keyboard alone.
@@ -261,6 +265,11 @@ defaults.
   shared or multi-user state.
 - **Accessibility baseline is keyboard operability and non-colour-dependent state.** Full screen
   reader support is not specified here and is not precluded.
+- **The unfamiliar-developer usability trial is a validation activity, not an acceptance
+  gate.** Whether a new user identifies connection state unaided is worth measuring, but it
+  needs recruited subjects and cannot run in continuous integration. SC-006 now states the
+  structural properties that make it likely and that a test can assert; the trial itself
+  belongs to product validation after the feature ships.
 - **Reference hardware for timing criteria** is a developer laptop from the last four years with
   a solid-state drive and at least 8 GB of memory. Timing outcomes are measured on a machine
   meeting or exceeding that, from a cold start with no other application under load.

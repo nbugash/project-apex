@@ -31,6 +31,41 @@
 
 ## Notes
 
+### Amendment 2026-09-21 — /speckit-analyze remediation
+
+Seven findings from the cross-artifact consistency analysis, all resolved. All 16 checklist
+items still pass; the spec gained one requirement and lost one out-of-scope clause.
+
+- **D1 (CRITICAL, Principle III)** — two decisions marked for promotion in `research.md` had
+  not reached Appendix A, which Principle III requires before implementing code. Promoted as
+  `A-STATE` (session state outside the workspace cache) and `A-E2E` (asymmetric end-to-end
+  coverage). `A-E2E` is written project-wide, so later features cite it rather than
+  re-arguing the macOS gap.
+- **E1 (HIGH)** — FR-003 required region *repositioning*, which had no task, no position
+  field in `RegionState`, and a `Layout` with three fixed keys that made it unimplementable.
+  Resolved by narrowing FR-003 and the US1 acceptance scenario to resize, hide and show,
+  which matches the Assumptions already excluding detachable panels. The alternative —
+  building repositioning — was rejected as scope nobody had asked for.
+- **B1 (HIGH)** — SC-006 required a human usability trial (9 of 10 unfamiliar developers) and
+  was the only success criterion with no task; it cannot run in CI. Restated as structural
+  properties a test can assert, with T050 added to cover it. The trial itself is recorded in
+  Assumptions as post-ship validation, not an acceptance gate.
+- **C1 (MEDIUM)** — `MIN_REGION_EXTENT`, `MIN_WINDOW_WIDTH` and `MIN_WINDOW_HEIGHT` were
+  referenced as thresholds in three artifacts and valued in none. Fixed at 120, 800 and 600
+  pixels in a new Constants section in `data-model.md`, each with its basis.
+- **F1 (MEDIUM)** — US4 was described as independent while three of its tasks declared hard
+  dependencies on US1, US2 and US3 tasks. Restated: independently testable, not independently
+  completable.
+- **E2 (MEDIUM)** — `PersistenceFailed` behaviour was defined in the contract and design and
+  implemented by a task, with no requirement behind it. Added FR-023 and traced the task to
+  it.
+- **F2 (LOW)** — "status area" in the spec versus "status bar" everywhere else. Standardised
+  on "status bar", matching the component file name.
+
+Task list renumbered to keep identifiers sequential after the insertion: 75 tasks, verified
+sequential and unique, every task carrying a file path, and no dependency referencing an
+undeclared identifier.
+
 ### Amendment 2026-09-21 — dark-only appearance
 
 Re-validated after amending the specification for dark-only appearance under Constitution

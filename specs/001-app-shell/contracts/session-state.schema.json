@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apex-predator/contracts/session-state.schema.json",
+  "title": "PersistedSession",
+  "description": "On-disk shell session state. See ../data-model.md for field semantics and validation rationale. A file failing this schema is discarded in full and replaced by defaults.",
+  "type": "object",
+  "required": ["schema_version", "workspace", "window", "layout", "documents", "focused_document_id"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "workspace": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["name", "location_type"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "location_type": { "enum": ["REMOTE", "LOCAL"] }
+          }
+        }
+      ]
+    },
+    "window": {
+      "type": "object",
+      "required": ["x", "y", "width", "height", "maximized"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "maximized": { "type": "boolean" }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "required": ["navigation", "output", "document_area"],
+      "additionalProperties": false,
+      "properties": {
+        "navigation": { "$ref": "#/$defs/regionState" },
+        "output": { "$ref": "#/$defs/regionState" },
+        "document_area": {
+          "allOf": [
+            { "$ref": "#/$defs/regionState" },
+            { "properties": { "visible": { "const": true } } }
+          ]
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "display_name", "order"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "display_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "order": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "focused_document_id": {
+      "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }]
+    }
+  },
+  "$defs": {
+    "regionState": {
+      "type": "object",
+      "required": ["visible", "extent"],
+      "additionalProperties": false,
+      "properties": {
+        "visible": { "type": "boolean" },
+        "extent": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "x-constraints-not-expressible-in-json-schema": [
+    "documents[].id must be unique",
+    "documents[].order must form a contiguous zero-based sequence",
+    "focused_document_id, when non-null, must match a documents[].id",
+    "focused_document_id must be null if and only if documents is empty",
+    "extent >= MIN_REGION_EXTENT when visible is true (clamped on load rather than rejected)"
+  ]
+}

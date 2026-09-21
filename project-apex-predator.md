@@ -1403,6 +1403,91 @@ Two, either of which reopens this:
 
 Absent either, this decision is settled and the alternative is not to be re-litigated.
 
+## A-STATE — Interface session state lives outside the workspace cache (2026-09-21)
+
+**Status:** Decided 2026-09-21. Promoted from `specs/001-app-shell/research.md`.
+
+### Decision
+
+Interface session state — window geometry, region layout, open document references and focus —
+is persisted in its own JSON file in the platform application-data directory, not in the
+SQLite workspace cache defined in §5.2.
+
+### Rationale
+
+The two have different lifetimes. The workspace cache is a disposable projection of a remote
+source of truth, expected to be evicted (§5.5) and invalidated wholesale (§10.4). Interface
+state is a durable user preference; losing it because a cache was cleared would be a defect.
+
+The payload also has none of the properties that justify a database: no querying, no
+concurrent writers, no partial reads, and no growth with workspace size. It is read once at
+launch and written on change.
+
+Practically, it also decouples the shell from F003, which sits behind `[OPEN: H-BOOT]`. Had
+session state lived in the workspace cache, the first feature in the build order would have
+depended on a feature that cannot yet be built.
+
+### Alternatives rejected
+
+**The SQLite workspace cache (§5.2).** Rejected on the lifetime coupling above, and because
+it would make F000 unbuildable until F003 completes.
+
+**A store plugin.** A reasonable fit, but adds a dependency and a permission for what
+serialisation and a path already do. Reconsider if the state grows to need migrations or
+change notification.
+
+**Platform-native preference stores.** Rejected because it splits one behaviour across two
+implementations and two test paths for no user benefit.
+
+### Reversal conditions
+
+If interface state ever needs querying, cross-device synchronisation, or transactional
+consistency with workspace data, revisit. None is currently in scope.
+
+## A-E2E — End-to-end coverage is asymmetric across target platforms (2026-09-21)
+
+**Status:** Decided 2026-09-21. Promoted from `specs/001-app-shell/research.md`.
+
+### Decision
+
+End-to-end tests run on Linux in continuous integration. macOS receives a scripted smoke
+check — launch, await readiness, capture a screenshot, assert a clean exit — and is otherwise
+covered by unit and integration tests.
+
+This binds every feature with interface surface, not only the shell.
+
+### Rationale
+
+End-to-end driving of a Tauri application delegates to the platform's WebDriver
+implementation. Linux provides one for its webview; macOS provides none for WKWebView. This is
+a missing platform capability, not a configuration problem, so no amount of setup closes it.
+
+The coverage loss is narrower than it appears: the interface layer is identical across both
+platforms, so the same code is exercised either way. What genuinely differs is window geometry
+behaviour and appearance, both reachable through integration tests and the screenshot check.
+
+### Alternatives rejected
+
+**Drive macOS through scripting or accessibility APIs.** A bespoke harness needing its own
+maintenance, for a surface of two behaviours.
+
+**Drop end-to-end everywhere for parity.** Rejected outright. Symmetry is not a reason to have
+less coverage.
+
+**Treat the smoke check as end-to-end.** Rejected as mislabelling. It proves the application
+starts and paints; it exercises no user journey.
+
+### Consequence for Principle VII
+
+Constitution Principle VII requires end-to-end coverage and requires a recorded justification
+for any omitted level. This decision is that justification, and it applies project-wide.
+Individual features cite it rather than re-arguing it.
+
+### Reversal conditions
+
+A WebDriver implementation for the macOS platform webview, or a change of interface technology
+that brings its own cross-platform driver.
+
 ---
 
 # Appendix B — Open Items
