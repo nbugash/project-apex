@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apex-predator/contracts/session-state-v2.schema.json",
+  "title": "PersistedSession (v2)",
+  "description": "Extends v1 with tool window state. See ../data-model.md for semantics and the migration rule. A file at v1 is migrated forward by filling defaults, NOT discarded; only a version above the current one is discarded.",
+  "type": "object",
+  "required": ["schema_version", "workspace", "window", "layout", "documents", "focused_document_id", "tool_window"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "integer", "const": 2 },
+    "workspace": { "$comment": "unchanged from v1" },
+    "window": { "$comment": "unchanged from v1" },
+    "layout": { "$comment": "unchanged from v1" },
+    "documents": { "$comment": "unchanged from v1" },
+    "focused_document_id": { "$comment": "unchanged from v1" },
+    "tool_window": {
+      "type": "object",
+      "required": ["active_destination_id", "collapsed", "width"],
+      "additionalProperties": false,
+      "properties": {
+        "active_destination_id": {
+          "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }]
+        },
+        "collapsed": { "type": "boolean" },
+        "width": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "x-constraints-not-expressible-in-json-schema": [
+    "active_destination_id, when non-null, must name a known rail destination; a dangling reference is repaired by falling back to the first available destination, not by discarding the session",
+    "width >= MIN_TOOL_WINDOW_WIDTH when not collapsed (clamped on load, rejected on a live command)",
+    "width is retained while collapsed so restoring returns the previous size",
+    "v1 files are migrated forward with defaults; only schema_version above the current value is discarded"
+  ]
+}

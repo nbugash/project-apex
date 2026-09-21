@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://apex-predator/contracts/fidelity-baseline.schema.json",
+  "title": "FidelityBaseline",
+  "description": "The approved rendering the visual comparison judges against. A committed golden file, written only by an explicit update command and never as a side effect of comparing. See ../research.md, 'Capturing and updating the baseline'.",
+  "type": "object",
+  "required": ["reference_size", "surfaces", "image", "captured_at"],
+  "additionalProperties": false,
+  "properties": {
+    "reference_size": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "width": { "type": "integer", "const": 1200 },
+        "height": { "type": "integer", "const": 800 }
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "x", "y", "width", "height"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "x": { "type": "integer" },
+          "y": { "type": "integer" },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "image": { "type": "string", "minLength": 1, "description": "Path to the approved rendering, relative to this file" },
+    "captured_at": { "type": "string", "format": "date-time" }
+  },
+  "x-constraints-not-expressible-in-json-schema": [
+    "surfaces[].name must be unique, and must appear in failure output so a reader knows which surface moved without opening an image",
+    "a reference_size differing from the current constant is an error, not a pass: comparing at a different size is meaningless",
+    "an absent or unreadable baseline is an error, never a pass"
+  ]
+}
