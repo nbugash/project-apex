@@ -59,8 +59,18 @@ let failures = 0;
 for (const root of ROOTS) {
   for await (const file of walk(root)) {
     const lines = (await readFile(file, 'utf8')).split('\n');
+    // Block-comment state, not a per-line guess. Matching only lines that START with `/*`
+    // or `*` flagged the continuation lines of an ordinary wrapped comment, which teaches
+    // the next person to reformat prose until the lint stops complaining.
+    let inBlockComment = false;
     lines.forEach((line, i) => {
-      if (line.trimStart().startsWith('/*') || line.trimStart().startsWith('*')) return;
+      const opens = line.lastIndexOf('/*');
+      const closes = line.lastIndexOf('*/');
+      const wasInComment = inBlockComment;
+      if (!inBlockComment && opens !== -1 && closes < opens) inBlockComment = true;
+      else if (inBlockComment && closes !== -1) inBlockComment = false;
+      if (wasInComment) return;
+      if (line.trimStart().startsWith('/*') || line.trimStart().startsWith('//')) return;
       if (line.includes('${')) return; // dynamic value, see note above
       for (const { test, message } of CHECKS) {
         if (test(line)) {

@@ -11,7 +11,7 @@ describe('tab overflow', () => {
 
   it('keeps every open document reachable when more are open than fit', async () => {
     await openDocuments(25);
-    const tabs = await $$('[role="tab"]');
+    const tabs = await $$('.strip [role="tab"]');
     expect(tabs.length).toBe(25);
 
     // The strip scrolls rather than shrinking labels into illegibility.

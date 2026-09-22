@@ -3,7 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export type RegionId = 'navigation' | 'output' | 'document_area';
+export type RegionId = 'output' | 'document_area';
 export type ConnectionState = 'unknown' | 'connecting' | 'connected' | 'disconnected';
 export type LocationType = 'REMOTE' | 'LOCAL';
 
@@ -21,7 +21,6 @@ export interface WindowGeometry {
 }
 
 export interface Layout {
-  navigation: RegionState;
   output: RegionState;
   document_area: RegionState;
 }
@@ -44,6 +43,7 @@ export interface SessionSnapshot {
   layout: Layout;
   documents: OpenDocumentReference[];
   focused_document_id: string | null;
+  tool_window: ToolWindowState;
 }
 
 export interface RailDestination {

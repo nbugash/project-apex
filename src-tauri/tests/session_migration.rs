@@ -10,7 +10,7 @@ use apex_shell::adapters::outbound::json_session_store::JsonFileSessionStore;
 use apex_shell::application::ports::session_store::SessionStore;
 use apex_shell::application::use_cases::restore_session::RestoreSession;
 use apex_shell::domain::geometry::DisplayBounds;
-use apex_shell::domain::rail::{DestinationId, ToolWindowState};
+use apex_shell::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use apex_shell::domain::session::{PersistedSession, SCHEMA_VERSION};
 use std::sync::Arc;
 
@@ -55,7 +55,14 @@ fn a_version_one_session_keeps_everything_the_user_had() {
 
     assert_eq!(restored.window.width, 1100, "window geometry survived");
     assert_eq!(restored.window.x, 240);
-    assert_eq!(restored.layout.navigation.extent, 300, "layout survived");
+    // The v1 file's left panel was a generic `navigation` region; it is the tool window
+    // now. The width is what the user actually chose, so it survives the rename rather
+    // than resetting to a default.
+    assert_eq!(restored.tool_window.width, 300, "panel width survived");
+    assert!(
+        restored.layout.legacy_navigation.is_none(),
+        "the legacy region is folded in, not carried alongside"
+    );
     assert!(
         !restored.layout.output.visible,
         "hidden region stayed hidden"
@@ -74,9 +81,23 @@ fn a_version_one_session_keeps_everything_the_user_had() {
 }
 
 #[test]
-fn the_new_field_arrives_with_defaults() {
+fn the_new_field_arrives_ready_to_use() {
     let (_dir, restored) = restore_from(VERSION_ONE_SESSION);
-    assert_eq!(restored.tool_window, ToolWindowState::default());
+    // Defaulted AND repaired. A migrated file that arrives with no active destination
+    // would render a rail where nothing looks selected, which is not a state the
+    // prototype has.
+    // The width comes from the v1 file's retired `navigation` region, not from the
+    // default: it is the size the user chose for the same panel.
+    assert_eq!(restored.tool_window.width, 300);
+    assert_ne!(restored.tool_window.width, ToolWindowState::default().width);
+    assert!(!restored.tool_window.collapsed);
+    assert_eq!(
+        restored.tool_window.active_destination_id,
+        RailCatalogue::default()
+            .first_available()
+            .map(|d| d.id.clone()),
+        "the migrated panel opens on the first available destination"
+    );
 }
 
 #[test]

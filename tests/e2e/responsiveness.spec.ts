@@ -14,7 +14,7 @@ describe('responsiveness under background work', () => {
     await openDocuments(15);
 
     const started = Date.now();
-    const splitter = await $('[aria-label="Resize navigation"]');
+    const splitter = await $('[aria-label="Resize tool window"]');
     await splitter.click();
     for (let i = 0; i < 10; i++) await browser.keys('ArrowRight');
     const elapsed = Date.now() - started;

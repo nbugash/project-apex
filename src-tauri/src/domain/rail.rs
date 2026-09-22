@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 pub const MIN_TOOL_WINDOW_WIDTH: u32 = 180;
 
 /// The prototype's tool window width, and the default before a user resizes.
-const DEFAULT_TOOL_WINDOW_WIDTH: u32 = 276;
+///
+/// Matches `--vk-tool` at the prototype's declared default density. Not hand-picked: the
+/// same value is generated into `src/lib/ds/layout-tokens.css` by `ds:sync`, so the two
+/// sides of the boundary agree by construction rather than by memory.
+const DEFAULT_TOOL_WINDOW_WIDTH: u32 = 310;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DestinationId(pub String);
@@ -56,6 +60,10 @@ pub enum RailError {
 /// Hand-authored rather than generated: a destination is behaviour — an identity, a label,
 /// an availability state — not a measurement. What keeps the list honest is the fidelity
 /// gate, since a missing or extra destination changes the rail's geometry.
+///
+/// Labels and icons are the prototype's own, read off its rail buttons. An earlier version
+/// of this list was invented from the feature map instead, and named three destinations —
+/// Run, Problems, Terminal — that the prototype puts in the bottom dock, not the rail.
 pub struct RailCatalogue {
     destinations: Vec<RailDestination>,
 }
@@ -66,12 +74,27 @@ impl Default for RailCatalogue {
         // Most destinations belong to features that do not exist yet. They are present and
         // unavailable so the rail matches the prototype's proportions from the outset.
         let destinations = vec![
-            ("files", "Project", "ph-folder", Available),
-            ("vcs", "Version control", "ph-git-branch", Unavailable),
-            ("search", "Search", "ph-magnifying-glass", Unavailable),
-            ("run", "Run", "ph-play", Unavailable),
-            ("problems", "Problems", "ph-warning-circle", Unavailable),
-            ("terminal", "Terminal", "ph-terminal-window", Unavailable),
+            ("project", "Project", "ph-folder-open", Available),
+            ("structure", "Structure", "ph-list-dashes", Unavailable),
+            ("commit", "Commit", "ph-git-branch", Unavailable),
+            (
+                "find",
+                "Find in project",
+                "ph-magnifying-glass",
+                Unavailable,
+            ),
+            (
+                "history",
+                "Local history",
+                "ph-clock-counter-clockwise",
+                Unavailable,
+            ),
+            (
+                "packs",
+                "Packs and extensions",
+                "ph-puzzle-piece",
+                Unavailable,
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -154,11 +177,15 @@ impl ToolWindowState {
     /// Load path only. A stale file should not cost the user their session, so a dangling
     /// destination falls back to the first available one and a sub-minimum width is clamped.
     pub fn repaired(mut self, catalogue: &RailCatalogue) -> Self {
-        let dangling = self
+        // Absent counts as needing repair, not only dangling. The prototype always shows
+        // one destination active; leaving a fresh session with none produced a rail where
+        // every button looked inactive, which reads as "nothing is loaded" rather than
+        // "the project view is open".
+        let unusable = self
             .active_destination_id
             .as_ref()
-            .is_some_and(|id| catalogue.find(id).is_none());
-        if dangling {
+            .map_or(true, |id| catalogue.find(id).is_none());
+        if unusable {
             self.active_destination_id = catalogue.first_available().map(|d| d.id.clone());
         }
         if self.width < MIN_TOOL_WINDOW_WIDTH {
@@ -187,6 +214,49 @@ mod tests {
         ids.sort_by(|a, b| a.0.cmp(&b.0));
         ids.dedup();
         assert_eq!(ids.len(), before, "destination identifiers must be unique");
+    }
+
+    /// Pins the catalogue to the prototype's rail, button for button.
+    ///
+    /// The ordering and uniqueness tests above pass for *any* six destinations, which is
+    /// how a hand-invented list that named three bottom-dock tabs as rail destinations
+    /// survived review. This is deliberately a second copy of the list: its value is that
+    /// changing the rail now requires changing an assertion that says where the values
+    /// came from, so the change is visible in a diff rather than silent.
+    #[test]
+    fn catalogue_matches_the_prototype_rail() {
+        let c = catalogue();
+        let actual: Vec<(&str, &str, &str)> = c
+            .all()
+            .iter()
+            .map(|d| (d.id.0.as_str(), d.label, d.icon))
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                ("project", "Project", "ph-folder-open"),
+                ("structure", "Structure", "ph-list-dashes"),
+                ("commit", "Commit", "ph-git-branch"),
+                ("find", "Find in project", "ph-magnifying-glass"),
+                ("history", "Local history", "ph-clock-counter-clockwise"),
+                ("packs", "Packs and extensions", "ph-puzzle-piece"),
+            ],
+            "the rail must match the prototype's buttons, in its order"
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_active_destination_opens_the_first_available_one() {
+        let repaired = ToolWindowState {
+            active_destination_id: None,
+            ..ToolWindowState::default()
+        }
+        .repaired(&catalogue());
+        assert_eq!(
+            repaired.active_destination_id,
+            Some(DestinationId::new("project")),
+            "a fresh session must open a destination, as the prototype does"
+        );
     }
 
     #[test]

@@ -18,7 +18,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "gate:fidelity": "node tools/gate-fidelity/compare.mjs",
-    "gate:fidelity:update": "node tools/gate-fidelity/update.mjs"
+    "gate:fidelity:update": "node tools/gate-fidelity/update.mjs",
+    "gate:fidelity:test": "node --test tools/gate-fidelity/gate.test.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

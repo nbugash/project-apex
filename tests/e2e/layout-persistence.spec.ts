@@ -1,5 +1,5 @@
 // T032 — US1. Layout, visibility and geometry survive a restart (SC-002).
-import { relaunch, readSession, waitForShell, resetSession } from './helpers';
+import { relaunch, readSession, waitForShell, resetSession, setRegion } from './helpers';
 
 describe('layout persistence across restart', () => {
   before(async () => {
@@ -9,30 +9,32 @@ describe('layout persistence across restart', () => {
     await relaunch();
   });
 
-  it('restores region sizes as they were left', async () => {
-    const splitter = await $('[aria-label="Resize navigation"]');
+  it('restores the tool window width as it was left', async () => {
+    const splitter = await $('[aria-label="Resize tool window"]');
     await splitter.click(); // focus it, then resize by keyboard for a deterministic delta
+    // Read the starting width from the rendered panel, not from the file: a freshly reset
+    // profile has no file until the first mutation, and reading it here failed with a null
+    // dereference that looked nothing like the real cause.
+    const start = (await $('aside.tool-window').getSize()).width;
     for (let i = 0; i < 4; i++) await browser.keys('ArrowRight');
 
-    await browser.waitUntil(async () => (readSession()?.layout as any)?.navigation.extent > 260, {
+    // F018 moved the left panel's width out of layout.navigation and into tool_window:
+    // the panel is the prototype's tool window now, not a generic region.
+    await browser.waitUntil(async () => (readSession()?.tool_window as any)?.width > start, {
       timeout: 5000,
       timeoutMsg: 'resize was never persisted',
     });
-    const widened = (readSession()!.layout as any).navigation.extent;
+    const widened = (readSession()!.tool_window as any).width;
 
     await relaunch();
-    expect((readSession()!.layout as any).navigation.extent).toBe(widened);
+    expect((readSession()!.tool_window as any).width).toBe(widened);
   });
 
   it('restores region visibility', async () => {
-    const buttons = await $$('nav.placeholder button');
-    await buttons[1]!.click();
-    await browser.waitUntil(async () => (readSession()?.layout as any)?.output.visible === false, {
-      timeout: 5000,
-      timeoutMsg: 'visibility was never persisted',
-    });
-
-    await relaunch();
+    // Driven through the core: the button that used to do this was F000 scaffolding the
+    // prototype has no equivalent for, and F018 removed it with the placeholder panel.
+    const extent = Math.round((await $('[aria-label="Output"]').getSize()).height);
+    await setRegion('output', false, extent);
     expect((readSession()!.layout as any).output.visible).toBe(false);
     expect(await $('[aria-label="Output"]').isExisting()).toBe(false);
   });

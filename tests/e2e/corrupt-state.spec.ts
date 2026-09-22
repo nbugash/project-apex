@@ -35,7 +35,10 @@ describe('corrupt persisted state never prevents launch', () => {
       // The window opens, the frame renders, and nothing reports an error: falling back
       // is a normal path, not a failure the user should be told about.
       expect(await $('.shell').isExisting()).toBe(true);
-      expect(await $('[aria-label="Project navigation"]').isExisting()).toBe(true);
+      // F018 replaced the generic navigation region with the prototype's tool window;
+      // the assertion is the same one — the frame rendered — against the surface that
+      // now occupies that position.
+      expect(await $('aside.tool-window').isExisting()).toBe(true);
       expect(await $('[role="alert"]').isExisting()).toBe(false);
     });
   }

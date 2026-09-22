@@ -46,14 +46,20 @@
   .status {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-1) var(--space-3);
+    /* The prototype's own metrics, extracted by ds:sync. F000 built this bar from the
+       generic spacing scale, which put it at 17px against the prototype's 26px — a
+       difference nobody spotted by eye, but one that shortened the activity rail and the
+       tool window by nine pixels each and so failed the fidelity gate. */
+    gap: var(--vk-status-gap);
+    padding: var(--vk-status-pad);
     background: var(--color-surface);
-    border-top: 1px solid var(--color-divider);
-    color: var(--color-neutral-300);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text) 9%, transparent);
+    color: color-mix(in srgb, var(--color-text) 58%, transparent);
     font-family: var(--font-body);
+    font-size: var(--vk-status-size);
     /* Fixed height so overlong content cannot displace adjacent content (FR-013). */
-    block-size: var(--space-6);
+    block-size: var(--vk-status-height);
+    white-space: nowrap;
     flex: 0 0 auto;
     overflow: hidden;
   }

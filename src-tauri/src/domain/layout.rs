@@ -2,14 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Below this a navigation tree shows only truncated names and an output console fewer than
-/// three lines. Regions are hidden rather than shrunk past it.
+/// Below this an output console shows fewer than three lines. Regions are hidden rather
+/// than shrunk past it. The tool window has its own minimum — see `domain::rail` — because
+/// it is no longer one of these generic regions.
 pub const MIN_REGION_EXTENT: u32 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegionId {
-    Navigation,
     Output,
     DocumentArea,
 }
@@ -43,17 +43,25 @@ impl RegionState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layout {
-    pub navigation: RegionState,
     pub output: RegionState,
     pub document_area: RegionState,
+    /// F000 modelled the left panel as a generic `navigation` region. F018 gave that
+    /// position its real identity — the prototype's tool window — which owns its own width
+    /// and collapsed state, so two descriptions of one surface existed.
+    ///
+    /// Read from older files so an existing session keeps its panel width, never written
+    /// back, and folded into `tool_window` by `PersistedSession::repaired`. It disappears
+    /// from the file on the next save.
+    #[serde(default, rename = "navigation", skip_serializing)]
+    pub legacy_navigation: Option<RegionState>,
 }
 
 impl Default for Layout {
     fn default() -> Self {
         Self {
-            navigation: RegionState::new(true, 260),
             output: RegionState::new(true, 200),
             document_area: RegionState::new(true, 0),
+            legacy_navigation: None,
         }
     }
 }
@@ -67,7 +75,6 @@ pub enum LayoutError {
 impl Layout {
     pub fn get(&self, id: RegionId) -> RegionState {
         match id {
-            RegionId::Navigation => self.navigation,
             RegionId::Output => self.output,
             RegionId::DocumentArea => self.document_area,
         }
@@ -88,7 +95,6 @@ impl Layout {
             return Err(LayoutError::ExtentBelowMinimum);
         }
         let slot = match id {
-            RegionId::Navigation => &mut self.navigation,
             RegionId::Output => &mut self.output,
             RegionId::DocumentArea => &mut self.document_area,
         };
@@ -98,7 +104,6 @@ impl Layout {
 
     pub fn clamped(self) -> Self {
         Self {
-            navigation: self.navigation.clamped(),
             output: self.output.clamped(),
             // The primary area is not hideable; a persisted false is repaired, not honoured.
             document_area: RegionState {
@@ -106,6 +111,10 @@ impl Layout {
                 ..self.document_area
             }
             .clamped(),
+            // Deliberately carried through rather than cleared here: clamping is a repair
+            // of region sizes, and consuming the legacy field is the session's job, which
+            // is the only place that can see the tool window it folds into.
+            legacy_navigation: self.legacy_navigation,
         }
     }
 }
@@ -133,7 +142,7 @@ mod tests {
     fn live_command_rejects_extent_below_minimum_rather_than_clamping() {
         let mut l = Layout::default();
         assert_eq!(
-            l.set_region(RegionId::Navigation, true, 10),
+            l.set_region(RegionId::Output, true, 10),
             Err(LayoutError::ExtentBelowMinimum)
         );
     }

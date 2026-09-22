@@ -1,6 +1,10 @@
 <script lang="ts">
   import Region from './Region.svelte';
   import Splitter from './Splitter.svelte';
+  import ChromeHeader from '../chrome/ChromeHeader.svelte';
+  import ActivityRail from '../chrome/ActivityRail.svelte';
+  import ToolWindow from '../chrome/ToolWindow.svelte';
+  import { MIN_TOOL_WINDOW_WIDTH } from '../rail';
   import TabStrip from '../tabs/TabStrip.svelte';
   import StatusBar from '../statusbar/StatusBar.svelte';
   import * as ipc from '../ipc';
@@ -18,6 +22,42 @@
 
   let layout = $state(session.layout);
   let documents = $state(session.documents);
+  let toolWindow = $state(session.tool_window);
+  let destinations = $state<ipc.RailDestination[]>([]);
+
+  // The catalogue is static for the process lifetime, so it is fetched once rather than
+  // recomputed per render.
+  $effect(() => {
+    void ipc
+      .railDestinations()
+      .then((d) => (destinations = d))
+      .catch((e) => console.warn('could not load rail destinations', e));
+  });
+
+  let activeDestination = $derived(
+    destinations.find((d) => d.id === toolWindow.active_destination_id) ?? null,
+  );
+
+  async function selectDestination(id: string) {
+    // Render from the core's answer rather than guessing: selecting the active destination
+    // collapses it (FR-006), so the resulting state is not a function of the click alone.
+    try {
+      toolWindow = await ipc.railSelect(id);
+    } catch (e) {
+      persistenceFailed = true;
+      console.warn('rail selection failed', e);
+    }
+  }
+
+  function toggleToolWindow() {
+    const active = toolWindow.active_destination_id;
+    if (active) void selectDestination(active);
+  }
+
+  function resizeToolWindow(width: number) {
+    toolWindow = { ...toolWindow, width };
+    void persist(() => ipc.toolWindowResize(width));
+  }
   let focusedId = $state(session.focused_document_id);
   let persistenceFailed = $state(false);
 
@@ -39,7 +79,7 @@
     void persist(() => ipc.layoutSetRegion(region, layout[region].visible, extent));
   }
 
-  function toggleRegion(region: 'navigation' | 'output') {
+  function toggleRegion(region: 'output') {
     const visible = !layout[region].visible;
     layout = { ...layout, [region]: { ...layout[region], visible } };
     void persist(() => ipc.layoutSetRegion(region, visible, layout[region].extent));
@@ -55,33 +95,37 @@
 </script>
 
 <div class="shell">
-  <div class="body">
-    <Region
-      label="Project navigation"
-      visible={layout.navigation.visible}
-      extent={layout.navigation.extent}
-      axis="inline"
-    >
-      <nav class="placeholder">
-        <button
-          onclick={() =>
-            persist(() => ipc.documentsOpen(`untitled-${documents.length + 1}`)).then(reload)}
-        >
-          <i class="ph ph-file-plus" aria-hidden="true"></i> New document
-        </button>
-        <button onclick={() => toggleRegion('output')}>
-          <i class="ph ph-terminal-window" aria-hidden="true"></i> Toggle output
-        </button>
-      </nav>
-    </Region>
+  <ChromeHeader workspace={shellState.workspace?.name ?? null} />
 
-    {#if layout.navigation.visible}
+  <div class="body">
+    <ActivityRail
+      {destinations}
+      activeId={toolWindow.active_destination_id}
+      collapsed={toolWindow.collapsed}
+      onselect={selectDestination}
+      ontoggle={toggleToolWindow}
+    />
+
+    <ToolWindow
+      title={activeDestination?.label ?? 'Project'}
+      width={toolWindow.width}
+      collapsed={toolWindow.collapsed}
+      ontoggle={toggleToolWindow}
+    >
+      <!-- The panel's contents belong to the features behind each destination. The frame
+           is this feature's deliverable (FR-003); filling it is not. The wording matters:
+           an available destination whose panel said it was "not available" contradicted
+           the rail, which shows it as open and active. -->
+      <p class="pending">No workspace open.</p>
+    </ToolWindow>
+
+    {#if !toolWindow.collapsed}
       <Splitter
         orientation="vertical"
-        extent={layout.navigation.extent}
-        min={MIN_REGION_EXTENT}
-        label="Resize navigation"
-        onresize={(e) => resizeRegion('navigation', e)}
+        extent={toolWindow.width}
+        min={MIN_TOOL_WINDOW_WIDTH}
+        label="Resize tool window"
+        onresize={(e) => resizeToolWindow(e)}
       />
     {/if}
 
@@ -156,6 +200,12 @@
   }
   .empty {
     color: var(--color-neutral-400);
+  }
+  .pending {
+    margin: 0;
+    padding: var(--space-3);
+    color: var(--color-neutral-400);
+    font-size: var(--vk-fs);
   }
   .placeholder {
     display: flex;

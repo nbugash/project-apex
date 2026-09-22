@@ -215,3 +215,42 @@ Alter a dimension, run it again, and confirm it fails and names what changed.
   These are engineering thresholds, not design decisions. If the comparison proves too noisy
   or too permissive in practice, they are the knobs to turn, and turning them is a recorded
   change rather than an ad-hoc adjustment.
+
+- **The unavailable rail state is this feature's invention, not the prototype's.** Every
+  destination in the prototype works, so it specifies no unavailable treatment, while FR-008
+  requires one. It is rendered at reduced opacity — deliberately not a colour change, so the
+  state survives greyscale (SC-004) — and the choice is flagged here for the designer under
+  FR-022 rather than presented as approved design.
+
+## Open Items
+
+_None outstanding._
+
+### Resolved
+
+- **[RESOLVED: PANEL-STATE] The left panel had two persisted descriptions of its geometry.**
+  F000 modelled the left panel as a generic region, `layout.navigation`, carrying `visible`
+  and `extent`. This feature gave that position its real identity — the prototype's tool
+  window — and `ToolWindowState` carried `collapsed` and `width` for the same surface.
+
+  **Resolution**: `layout.navigation` is retired. The tool window owns its own geometry, and
+  `Layout` keeps only the generic regions that remain (`output`, `document_area`).
+
+  Two options were weighed. The alternative was to shrink `ToolWindowState` to
+  `active_destination_id` and leave the panel's geometry in `Layout` alongside the other
+  regions. That was the initial recommendation, on the grounds that retiring
+  `layout.navigation` would need a new schema version. The premise was wrong: schema
+  version 2 had never shipped, so its shape could be redefined rather than superseded, and
+  the migration cost that favoured the alternative did not exist.
+
+  With cost equal, FR-006 decided it. Collapse-on-reselect with width retention is a single
+  invariant over a single type when the tool window owns its geometry; splitting the state
+  across `Layout` and `ToolWindowState` would have made one selection mutate two types, with
+  the invariant spread between them, and would have kept a region named `navigation` for a
+  surface that is not navigation.
+
+  **Migration**: `Layout` reads a legacy `navigation` region from older files, folds its
+  extent and visibility into the tool window on load, and never writes it back — so an
+  existing session keeps the panel width its user chose, and the field disappears on the
+  next save. The fold is conditional; an unconditional one would reset the panel for every
+  file written after the upgrade.

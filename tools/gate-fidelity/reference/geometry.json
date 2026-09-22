@@ -1,0 +1,28 @@
+{
+  "derivedFrom": "mockups/Apex IDE (standalone).html",
+  "derivedOn": "2026-09-22",
+  "reference": {
+    "width": 1200,
+    "height": 800
+  },
+  "surfaces": {
+    "chrome header": {
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": 46
+    },
+    "activity rail": {
+      "x": 0,
+      "y": 46,
+      "width": 44,
+      "height": 728
+    },
+    "tool window": {
+      "x": 44,
+      "y": 46,
+      "width": 310,
+      "height": 728
+    }
+  }
+}
