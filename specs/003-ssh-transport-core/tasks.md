@@ -83,24 +83,24 @@ transport recover.
 
 ### Tests for User Story 1
 
-- [ ] T021 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: one connection established, reused by a second logical channel with no second authentication (SC-002)
-- [ ] T022 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: after teardown, no child process survives (SC-003)
-- [ ] T023 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the mock closes the pipe, every outstanding request resolves as `ConnectionLost`, and none hangs (SC-012)
-- [ ] T024 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the retry interval **grows** between attempts. A tight retry loop passes a "did it reconnect" assertion and is still wrong
-- [ ] T025 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the connection re-establishes with no caller action once the mock accepts again (SC-012)
-- [ ] T026 [P] [US1] Unit test in `src-tauri/src/adapters/outbound/openssh/spawner.rs` asserting the §3.1 invocation carries `ServerAliveInterval=15` and `ServerAliveCountMax=3` (FR-004, SC-009). These flags are what bound the time to detection when a network dies silently; without them a pulled cable hangs forever, and no integration test can catch their absence because the mock has no socket
-- [ ] T027 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the mock stalls and then closes after the simulated keepalive window, and loss is reported promptly on that EOF rather than the transport waiting indefinitely (FR-004, SC-009, US1 acceptance scenario 4)
-- [ ] T028 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: startup refuses with a message naming what was found when `ssh` is absent, and again when its reported version is below 6.7, driven through `ScriptedSpawner` (FR-005, US1 acceptance scenario 5)
-- [ ] T029 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: `observe()` delivers every connection-state transition with none skipped, so a subscriber's view cannot diverge from the transport's (contracts/transport.md)
+- [X] T021 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: one connection established, reused by a second logical channel with no second authentication (SC-002)
+- [X] T022 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: after teardown, no child process survives (SC-003)
+- [X] T023 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the mock closes the pipe, every outstanding request resolves as `ConnectionLost`, and none hangs (SC-012)
+- [X] T024 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the retry interval **grows** between attempts. A tight retry loop passes a "did it reconnect" assertion and is still wrong
+- [X] T025 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the connection re-establishes with no caller action once the mock accepts again (SC-012)
+- [X] T026 [P] [US1] Unit test in `src-tauri/src/adapters/outbound/openssh/spawner.rs` asserting the §3.1 invocation carries `ServerAliveInterval=15` and `ServerAliveCountMax=3` (FR-004, SC-009). These flags are what bound the time to detection when a network dies silently; without them a pulled cable hangs forever, and no integration test can catch their absence because the mock has no socket
+- [X] T027 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: the mock stalls and then closes after the simulated keepalive window, and loss is reported promptly on that EOF rather than the transport waiting indefinitely (FR-004, SC-009, US1 acceptance scenario 4)
+- [X] T028 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: startup refuses with a message naming what was found when `ssh` is absent, and again when its reported version is below 6.7, driven through `ScriptedSpawner` (FR-005, US1 acceptance scenario 5)
+- [X] T029 [US1] Integration test in `src-tauri/tests/transport_recovery.rs`: `observe()` delivers every connection-state transition with none skipped, so a subscriber's view cannot diverge from the transport's (contracts/transport.md)
 
 ### Implementation for User Story 1
 
-- [ ] T030 [US1] Implement `OpenSshSpawner` in `src-tauri/src/adapters/outbound/openssh/spawner.rs` — the §3.1 invocation, flag for flag, in this one place and nowhere else
-- [ ] T031 [US1] Implement startup preflight in `src-tauri/src/adapters/outbound/openssh/spawner.rs`: verify `ssh` is present and report its version, refusing below 6.7 with a message naming what was found (FR-005)
-- [ ] T032 [US1] Implement the reader and writer tasks in `src-tauri/src/adapters/outbound/openssh/mod.rs`, as separate tasks so a blocked writer cannot stop replies being read
-- [ ] T033 [US1] Implement `Supervisor` in `src-tauri/src/application/use_cases/supervise.rs`: own the child's lifetime, detect loss from the child ending — the single observation, which the keepalive flags bound the time to, publish `ConnectionState`
-- [ ] T034 [US1] Implement the backoff schedule in `src-tauri/src/application/use_cases/supervise.rs` — 1 s doubling to a 30 s ceiling with full jitter, retrying indefinitely, per [research.md](./research.md)
-- [ ] T035 [US1] Implement teardown in `src-tauri/src/adapters/outbound/openssh/mod.rs`: issue `ssh -O exit` on quit so no master outlives the application (§3.1)
+- [X] T030 [US1] Implement `OpenSshSpawner` in `src-tauri/src/adapters/outbound/openssh/spawner.rs` — the §3.1 invocation, flag for flag, in this one place and nowhere else
+- [X] T031 [US1] Implement startup preflight in `src-tauri/src/adapters/outbound/openssh/spawner.rs`: verify `ssh` is present and report its version, refusing below 6.7 with a message naming what was found (FR-005)
+- [X] T032 [US1] Implement the reader and writer tasks in `src-tauri/src/adapters/outbound/openssh/mod.rs`, as separate tasks so a blocked writer cannot stop replies being read
+- [X] T033 [US1] Implement `Supervisor` in `src-tauri/src/application/use_cases/supervise.rs`: own the child's lifetime, detect loss from the child ending — the single observation, which the keepalive flags bound the time to, publish `ConnectionState`
+- [X] T034 [US1] Implement the backoff schedule in `src-tauri/src/application/use_cases/supervise.rs` — 1 s doubling to a 30 s ceiling with full jitter, retrying indefinitely, per [research.md](./research.md)
+- [X] T035 [US1] Implement teardown in `src-tauri/src/adapters/outbound/openssh/mod.rs`: issue `ssh -O exit` on quit so no master outlives the application (§3.1)
 
 **Checkpoint**: the connection exists, survives a drop, and leaves nothing behind.
 

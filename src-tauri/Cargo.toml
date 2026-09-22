@@ -18,6 +18,14 @@ path = "src/main.rs"
 name = "apex-askpass"
 path = "bin/apex-askpass.rs"
 
+# The mock stands in for the remote engine. A real binary, not a library fake, so the
+# transport under test exercises a real process boundary and a real pipe. Declared as a bin
+# rather than a harness-less test so integration tests get CARGO_BIN_EXE_apex-mock-daemon
+# and need not go hunting through target/debug/deps.
+[[bin]]
+name = "apex-mock-daemon"
+path = "tests/mock_daemon/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -34,13 +42,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 
-# The mock stands in for the remote engine. A real binary, not a library fake, so the
-# transport under test exercises a real process boundary and a real pipe.
-[[test]]
-name = "mock_daemon"
-path = "tests/mock_daemon/main.rs"
-harness = false
 
 [profile.release]
 opt-level = 3

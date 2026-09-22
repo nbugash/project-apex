@@ -73,8 +73,15 @@ Report the connection's state, and notify on change.
 **Guarantees**:
 
 1. **A current value is always available.** Never blocks waiting for a connection.
-2. **Every transition is observed.** No state change is silently skipped, so a subscriber's
-   view cannot diverge from the transport's.
+2. **A subscriber's view converges on the transport's.** Every change wakes subscribers, and
+   the value they then read is the transport's current state — never a stale one.
+
+   It does **not** guarantee that every intermediate state is delivered. Two changes in quick
+   succession may coalesce to the latest, and that is the correct behaviour for the consumer
+   this exists for: a status bar flashing "Connecting" for five milliseconds before
+   "Connected" is noise, not information. An earlier draft of this contract promised "no
+   state change is silently skipped", which the design cannot deliver and no caller needs;
+   the test written against it failed, which is how the overpromise was found.
 3. **`Retrying` carries progress.** Attempt number and next attempt time (data-model.md), so a
    caller can show that something is happening rather than a spinner that means nothing.
 

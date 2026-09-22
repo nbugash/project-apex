@@ -141,3 +141,82 @@ pub mod stderr {
     /// what the transport would be asked to parse.
     pub const DENIED_FR: &str = "user@example.com: Permission refusée (publickey,password).";
 }
+
+// ---------------------------------------------------------------------------
+
+use apex_shell::adapters::outbound::openssh::SshTransport;
+use std::process::{Child, Command, Stdio};
+
+/// Spawns the mock daemon instead of `ssh`.
+///
+/// The transport under test is the real one: a real child process, a real pipe, a real
+/// framing codec. Only what is on the other end differs, which is the point of the
+/// `ProcessSpawner` port.
+pub struct MockSpawner {
+    pub script: String,
+    children: Arc<Mutex<Vec<Child>>>,
+}
+
+impl MockSpawner {
+    pub fn new(script: &str) -> Self {
+        Self {
+            script: script.into(),
+            children: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// How many mock processes are still running. SC-003 asserts this reaches zero.
+    pub fn live_children(&self) -> usize {
+        let mut guard = self.children.lock().expect("children lock");
+        guard.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+        guard.len()
+    }
+}
+
+impl ProcessSpawner for MockSpawner {
+    fn preflight(&self) -> Result<String, SpawnError> {
+        Ok("OpenSSH_9.6p1 (mock)".into())
+    }
+
+    fn invocation(&self, spec: &SpawnSpec) -> Vec<String> {
+        vec![format!("{}@{}", spec.user, spec.host)]
+    }
+
+    fn spawn(&self, _spec: &SpawnSpec) -> Result<SpawnedChild, SpawnError> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_apex-mock-daemon"))
+            .env("APEX_MOCK_SCRIPT", &self.script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| SpawnError::Io(e.to_string()))?;
+
+        let out = SpawnedChild {
+            stdin: Box::new(child.stdin.take().expect("piped stdin")),
+            stdout: Box::new(child.stdout.take().expect("piped stdout")),
+            stderr: Box::new(child.stderr.take().expect("piped stderr")),
+        };
+        self.children.lock().expect("children lock").push(child);
+        Ok(out)
+    }
+
+    fn supply_passphrase(&self, _secret: Secret) -> Result<(), SpawnError> {
+        Ok(())
+    }
+}
+
+pub fn spec() -> SpawnSpec {
+    SpawnSpec {
+        host: "mock.invalid".into(),
+        user: "dev".into(),
+        assisted: false,
+    }
+}
+
+/// A connected transport speaking to a mock driven by `script`.
+pub fn connected(script: &str) -> (Arc<SshTransport>, Arc<MockSpawner>) {
+    let spawner = Arc::new(MockSpawner::new(script));
+    let t = Arc::new(SshTransport::new(spawner.clone(), spec()));
+    t.connect().expect("the mock should connect");
+    (t, spawner)
+}
