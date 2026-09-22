@@ -58,7 +58,7 @@ fn the_persistence_writer_ends_when_the_session_is_dropped() {
     });
 
     let persist = PersistSession::new(store, PersistedSession::default());
-    persist.set_region(RegionId::Navigation, true, 300).unwrap();
+    persist.set_region(RegionId::Output, true, 300).unwrap();
 
     assert!(
         !dropped.load(Ordering::SeqCst),

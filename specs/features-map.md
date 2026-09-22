@@ -15,13 +15,13 @@ an intention to do it.
   - [X] Webview to Rust core async IPC bridge
   - [X] Status bar with connection and workspace state
   - [X] Theme system and appearance conformance (chrome is F018)
-- [ ] **F018 shell-chrome-fidelity** [P] (depends: F000)
+- [X] **F018 shell-chrome-fidelity** [P] (depends: F000)
   - Spec: specs/002-shell-chrome-fidelity
-  - [ ] Activity icon rail at the prototype's 44px width, navigating between tool windows
-  - [ ] Window chrome header row with its title, controls and metrics
-  - [ ] Tool window header and tree row rhythm at the prototype's dimensions
-  - [ ] Prototype layout dimensions carried as design tokens rather than literals
-  - [ ] Repeatable visual fidelity comparison against the approved prototype
+  - [X] Activity icon rail at the prototype's 44px width, navigating between tool windows
+  - [X] Window chrome header row with its title, controls and metrics
+  - [X] Tool window header and tree row rhythm at the prototype's dimensions
+  - [X] Prototype layout dimensions carried as design tokens rather than literals
+  - [X] Repeatable visual fidelity comparison against the approved prototype
 - [ ] **F001 ssh-transport-core**
   - Spec: not yet specified
   - [ ] OpenSSH subprocess invocation, master connection lifecycle and startup preflight

@@ -27,7 +27,6 @@ pub struct Shell {
 /// Region identifiers arrive as strings from the bridge and are not trusted to be valid.
 fn parse_region(raw: &str) -> Result<RegionId, ShellError> {
     match raw {
-        "navigation" => Ok(RegionId::Navigation),
         "output" => Ok(RegionId::Output),
         "document_area" => Ok(RegionId::DocumentArea),
         _ => Err(ShellError::InvalidRegion),
@@ -175,7 +174,9 @@ mod tests {
 
     #[test]
     fn known_region_identifiers_parse() {
-        assert_eq!(parse_region("navigation"), Ok(RegionId::Navigation));
+        // "navigation" is no longer a region: F018 replaced it with the tool window,
+        // which carries its own state rather than being a generic resizable slot.
+        assert_eq!(parse_region("navigation"), Err(ShellError::InvalidRegion));
         assert_eq!(parse_region("output"), Ok(RegionId::Output));
         assert_eq!(parse_region("document_area"), Ok(RegionId::DocumentArea));
     }

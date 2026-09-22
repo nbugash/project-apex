@@ -93,6 +93,9 @@ pub struct SessionSnapshot {
     pub layout: Layout,
     pub documents: Vec<OpenDocumentReference>,
     pub focused_document_id: Option<DocumentId>,
+    /// FR-011. Without this the interface could persist tool window state but never read it
+    /// back, so a restart would silently reset the panel every time.
+    pub tool_window: ToolWindowState,
 }
 
 impl From<&PersistedSession> for SessionSnapshot {
@@ -103,6 +106,7 @@ impl From<&PersistedSession> for SessionSnapshot {
             layout: p.layout,
             documents: p.documents.clone(),
             focused_document_id: p.focused_document_id.clone(),
+            tool_window: p.tool_window.clone(),
         }
     }
 }
@@ -142,6 +146,16 @@ impl PersistedSession {
     pub fn repaired(mut self, displays: &[DisplayBounds]) -> Self {
         self.layout = self.layout.clamped();
         self.window = self.window.constrained_to(displays);
+
+        // Fold the retired `navigation` region into the tool window that replaced it. Done
+        // before the tool window's own repair so the folded width still gets clamped to the
+        // panel's minimum, and only when the legacy field is present — otherwise a current
+        // file would have its panel reset to a default on every load.
+        if let Some(nav) = self.layout.legacy_navigation.take() {
+            self.tool_window.width = nav.extent;
+            self.tool_window.collapsed = !nav.visible;
+        }
+
         self.tool_window = self.tool_window.repaired(&RailCatalogue::default());
         // Rewritten at the current version, so the migration happens once.
         self.schema_version = SCHEMA_VERSION;
@@ -349,11 +363,41 @@ mod tests {
         );
         // The whole point: nothing the user had is lost.
         assert_eq!(migrated.window.width, 1100);
-        assert_eq!(migrated.layout.navigation.extent, 300);
+        // The v1 file's `navigation` region is the tool window now: its width must survive
+        // the rename, because to the user it is the same panel they sized.
+        assert_eq!(migrated.tool_window.width, 300);
+        assert!(
+            migrated.layout.legacy_navigation.is_none(),
+            "folded, not kept"
+        );
         assert!(!migrated.layout.output.visible);
         assert_eq!(migrated.documents.len(), 1);
         assert_eq!(migrated.focused_document_id, Some(DocumentId("d1".into())));
-        assert_eq!(migrated.tool_window, ToolWindowState::default());
+        // A file written before the tool window existed gains it already repaired: the
+        // panel opens on the first available destination rather than on nothing.
+        assert_eq!(
+            migrated.tool_window.active_destination_id,
+            RailCatalogue::default()
+                .first_available()
+                .map(|d| d.id.clone())
+        );
+        assert!(!migrated.tool_window.collapsed, "the v1 panel was visible");
+    }
+
+    /// The fold must be conditional. An unconditional one would overwrite the tool window
+    /// with a default-constructed legacy region on every load, silently resetting the
+    /// panel for everyone whose file no longer has that field — which is everyone, one
+    /// save after upgrading.
+    #[test]
+    fn a_file_without_the_legacy_region_keeps_its_tool_window() {
+        let mut s = PersistedSession::default();
+        s.tool_window.width = 420;
+        s.tool_window.collapsed = true;
+        assert!(s.layout.legacy_navigation.is_none());
+
+        let repaired = s.repaired(&[]);
+        assert_eq!(repaired.tool_window.width, 420);
+        assert!(repaired.tool_window.collapsed);
     }
 
     #[test]

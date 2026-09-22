@@ -10,13 +10,13 @@ describe('keyboard operability', () => {
   });
 
   it('resizes a region using only the keyboard', async () => {
-    const splitter = await $('[aria-label="Resize navigation"]');
+    const splitter = await $('[aria-label="Resize tool window"]');
     await splitter.click();
 
     // The session file does not exist until the first mutation is persisted, so read the
     // baseline from the interface rather than assuming a file is already on disk.
     const before = await browser.execute(() =>
-      (document.querySelector('[aria-label="Resize navigation"]') as HTMLElement).getAttribute(
+      (document.querySelector('[aria-label="Resize tool window"]') as HTMLElement).getAttribute(
         'aria-valuenow',
       ),
     );
@@ -26,7 +26,7 @@ describe('keyboard operability', () => {
     await browser.waitUntil(
       async () => {
         const now = await browser.execute(() =>
-          (document.querySelector('[aria-label="Resize navigation"]') as HTMLElement).getAttribute(
+          (document.querySelector('[aria-label="Resize tool window"]') as HTMLElement).getAttribute(
             'aria-valuenow',
           ),
         );
@@ -44,7 +44,7 @@ describe('keyboard operability', () => {
 
   it('moves between tabs using only the keyboard', async () => {
     await openDocuments(3);
-    const tabs = await $$('[role="tab"]');
+    const tabs = await $$('.strip [role="tab"]');
     await tabs[0]!.click();
     const first = await browser.execute(
       () => document.querySelector('.tab.active')?.getAttribute('data-tab') ?? null,

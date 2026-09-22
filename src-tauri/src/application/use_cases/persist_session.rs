@@ -175,9 +175,7 @@ mod tests {
 
         // Roughly a second of dragging at 60fps.
         for i in 0..60 {
-            persist
-                .set_region(RegionId::Navigation, true, 200 + i)
-                .unwrap();
+            persist.set_region(RegionId::Output, true, 200 + i).unwrap();
         }
         std::thread::sleep(DEBOUNCE * 3);
 
@@ -193,7 +191,7 @@ mod tests {
     fn mutations_return_without_waiting_on_the_store() {
         let persist = PersistSession::new(Arc::new(FailingStore), PersistedSession::default());
         // A store that always fails must not make the interaction fail (FR-023).
-        assert!(persist.set_region(RegionId::Navigation, true, 300).is_ok());
+        assert!(persist.set_region(RegionId::Output, true, 300).is_ok());
     }
 
     #[test]
@@ -201,11 +199,9 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let persist = PersistSession::new(store.clone(), PersistedSession::default());
         for extent in [200, 300, 400, 500] {
-            persist
-                .set_region(RegionId::Navigation, true, extent)
-                .unwrap();
+            persist.set_region(RegionId::Output, true, extent).unwrap();
         }
         std::thread::sleep(DEBOUNCE * 3);
-        assert_eq!(persist.snapshot().layout.navigation.extent, 500);
+        assert_eq!(persist.snapshot().layout.output.extent, 500);
     }
 }

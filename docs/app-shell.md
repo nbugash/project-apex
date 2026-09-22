@@ -77,3 +77,109 @@ exercises no user journey and is not a substitute.
 
 `APEX_DATA_DIR` overrides the profile directory. The end-to-end suite uses it to give each
 run an isolated profile it can seed and corrupt.
+
+---
+
+# Shell Chrome (F018)
+
+The prototype's chrome, mounted on the F000 shell. Specification in
+`specs/002-shell-chrome-fidelity/`.
+
+## Components
+
+```
+src/lib/chrome/
+  ChromeHeader.svelte   product mark, project switcher, run group, omnibox, right cluster
+  ActivityRail.svelte   the destination list, roving tab index, collapse toggle
+  RailButton.svelte     one destination: active, available, unavailable
+  ToolWindow.svelte     the panel frame and its header row
+```
+
+The rail's destinations come from the core (`rail_destinations`), not from the interface.
+They are behaviour — identity, label, icon, availability — and the core is where behaviour
+lives. `src/lib/rail.ts` holds the ordering and keyboard helpers so they can be tested
+without a window.
+
+**Every control in the chrome header is inert.** Opening a workspace, run configurations,
+the omnibox and settings all belong to features that do not exist. They render at full
+fidelity and carry `aria-disabled` with no tab stop, so the header looks like the approved
+design without claiming behaviour it does not have. Omitting them instead would change the
+header's proportions on every release.
+
+## Dimensions come from the prototype, never from you
+
+No chrome dimension is written in a component. `scripts/ds-sync.mjs` extracts them from
+`mockups/` on every build into `src/lib/ds/layout-tokens.css`, and components reference
+`var(--vk-*)`. `lint:ds` rejects a raw pixel value, and an end-to-end test
+(`chrome-tokens.spec.ts`) rejects one that reaches the rendered stylesheet.
+
+Two things about that extraction are worth knowing before you change it:
+
+**The prototype has three density presets** — `compact`, `default`, `roomy` — applied from
+script on mount. Its prop schema declares `roomy` as the default, and that is what the
+signed-off screens show. The `var(--vk-tool, 276px)` fallbacks scattered through its markup
+encode the `default` preset and are _never_ the values displayed. Reading them produced a
+token file that disagreed with every approved screen; the extractor now resolves the preset
+the way the prototype does.
+
+**Anchors are structural.** Each surface is located once by something stable
+(`data-screen-label="Chrome"`, `<sc-for list="{{ rail }}">`) and its dimensions read from
+the style strings that follow. Matching on values instead would silently start matching a
+different element that happens to share a number.
+
+## Screenshots
+
+Every end-to-end test writes one to `reports/screenshots/${os}/${title}-${timestamp}.png`.
+Captured from X with ImageMagick rather than through WebDriver: `saveScreenshot` against
+WebKitWebDriver times out, and a display capture includes the native window rather than only
+the webview viewport.
+
+`assertCaptureIsNotBlank` fails any test whose capture has fewer than 16 distinct colours.
+F000 shipped a window that was never made visible — the interface waited for animation
+frames that a hidden window never produces — and every assertion passed while every
+screenshot was black. A person found it by opening an image. This is that check.
+
+## The fidelity gate
+
+```bash
+npm run gate:fidelity          # compare; exit 1 on difference, 2 if it cannot run
+npm run gate:fidelity:update   # approve a new baseline, deliberately
+npm run gate:fidelity:test     # the gate's own tests
+```
+
+It makes two judgements, and the difference matters:
+
+- **Geometry**, against numbers derived from the **prototype**. This is the fidelity check.
+- **Pixels**, against a baseline image of **this application**, approved once its geometry
+  was reconciled against the prototype. This is the regression check.
+
+A pixel baseline taken from the prototype could never pass — it is a populated mock with a
+file tree, an editor and a terminal — so it would be red from the first run and switched
+off. A geometry baseline taken from our own build would enforce self-consistency and pass
+even if we had never matched the design. Neither alone is the gate.
+
+`tools/gate-fidelity/reference/derivation.md` records where the numbers came from and what
+the first reconciliation found. Do not edit `geometry.json` to make the gate pass; the
+numbers are the design's.
+
+## Things that will bite you
+
+**The rail and the document tabs both use `role="tab"`.** A bare `[role="tab"]` selector
+matches eleven elements. Scope it: `nav.rail [role="tab"]` or `.strip [role="tab"]`.
+
+**The rail keeps its active mark while the tool window is collapsed**, because the prototype
+does. It is the only cue to what reopening will show.
+
+**Launching takes 22 seconds on a machine with no desktop session**, waiting out a portal
+activation timeout that can never be satisfied. The harness and the gate set
+`DBUS_SESSION_BUS_ADDRESS=/dev/null`, which brings it to about one second. If a suite
+suddenly takes twenty times longer, that variable is the first thing to check.
+
+**A debug build loads `devUrl`.** Without a server on port 1420 the webview is blank and
+every selector times out with no clue why. The harness and the gate both start
+`vite preview` for this reason.
+
+**The status bar's height is load-bearing.** The rail and tool window occupy whatever the
+chrome header and status bar leave. F000 built the status bar from the generic spacing
+scale, which made it 17px against the prototype's 26px, and both gated surfaces came out
+nine pixels too tall. Its metrics are extracted from the prototype now.

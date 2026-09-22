@@ -46,6 +46,9 @@ jobs:
       # webview with every selector timing out for no visible reason.
       - run: xvfb-run -a npm run e2e
       # The fidelity gate needs a rendered window, so it runs where the e2e suite runs.
+      # The gate's own tests first: a gate that cannot fail would let the run below pass
+      # while measuring nothing. Under xvfb so the end-to-end case is not skipped.
+      - run: xvfb-run -a npm run gate:fidelity:test
       - run: xvfb-run -a npm run gate:fidelity
       # Screenshots and any difference image are the evidence for a failed visual run.
       # Without them a reviewer has to reproduce the failure locally to see anything.

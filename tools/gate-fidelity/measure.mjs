@@ -1,0 +1,165 @@
+// Shared measurement for the fidelity gate: launch the shell at the reference size, read
+// the surface geometry out of it, and capture its pixels.
+//
+// Used by both compare.mjs and update.mjs, so the approved baseline and the thing judged
+// against it are produced by identical steps. If they were captured differently, the gate
+// would be measuring the difference between two capture paths rather than between two
+// renderings.
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { remote } from 'webdriverio';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = join(HERE, '../..');
+const BINARY = join(REPO, 'src-tauri/target/debug/apex-shell');
+const PROFILE = join(REPO, '.gate-profile');
+
+export const REFERENCE = { width: 1200, height: 800 };
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitForPreview(timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch('http://127.0.0.1:1420');
+      if (res.ok) return;
+    } catch {
+      // not up yet
+    }
+    await sleep(500);
+  }
+  throw new Error('the preview server never became reachable on port 1420');
+}
+
+/** Launch the shell, hand it to `fn`, and tear everything down afterwards. */
+export async function withShell(fn) {
+  if (!existsSync(BINARY)) {
+    throw new Error(
+      `the shell binary is missing at ${BINARY}\n` +
+        '  Build it first: cargo build --manifest-path src-tauri/Cargo.toml',
+    );
+  }
+
+  // A debug build loads devUrl, so without a server on that port the webview renders blank
+  // and the gate would compare two empty windows and pass.
+  const preview = spawn('npx', ['vite', 'preview', '--port', '1420', '--strictPort'], {
+    cwd: REPO,
+    stdio: 'ignore',
+  });
+
+  rmSync(PROFILE, { recursive: true, force: true });
+  mkdirSync(PROFILE, { recursive: true });
+  process.env.APEX_DATA_DIR = PROFILE;
+
+  // See tests/e2e/wdio.conf.ts: without this, window creation waits out a ~22 second
+  // portal activation timeout on a machine with no desktop session.
+  process.env.DBUS_SESSION_BUS_ADDRESS = '/dev/null';
+
+  const driver = spawn('tauri-driver', [], { stdio: 'ignore' });
+  let browser = null;
+  try {
+    await waitForPreview();
+    await sleep(3000); // tauri-driver needs its port before the first session
+
+    browser = await remote({
+      hostname: '127.0.0.1',
+      port: 4444,
+      path: '/',
+      logLevel: 'error',
+      capabilities: { 'tauri:options': { application: BINARY } },
+    });
+
+    await browser.$('.shell').waitForExist({ timeout: 30_000 });
+    // A hidden window reports a placeholder size. Measuring it would produce a baseline of
+    // a window nobody ever saw — which is exactly the defect that shipped in F000.
+    await browser.waitUntil(async () => (await browser.execute(() => window.innerWidth)) > 400, {
+      timeout: 30_000,
+      timeoutMsg: 'the window never became visible',
+    });
+
+    await browser.setWindowRect(0, 0, REFERENCE.width, REFERENCE.height);
+    await sleep(500);
+
+    return await fn(browser);
+  } finally {
+    if (browser) await browser.deleteSession().catch(() => {});
+    driver.kill();
+    preview.kill();
+    rmSync(PROFILE, { recursive: true, force: true });
+  }
+}
+
+/** Read each surface's rect, in the viewport's coordinates, as the prototype was measured. */
+export async function measureSurfaces(browser, surfaces) {
+  return browser.execute((list) => {
+    const out = {};
+    for (const s of list) {
+      const el = document.querySelector(s.shell);
+      if (!el) {
+        out[s.name] = null;
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      out[s.name] = {
+        x: Math.round(r.x),
+        y: Math.round(r.y),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      };
+    }
+    return out;
+  }, surfaces);
+}
+
+/** Capture the shell window's pixels to `path`.
+ *
+ *  Not WebDriver's saveScreenshot: WebKitWebDriver leaves that request open until the
+ *  command times out, which turns every capture into a minute of waiting and then a
+ *  failure. Capturing at the X level is immediate and gets the same pixels.
+ *
+ *  And not `import -window <id>` either — that asks the X server for the window's own
+ *  backing store, which a compositing-free Xvfb session declines with "Resource
+ *  temporarily unavailable". Grabbing the root always works, so the window is located and
+ *  cropped out of it instead. */
+export function captureWindow(path) {
+  // Located by geometry, not by name. The X window that carries the process name is the
+  // 10x10 placeholder Tauri creates before the interface signals readiness; the window a
+  // user actually sees is a descendant of it. Searching by name found the placeholder and
+  // captured a hundred pixels of nothing.
+  const tree = spawnSync('xwininfo', ['-root', '-tree'], { encoding: 'utf8' }).stdout ?? '';
+  const candidates = [];
+  for (const line of tree.split('\n')) {
+    const m = /(\d+)x(\d+)\+-?\d+\+-?\d+\s+\+(-?\d+)\+(-?\d+)/.exec(line);
+    if (!m) continue;
+    const [, w, h, x, y] = m.map(Number);
+    if (w >= REFERENCE.width && h >= REFERENCE.height) candidates.push({ w, h, x, y });
+  }
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `no window at least ${REFERENCE.width}x${REFERENCE.height} is on the display.\n` +
+        '  The gate needs a rendered window at the reference size; run it under a display\n' +
+        '  with room for one, for example: xvfb-run -s "-screen 0 1400x900x24" …',
+    );
+  }
+
+  // The tightest fit, so a root window covering the whole screen never wins over the
+  // application's own.
+  candidates.sort((a, b) => a.w * a.h - b.w * b.h);
+  const win = candidates[0];
+
+  const full = join(REPO, 'reports/fidelity/.root.png');
+  mkdirSync(dirname(full), { recursive: true });
+  execFileSync('import', ['-window', 'root', full]);
+  execFileSync('convert', [
+    full,
+    '-crop',
+    `${REFERENCE.width}x${REFERENCE.height}+${win.x}+${win.y}`,
+    '+repage',
+    path,
+  ]);
+  rmSync(full, { force: true });
+}

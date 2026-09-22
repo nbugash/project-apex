@@ -86,17 +86,17 @@ application boundary and never ships.
 
 ### Tests for User Story 1
 
-- [ ] T021 [P] [US1] End-to-end test asserting the three chrome surfaces are present at the prototype's dimensions in `tests/e2e/chrome-fidelity.spec.ts` (SC-001)
-- [ ] T022 [P] [US1] End-to-end test asserting fixed-width surfaces keep their widths as the window resizes in `tests/e2e/chrome-resize.spec.ts` (FR-010)
-- [ ] T023 [P] [US1] End-to-end test asserting no chrome dimension resolves to a literal rather than a token in `tests/e2e/chrome-tokens.spec.ts` (SC-002)
+- [X] T021 [P] [US1] End-to-end test asserting the three chrome surfaces are present at the prototype's dimensions in `tests/e2e/chrome-fidelity.spec.ts` (SC-001)
+- [X] T022 [P] [US1] End-to-end test asserting fixed-width surfaces keep their widths as the window resizes in `tests/e2e/chrome-resize.spec.ts` (FR-010)
+- [X] T023 [P] [US1] End-to-end test asserting no chrome dimension resolves to a literal rather than a token in `tests/e2e/chrome-tokens.spec.ts` (SC-002)
 
 ### Implementation for User Story 1
 
-- [ ] T024 [P] [US1] Implement the chrome header with product mark and project switcher in `src/lib/chrome/ChromeHeader.svelte` (FR-001)
-- [ ] T025 [P] [US1] Implement a single rail destination button with active and unavailable states in `src/lib/chrome/RailButton.svelte` (FR-005, FR-008)
-- [ ] T026 [US1] Implement the activity rail rendering its destinations in `src/lib/chrome/ActivityRail.svelte` (FR-002, depends on T025)
-- [ ] T027 [P] [US1] Implement the tool window frame and header row in `src/lib/chrome/ToolWindow.svelte` (FR-003)
-- [ ] T028 [US1] Compose chrome, rail and tool window into the shell in `src/lib/shell/Window.svelte` (depends on T024, T026, T027)
+- [X] T024 [P] [US1] Implement the chrome header with product mark and project switcher in `src/lib/chrome/ChromeHeader.svelte` (FR-001)
+- [X] T025 [P] [US1] Implement a single rail destination button with active and unavailable states in `src/lib/chrome/RailButton.svelte` (FR-005, FR-008)
+- [X] T026 [US1] Implement the activity rail rendering its destinations in `src/lib/chrome/ActivityRail.svelte` (FR-002, depends on T025)
+- [X] T027 [P] [US1] Implement the tool window frame and header row in `src/lib/chrome/ToolWindow.svelte` (FR-003)
+- [X] T028 [US1] Compose chrome, rail and tool window into the shell in `src/lib/shell/Window.svelte` (depends on T024, T026, T027)
 
 **Checkpoint**: The chrome is visible and matches the prototype by eye. MVP.
 
@@ -110,20 +110,20 @@ application boundary and never ships.
 
 ### Tests for User Story 2
 
-- [ ] T029 [P] [US2] End-to-end test for destination switching and active-state movement in `tests/e2e/rail-navigation.spec.ts` (FR-004, FR-005)
-- [ ] T030 [P] [US2] End-to-end test asserting selecting the active destination collapses and restores at the previous width in `tests/e2e/rail-collapse.spec.ts` (FR-006)
-- [ ] T031 [P] [US2] End-to-end test asserting every destination is reachable and activatable by keyboard alone in `tests/e2e/rail-keyboard.spec.ts` (FR-007, SC-003)
-- [ ] T032 [P] [US2] End-to-end test asserting active and unavailable states stay distinguishable in greyscale in `tests/e2e/rail-greyscale.spec.ts` (FR-005, SC-004)
-- [ ] T033 [P] [US2] End-to-end test asserting tool window state is restored after a restart in `tests/e2e/rail-persistence.spec.ts` (FR-011, SC-005)
-- [ ] T034 [P] [US2] End-to-end test capturing a screenshot per rail state — each destination active, and collapsed — to `reports/screenshots/${os}/` for review, in `tests/e2e/rail-states.spec.ts`
+- [X] T029 [P] [US2] End-to-end test for destination switching and active-state movement in `tests/e2e/rail-navigation.spec.ts` (FR-004, FR-005)
+- [X] T030 [P] [US2] End-to-end test asserting selecting the active destination collapses and restores at the previous width in `tests/e2e/rail-collapse.spec.ts` (FR-006)
+- [X] T031 [P] [US2] End-to-end test asserting every destination is reachable and activatable by keyboard alone in `tests/e2e/rail-keyboard.spec.ts` (FR-007, SC-003)
+- [X] T032 [P] [US2] End-to-end test asserting active and unavailable states stay distinguishable in greyscale in `tests/e2e/rail-greyscale.spec.ts` (FR-005, SC-004)
+- [X] T033 [P] [US2] End-to-end test asserting tool window state is restored after a restart in `tests/e2e/rail-persistence.spec.ts` (FR-011, SC-005)
+- [X] T034 [P] [US2] End-to-end test capturing a screenshot per rail state — each destination active, and collapsed — to `reports/screenshots/${os}/` for review, in `tests/e2e/rail-states.spec.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T035 [US2] Wire destination selection through the typed IPC wrapper in `src/lib/chrome/ActivityRail.svelte` (FR-004)
-- [ ] T036 [US2] Implement collapse toggling and width retention in `src/lib/chrome/ToolWindow.svelte` (FR-006)
-- [ ] T037 [US2] Implement keyboard navigation across rail destinations in `src/lib/chrome/ActivityRail.svelte` (FR-007, depends on T035)
-- [ ] T038 [US2] Repair a dangling active destination on load by falling back to the first available one in `src-tauri/src/domain/rail.rs`
-- [ ] T039 [US2] Render the active destination's name in the tool window header in `src/lib/chrome/ToolWindow.svelte` (FR-003)
+- [X] T035 [US2] Wire destination selection through the typed IPC wrapper in `src/lib/chrome/ActivityRail.svelte` (FR-004)
+- [X] T036 [US2] Implement collapse toggling and width retention in `src/lib/chrome/ToolWindow.svelte` (FR-006)
+- [X] T037 [US2] Implement keyboard navigation across rail destinations in `src/lib/chrome/ActivityRail.svelte` (FR-007, depends on T035)
+- [X] T038 [US2] Repair a dangling active destination on load by falling back to the first available one in `src-tauri/src/domain/rail.rs`
+- [X] T039 [US2] Render the active destination's name in the tool window header in `src/lib/chrome/ToolWindow.svelte` (FR-003)
 
 **Checkpoint**: The rail navigates, persists and is fully keyboard-operable
 
@@ -143,21 +143,21 @@ the gate's implementation, which is ordinary tests-first ordering and not a cont
 the above: a test may be written before the code it exercises, but not before the data it
 reads.
 
-- [ ] T040 [US3] Derive the baseline's expected surface geometry from the prototype itself, not from our build, and record the extraction in `tools/gate-fidelity/reference/derivation.md` (SC-001). Capturing the baseline from our own output would make the gate enforce self-consistency rather than fidelity: it would lock in whatever we happened to implement, including any drift, and thereafter catch only *future* drift
-- [ ] T041 [US3] Verify the implementation against the derived geometry and reconcile any difference before the baseline is committed, recording the outcome in `tools/gate-fidelity/reference/derivation.md`
-- [ ] T042 [US3] Commit the verified baseline in `tools/gate-fidelity/reference/` (depends on T041)
+- [X] T040 [US3] Derive the baseline's expected surface geometry from the prototype itself, not from our build, and record the extraction in `tools/gate-fidelity/reference/derivation.md` (SC-001). Capturing the baseline from our own output would make the gate enforce self-consistency rather than fidelity: it would lock in whatever we happened to implement, including any drift, and thereafter catch only *future* drift
+- [X] T041 [US3] Verify the implementation against the derived geometry and reconcile any difference before the baseline is committed, recording the outcome in `tools/gate-fidelity/reference/derivation.md`
+- [X] T042 [US3] Commit the verified baseline in `tools/gate-fidelity/reference/` (depends on T041)
 
 ### Tests for User Story 3
 
-- [ ] T043 [P] [US3] Self-test asserting the gate passes on an unmodified build and fails on an altered dimension, injecting the alteration through a fixture rather than editing tracked source, in `tools/gate-fidelity/gate.test.mjs` (SC-006, depends on T042)
-- [ ] T044 [P] [US3] Self-test asserting the gate errors rather than passing when the baseline is absent, unreadable, or captured at a different reference size, in `tools/gate-fidelity/gate.test.mjs` (FR-015)
+- [X] T043 [P] [US3] Self-test asserting the gate passes on an unmodified build and fails on an altered dimension, injecting the alteration through a fixture rather than editing tracked source, in `tools/gate-fidelity/gate.test.mjs` (SC-006, depends on T042)
+- [X] T044 [P] [US3] Self-test asserting the gate errors rather than passing when the baseline is absent, unreadable, or captured at a different reference size, in `tools/gate-fidelity/gate.test.mjs` (FR-015)
 
 ### Implementation for User Story 3
 
-- [ ] T045 [US3] Implement surface geometry measurement at the reference size in `tools/gate-fidelity/compare.mjs` (FR-013)
-- [ ] T046 [US3] Implement pixel comparison against the baseline image in `tools/gate-fidelity/compare.mjs` (FR-013, depends on T045)
-- [ ] T047 [US3] Implement verdict output naming each differing surface and writing a difference image in `tools/gate-fidelity/compare.mjs` (FR-014, SC-007, depends on T046)
-- [ ] T048 [US3] Implement the separate baseline update command in `tools/gate-fidelity/update.mjs` (FR-016)
+- [X] T045 [US3] Implement surface geometry measurement at the reference size in `tools/gate-fidelity/compare.mjs` (FR-013)
+- [X] T046 [US3] Implement pixel comparison against the baseline image in `tools/gate-fidelity/compare.mjs` (FR-013, depends on T045)
+- [X] T047 [US3] Implement verdict output naming each differing surface and writing a difference image in `tools/gate-fidelity/compare.mjs` (FR-014, SC-007, depends on T046)
+- [X] T048 [US3] Implement the separate baseline update command in `tools/gate-fidelity/update.mjs` (FR-016)
 
 **Checkpoint**: Fidelity is machine-checked, and the gate has been seen to fail
 
@@ -165,11 +165,11 @@ reads.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T049 Assert every end-to-end screenshot contains a rendered window rather than a blank display, in `tests/e2e/helpers.ts`. **Cross-feature**: this file is shared, so the assertion applies retroactively to F000's 34 tests; re-run F000's end-to-end suite as part of completing this task. A blank capture means the window was never shown — in F000 that was a real defect every other gate passed, and it was found by a human looking at an image rather than by any check
-- [ ] T050 [P] Extend the interaction budget measurement to assert destination switching stays under 100 ms in `tests/perf/budget.spec.ts` (SC-008)
-- [ ] T051 Reduce end-to-end runtime by sharing one application launch across specs that do not need a restart, in `tests/e2e/wdio.conf.ts`. **Cross-feature**: this changes the harness every feature's specs run under; F000's suite must still pass afterwards. This feature adds nine spec files to a suite already taking 16 minutes across roughly 30 relaunches
-- [ ] T052 [P] Document the chrome components, the screenshot convention and the gate's operation in `docs/app-shell.md`
-- [ ] T053 Run the full quickstart validation and record results in `specs/002-shell-chrome-fidelity/quickstart.md`
+- [X] T049 Assert every end-to-end screenshot contains a rendered window rather than a blank display, in `tests/e2e/helpers.ts`. **Cross-feature**: this file is shared, so the assertion applies retroactively to F000's 34 tests; re-run F000's end-to-end suite as part of completing this task. A blank capture means the window was never shown — in F000 that was a real defect every other gate passed, and it was found by a human looking at an image rather than by any check
+- [X] T050 [P] Extend the interaction budget measurement to assert destination switching stays under 100 ms in `tests/perf/budget.spec.ts` (SC-008)
+- [X] T051 Reduce end-to-end runtime by sharing one application launch across specs that do not need a restart, in `tests/e2e/wdio.conf.ts`. **Cross-feature**: this changes the harness every feature's specs run under; F000's suite must still pass afterwards. This feature adds nine spec files to a suite already taking 16 minutes across roughly 30 relaunches
+- [X] T052 [P] Document the chrome components, the screenshot convention and the gate's operation in `docs/app-shell.md`
+- [X] T053 Run the full quickstart validation and record results in `specs/002-shell-chrome-fidelity/quickstart.md`
 
 ---
 
