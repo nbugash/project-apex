@@ -21,6 +21,7 @@ pub use classify::classify;
 pub use spawner::{parse_version, OpenSshSpawner, ASKPASS_MIN_VERSION};
 
 use crate::adapters::outbound::askpass::ipc::AskpassChannel;
+use crate::application::ports::connection::{ConnectionStatusSource, StateSink};
 use crate::application::ports::spawner::{ProcessSpawner, SpawnError, SpawnSpec};
 use crate::application::ports::transport::{Pending, Request, RequestTransport};
 use crate::application::use_cases::connect::ConnectAttempt;
@@ -326,6 +327,44 @@ impl ConnectAttempt for SshTransport {
         self.assisted_available
             .load(std::sync::atomic::Ordering::SeqCst)
             && self.askpass.lock().expect("askpass lock").is_some()
+    }
+}
+
+/// The transport as the status bar sees it (F000's port, unchanged).
+///
+/// This impl is the swap Principle VIII was for: the interface layer, the use case and the
+/// port are untouched, and the composition root binds a different adapter. If this had
+/// required changing `ObserveConnection` or `StatusBar.svelte`, the boundary would have
+/// been decorative.
+impl ConnectionStatusSource for SshTransport {
+    fn current(&self) -> ConnectionState {
+        *self.state_rx.borrow()
+    }
+
+    fn subscribe(&self, sink: StateSink) {
+        // Invoked once immediately, so a subscriber never polls for its initial value.
+        sink(self.current());
+
+        // A thread with its own single-threaded runtime rather than a `tokio::spawn`,
+        // because this is called from the composition root during startup, which is not
+        // guaranteed to be inside a runtime — and a `spawn` that panics there would take
+        // the status bar down with it.
+        let mut rx = self.state_rx.clone();
+        std::thread::spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+            else {
+                crate::logging::warn("could not watch connection state: no runtime");
+                return;
+            };
+            rt.block_on(async move {
+                while rx.changed().await.is_ok() {
+                    let state = *rx.borrow_and_update();
+                    sink(state);
+                }
+            });
+        });
     }
 }
 

@@ -6,9 +6,11 @@
 
 use crate::adapters::inbound::tauri_commands::Shell;
 use crate::adapters::outbound::json_session_store::JsonFileSessionStore;
+use crate::adapters::outbound::openssh::{OpenSshSpawner, SshTransport};
 use crate::adapters::outbound::stub_connection::StubConnectionStatusSource;
 use crate::application::ports::connection::ConnectionStatusSource;
 use crate::application::ports::session_store::SessionStore;
+use crate::application::ports::spawner::SpawnSpec;
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
 use crate::application::use_cases::restore_session::RestoreSession;
@@ -20,6 +22,27 @@ use std::sync::Arc;
 pub struct Wiring {
     pub shell: Shell,
     pub stub: Arc<StubConnectionStatusSource>,
+}
+
+/// The host to connect to, when one has been named.
+///
+/// Environment variables until the feature that owns remote configuration exists. They are
+/// read here, in the composition root, rather than inside the transport: an adapter that
+/// reads its own configuration from the environment is one that cannot be constructed two
+/// different ways, which is the whole property this file protects.
+fn remote_target() -> Option<SpawnSpec> {
+    let host = std::env::var("APEX_REMOTE_HOST")
+        .ok()
+        .filter(|h| !h.is_empty())?;
+    let user = std::env::var("APEX_REMOTE_USER")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .or_else(|| std::env::var("USER").ok())?;
+    Some(SpawnSpec {
+        host,
+        user,
+        assisted: false,
+    })
 }
 
 pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
@@ -35,7 +58,34 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
 
     let rail = Arc::new(RailCatalogue::default());
     let stub = Arc::new(StubConnectionStatusSource::new());
-    let source: Arc<dyn ConnectionStatusSource> = stub.clone();
+
+    // The swap this file exists for. Which adapter supplies connection state is decided
+    // here and nowhere else; `ObserveConnection` and the status bar cannot tell them apart.
+    //
+    // It is conditional only because nothing configures a host yet — `WorkspaceReference`
+    // records a name and a location type, not a host and a user, and the screen that
+    // collects them belongs to a later feature. Connecting unconditionally would mean every
+    // launch failing against a host nobody named, which reads as a broken application
+    // rather than an unconfigured one.
+    let source: Arc<dyn ConnectionStatusSource> = match remote_target() {
+        Some(spec) => {
+            crate::logging::info(&format!("connecting to {}@{}", spec.user, spec.host));
+            let transport = Arc::new(SshTransport::new(Arc::new(OpenSshSpawner::default()), spec));
+            // FR-005: refused at startup rather than discovered at the first failure, so
+            // "ssh is too old" and "the host refused you" are never confused.
+            match transport.preflight() {
+                Ok(banner) => {
+                    crate::logging::info(&format!("local ssh client: {banner}"));
+                    transport
+                }
+                Err(e) => {
+                    crate::logging::warn(&format!("cannot use ssh: {e}; running unconnected"));
+                    stub.clone()
+                }
+            }
+        }
+        None => stub.clone(),
+    };
     let connection = Arc::new(ObserveConnection::new(source));
 
     #[cfg(debug_assertions)]

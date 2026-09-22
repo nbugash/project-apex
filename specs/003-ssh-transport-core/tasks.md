@@ -219,13 +219,13 @@ under latency and loss.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T074 Replace `StubConnectionStatusSource` with the real transport in `src-tauri/src/composition.rs` — the one-line swap the port structure exists to buy. Keep the stub for tests
-- [ ] T075 [P] Verify the interface layer renders `Retrying` sensibly in `src/lib/statusbar/StatusBar.svelte`, showing that a reconnect is in progress rather than a state it does not recognise
-- [ ] T076 [P] Document the transport — ports, the mock, how to drive it, and the failure table — in `docs/transport.md`
-- [ ] T077 [P] Add an **opt-in** integration test against a locally spawned `sshd` in `src-tauri/tests/transport_real_sshd.rs`, skipped with a clear reason when `sshd` is unavailable. Principle VII names "the protocol against a real `sshd`" as the integration standard, and SC-010 forbids the suite from _requiring_ one; opt-in satisfies both rather than quietly choosing one over the other
-- [ ] T078 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md)
-- [ ] T079 Run `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` and `cargo fmt --manifest-path src-tauri/Cargo.toml --check`, and fix what they report across `src-tauri/`
-- [ ] T080 Promote the two decisions marked in [research.md](./research.md) to Appendix A of `project-apex-predator.md` — that an in-flight request dies with the connection, and that outbound priority is stated by the caller. Both bind every later feature, and a decision only F001's research records is one F002 will not find
+- [X] T074 Replace `StubConnectionStatusSource` with the real transport in `src-tauri/src/composition.rs` — the one-line swap the port structure exists to buy. Keep the stub for tests
+- [X] T075 [P] Verify the interface layer renders `Retrying` sensibly in `src/lib/statusbar/StatusBar.svelte`, showing that a reconnect is in progress rather than a state it does not recognise
+- [X] T076 [P] Document the transport — ports, the mock, how to drive it, and the failure table — in `docs/transport.md`
+- [X] T077 [P] Add an **opt-in** integration test against a locally spawned `sshd` in `src-tauri/tests/transport_real_sshd.rs`, skipped with a clear reason when `sshd` is unavailable. Principle VII names "the protocol against a real `sshd`" as the integration standard, and SC-010 forbids the suite from _requiring_ one; opt-in satisfies both rather than quietly choosing one over the other
+- [X] T078 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md)
+- [X] T079 Run `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` and `cargo fmt --manifest-path src-tauri/Cargo.toml --check`, and fix what they report across `src-tauri/`
+- [X] T080 Promote the two decisions marked in [research.md](./research.md) to Appendix A of `project-apex-predator.md` — that an in-flight request dies with the connection, and that outbound priority is stated by the caller. Both bind every later feature, and a decision only F001's research records is one F002 will not find
 
 ---
 

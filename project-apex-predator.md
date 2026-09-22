@@ -1488,6 +1488,74 @@ Individual features cite it rather than re-arguing it.
 A WebDriver implementation for the macOS platform webview, or a change of interface technology
 that brings its own cross-platform driver.
 
+## A-REQ — An in-flight request dies with its connection (2026-09-22)
+
+**Decision.** When a connection is lost, every outstanding request resolves as
+`ConnectionLost` before any reconnection attempt begins. Nothing is carried across, retried
+automatically or replayed. The caller decides what to do next.
+
+**Rationale.** The remote engine has no memory of a request issued on a connection that no
+longer exists, so a "resumed" request would wait forever for a reply nobody will send.
+Failing fast is both the honest report and the simpler implementation: there is no partially
+valid state to reconcile on reconnect, because the connection owns everything keyed to it.
+
+This binds every feature that issues a request. A caller that assumes its request survives a
+blip will silently lose work — a save that reports success on send, an index run that
+believes it completed. The rule is that a request outcome is always delivered, and
+`ConnectionLost` is one of the outcomes.
+
+**Rejected — replay on reconnect.** Requires the engine to deduplicate by request id across
+connections, which §4.8 does not specify and which turns every non-idempotent method into a
+correctness question. A `workspace/writeFile` replayed after a reconnect could overwrite a
+change made in between.
+
+**Rejected — hold requests until the connection returns.** Indistinguishable from a hang for
+the user, and unbounded: a laptop closed overnight would wake with a queue of requests whose
+purpose has expired.
+
+### Reversal conditions
+
+An engine-side session identity that survives a transport connection, with deduplication by
+request id defined in §4.8.
+
+---
+
+## A-PRI — Outbound priority is stated by the caller (2026-09-22)
+
+**Decision.** Two classes, `Interactive` and `Background`, with `Interactive` always written
+first and FIFO within a class. The class is a parameter of the send call. Ordering applies
+between frames, never within one: a frame already being written completes before anything
+overtakes it.
+
+**Rationale.** §4.6 assigns the ordering guarantee to the transport, and the transport cannot
+infer the class. The same method is either class depending on why it was called —
+`workspace/readFile` is interactive when the user opens a file and background when prefetch
+warms the cache. Inferring from the method name would be wrong in exactly the case that
+matters, which is the one where an indexing run is competing with a keystroke.
+
+Two classes rather than five because nothing in this specification distinguishes more than
+editor traffic from background work, and a priority scheme finer than its requirements is one
+nobody applies consistently.
+
+This binds every future caller: traffic sent without a stated class gets the default, and a
+feature that sends bulk work as `Interactive` defeats the guarantee for everyone else.
+
+**Rejected — inferring priority from the method name.** Wrong for the case above.
+
+**Rejected — strict FIFO until a second traffic class exists.** §4.6 is normative and was
+unassigned, and an unassigned normative requirement is how a thing quietly never gets built.
+
+**Rejected — interrupting a frame in progress.** `Content-Length` has promised exactly that
+many bytes follow; interrupting corrupts the stream for every subsequent frame. The 1 MiB cap
+is what bounds the resulting delay.
+
+### Reversal conditions
+
+A traffic class that fits neither — a third party whose latency requirements sit between the
+two — or measurement showing the 1 MiB cap admits an unacceptable head-of-line delay.
+
+---
+
 ---
 
 # Appendix B — Open Items

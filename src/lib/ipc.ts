@@ -4,7 +4,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export type RegionId = 'output' | 'document_area';
-export type ConnectionState = 'unknown' | 'connecting' | 'connected' | 'disconnected';
+/// Mirrors `domain::connection::ConnectionState`. The first four serialise as plain strings;
+/// `Retrying` carries data, so serde renders it as an object. Widening this type is what
+/// stops the status bar indexing a record with an object key and rendering nothing.
+export type ConnectionState =
+  | 'unknown'
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | { retrying: { attempt: number; next_in_secs: number } };
 export type LocationType = 'REMOTE' | 'LOCAL';
 
 export interface RegionState {

@@ -354,6 +354,13 @@ async fn the_transport_adds_little_to_a_round_trip() {
         assert!(answered(&outcome));
     }
     let p99 = percentile(samples.clone(), 0.99);
+    // Printed, not only asserted. A budget that is only ever compared against tells nobody
+    // how much headroom is left, and headroom is what says whether the next feature's work
+    // can be afforded.
+    eprintln!(
+        "SC-011 pure overhead: p50 {:?}, p99 {p99:?} (budget {BUDGET:?})",
+        percentile(samples.clone(), 0.5)
+    );
     assert!(
         p99 < BUDGET,
         "added overhead at p99 was {p99:?}, over the {BUDGET:?} budget (median {:?})",
@@ -377,7 +384,11 @@ async fn the_transport_adds_little_to_a_round_trip() {
         added.push(started.elapsed().saturating_sub(SIMULATED));
         assert!(answered(&outcome));
     }
-    let p99 = percentile(added, 0.99);
+    let p99 = percentile(added.clone(), 0.99);
+    eprintln!(
+        "SC-011 beyond a {SIMULATED:?} round trip: p50 {:?}, p99 {p99:?} (budget {BUDGET:?})",
+        percentile(added, 0.5)
+    );
     assert!(
         p99 < BUDGET,
         "overhead beyond the simulated round trip was {p99:?} at p99, over {BUDGET:?}"
@@ -462,4 +473,76 @@ fn open_tcp_sockets() -> Vec<u64> {
 #[cfg(not(target_os = "linux"))]
 fn open_tcp_sockets() -> Vec<u64> {
     Vec::new()
+}
+
+// ---------------------------------------------------------------------------
+// Hostile input from the far side (Principle VI, contracts/framing.md).
+//
+// The assertion that matters is not "the bad frame was rejected" — a reader that silently
+// desynchronised would pass that. It is that a *normal request afterwards* is still
+// answered, which is only true if the stream stayed aligned.
+
+/// A reply whose body is not JSON. The transport cannot correlate it, so the request it was
+/// meant for times out — and everything after it must still work.
+#[tokio::test]
+async fn a_malformed_reply_costs_one_request_and_not_the_stream() {
+    let (t, _s) = connected("malformed=1"); // only the first reply is junk
+
+    let mut first = Request::interactive("engine/echo", r#"{"n":1}"#);
+    first.timeout = Some(Duration::from_millis(300));
+    assert_eq!(
+        t.send(first).await,
+        RequestOutcome::TimedOut,
+        "a reply that cannot be correlated cannot resolve its request"
+    );
+
+    let after = t
+        .send(Request::interactive("engine/echo", r#"{"n":2}"#))
+        .await;
+    assert!(
+        answered(&after),
+        "the stream did not stay aligned after a malformed frame: {after:?}"
+    );
+    assert_eq!(t.outstanding(), 0);
+    t.shutdown();
+}
+
+/// A header declaring more than the cap, with no body behind it. The transport must refuse
+/// it without allocating and without consuming the bytes that follow as if they were body.
+#[tokio::test]
+async fn an_oversized_declared_length_is_refused_and_the_stream_survives() {
+    let (t, _s) = connected("oversized=1");
+
+    let mut first = Request::interactive("engine/echo", r#"{"n":1}"#);
+    first.timeout = Some(Duration::from_millis(300));
+    assert_eq!(t.send(first).await, RequestOutcome::TimedOut);
+
+    let after = t
+        .send(Request::interactive("engine/echo", r#"{"n":2}"#))
+        .await;
+    assert!(
+        answered(&after),
+        "a refused oversized frame must not consume what follows it: {after:?}"
+    );
+    t.shutdown();
+}
+
+/// The stream ends halfway through a frame. There is no aligned position to recover to, so
+/// the connection is over — and the requirement is that everything in flight resolves
+/// rather than waiting for the rest of a frame that will never arrive.
+#[tokio::test]
+async fn a_truncated_frame_ends_the_connection_without_leaving_anyone_waiting() {
+    let (t, _s) = connected("close-mid-frame");
+
+    let mut r = Request::interactive("engine/echo", r#"{"n":1}"#);
+    r.timeout = Some(Duration::from_secs(5));
+    let outcome = t.send(r).await;
+
+    assert_eq!(
+        outcome,
+        RequestOutcome::ConnectionLost,
+        "a half-written frame must end the connection, not hang the request"
+    );
+    assert_eq!(t.outstanding(), 0);
+    t.shutdown();
 }

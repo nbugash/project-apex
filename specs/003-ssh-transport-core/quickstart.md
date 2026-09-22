@@ -53,8 +53,12 @@ exits, no `ssh` process remains. Confirm the second by hand once — the failure
 orphaned master that outlives the app and holds the connection open:
 
 ```bash
-pgrep -af "ssh .*apex" || echo "nothing left behind"
+pgrep -a ssh | grep apex- || echo "nothing left behind"
 ```
+
+Use this form, not `pgrep -af "ssh .*apex"`: the `-f` variant matches the shell running the
+check itself, so it always finds something and tells you nothing. That is not hypothetical —
+it hid two real orphaned masters during this feature's own validation.
 
 ### 2. Replies reach the right requests (User Story 3, SC-004, SC-005)
 
@@ -130,7 +134,7 @@ that had silently desynchronised.
 ### 8. No credential reaches a log (FR-008)
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test transport_failures -- credential
+cargo test --manifest-path src-tauri/Cargo.toml --test transport_failures -- passphrase_reaches
 ```
 
 **Expected**: after a passphrase-assisted connect against the mock, the phrase appears in no
@@ -164,3 +168,53 @@ _sequence_ is exercised; OpenSSH's actual negotiation with a real server is not,
 be without a server.
 
 Both are stated so nobody reads a green suite as proof of something it never tested.
+
+---
+
+## Validation results
+
+Run on 2026-09-22, Ubuntu, OpenSSH_9.6p1, Rust 1.75 target. Every scenario below was executed,
+not inspected.
+
+| Scenario | Command | Result |
+| --- | --- | --- |
+| 1. One connection, reused, torn down | `--test transport_recovery` | 8 passed |
+| 2. Replies reach the right requests | `--test transport_exchange` | 13 passed |
+| 3. Failure conditions distinguished | `--test transport_failures` | 14 passed |
+| 4. Loss, backoff, recovery | `--test transport_recovery` | included above |
+| 5. Interactive traffic goes first | `--test transport_exchange` | included above |
+| 6. Latency and loss | `--test transport_exchange` | included above |
+| 7. Hostile input does not corrupt the stream | `--test transport_exchange` | included above |
+| 8. No credential reaches a log | `--test transport_failures -- passphrase_reaches` | 1 passed |
+| Unit tests | `--lib` | 139 passed |
+| Lint | `clippy --all-targets -- -D warnings` | clean |
+| Format | `fmt --check` | clean |
+| Opt-in, real `sshd` | `APEX_REAL_SSHD=1 --test transport_real_sshd` | 2 passed |
+
+**SC-011, measured rather than asserted.** The overhead test now prints what it measured, so
+the headroom is on the record and not only the verdict:
+
+```
+SC-011 pure overhead: p50 37.129µs, p99 70.397µs (budget 15ms)
+SC-011 beyond a 100ms round trip: p50 871.731µs, p99 1.132168ms (budget 15ms)
+```
+
+**SC-003, checked by hand as scenario 1 asks.** After the suite, `pgrep -a ssh | grep apex-`
+finds nothing and no temporary directories remain.
+
+### What this run corrected
+
+Three things the validation found, all of them in the checks rather than the code:
+
+1. **Scenario 8's filter matched the wrong tests.** `-- credential` selected two connect
+   tests and not the redaction test at all. A filter that matches nothing — or the wrong
+   thing — still reports `ok`.
+2. **Scenario 7 had no integration coverage**, although this file claimed it did. The mock's
+   `malformed` and `close-mid-frame` directives were exercised by no test. Three were added,
+   each asserting that a *normal request afterwards* is answered, because "the bad frame was
+   rejected" is equally true of a reader that silently desynchronised.
+3. **The orphan check could not fail.** `pgrep -af` matched the shell running it. Corrected
+   above, and it then immediately found two real orphaned control masters left by an earlier
+   version of the opt-in `sshd` test — which appended its `ControlPath` override instead of
+   prepending it, so `ssh` used the first value it was given and wrote a master into the
+   developer's own `~/.ssh`, persisting for the hour `ControlPersist=1h` asks for.

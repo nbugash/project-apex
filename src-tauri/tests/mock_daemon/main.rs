@@ -13,8 +13,8 @@
 //!   echo              reply to every request (the default)
 //!   delay=<ms>        wait before each reply
 //!   drop=<n>          silently drop every nth reply
-//!   malformed         reply with a body that is not JSON
-//!   oversized         declare a length beyond the cap
+//!   malformed[=<n>]   reply with a body that is not JSON — every reply, or only the nth
+//!   oversized[=<n>]   declare a length beyond the cap — every reply, or only the nth
 //!   stall=<ms>        stop answering, then close after <ms> — how `ssh` behaves when its
 //!                     keepalive gives up, which is the only way a silent network death
 //!                     becomes observable to the transport
@@ -43,8 +43,11 @@ const CAP: usize = 1024 * 1024;
 struct Script {
     delay_ms: u64,
     drop_every: usize,
-    malformed: bool,
-    oversized: bool,
+    /// `Some(0)` means every reply; `Some(n)` means the nth only. The numeric form is what
+    /// lets a test assert the stream stayed aligned: a hostile frame followed by a normal
+    /// request that must still be answered.
+    malformed: Option<usize>,
+    oversized: Option<usize>,
     stall_ms: Option<u64>,
     close_mid_frame: bool,
     reorder: usize,
@@ -60,9 +63,11 @@ impl Script {
                 Some(("drop", v)) => s.drop_every = v.parse().unwrap_or(0),
                 Some(("stall", v)) => s.stall_ms = Some(v.parse().unwrap_or(0)),
                 Some(("reorder", v)) => s.reorder = v.parse().unwrap_or(0),
+                Some(("malformed", v)) => s.malformed = Some(v.parse().unwrap_or(0)),
+                Some(("oversized", v)) => s.oversized = Some(v.parse().unwrap_or(0)),
                 _ => match part {
-                    "malformed" => s.malformed = true,
-                    "oversized" => s.oversized = true,
+                    "malformed" => s.malformed = Some(0),
+                    "oversized" => s.oversized = Some(0),
                     "close-mid-frame" => s.close_mid_frame = true,
                     // The profile the feature map names: 250 ms round trip, 5% loss.
                     // A shorthand rather than a default, because most tests want a fast
@@ -119,14 +124,14 @@ fn main() {
 
             let id = extract_id(&body).unwrap_or_default();
 
-            if script.oversized {
+            if hostile_now(script.oversized, seen) {
                 // A declared length beyond the cap, with no body to match it. The transport
                 // must refuse this before allocating.
                 let _ = out.write_all(format!("{HEADER}{}\r\n\r\n", CAP + 1).as_bytes());
                 let _ = out.flush();
                 continue;
             }
-            if script.malformed {
+            if hostile_now(script.malformed, seen) {
                 let junk = "this is not json";
                 let _ = out.write_all(format!("{HEADER}{}\r\n\r\n{junk}", junk.len()).as_bytes());
                 let _ = out.flush();
@@ -159,6 +164,15 @@ fn main() {
             let _ = out.write_all(format!("{HEADER}{}\r\n\r\n{reply}", reply.len()).as_bytes());
             let _ = out.flush();
         }
+    }
+}
+
+/// Whether this reply should be hostile: `Some(0)` means always, `Some(n)` the nth only.
+fn hostile_now(setting: Option<usize>, seen: usize) -> bool {
+    match setting {
+        Some(0) => true,
+        Some(n) => n == seen,
+        None => false,
     }
 }
 
@@ -253,6 +267,19 @@ mod tests {
                  and a second engine is what F002 would later discover had drifted"
             );
         }
+    }
+
+    #[test]
+    fn a_hostile_reply_can_be_scheduled_for_one_request_only() {
+        assert!(hostile_now(Some(0), 1), "the bare form is every reply");
+        assert!(hostile_now(Some(0), 9));
+        assert!(
+            hostile_now(Some(2), 2),
+            "the numeric form is that reply alone"
+        );
+        assert!(!hostile_now(Some(2), 1));
+        assert!(!hostile_now(Some(2), 3));
+        assert!(!hostile_now(None, 1));
     }
 
     #[test]

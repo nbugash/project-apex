@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ConnectionState, WorkspaceReference } from '../ipc';
+  import { present } from './presentation';
 
   interface Props {
     connection: ConnectionState;
@@ -8,16 +9,7 @@
   }
   let { connection, workspace, persistenceFailed = false }: Props = $props();
 
-  // FR-012 / SC-007: every state carries an icon AND a label, so it is never encoded by
-  // colour alone and survives a greyscale display.
-  const PRESENTATION: Record<ConnectionState, { icon: string; label: string }> = {
-    unknown: { icon: 'ph-question', label: 'Unknown' },
-    connecting: { icon: 'ph-circle-dashed', label: 'Connecting' },
-    connected: { icon: 'ph-plugs-connected', label: 'Connected' },
-    disconnected: { icon: 'ph-plugs', label: 'Offline' },
-  };
-
-  let state = $derived(PRESENTATION[connection]);
+  let state = $derived(present(connection));
 </script>
 
 <footer class="status" aria-label="Session status">

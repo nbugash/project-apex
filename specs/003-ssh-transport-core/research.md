@@ -48,8 +48,8 @@ simpler.
 or reconnects slowly, and cannot be both. A bounded retry count — rejected because the
 correct behaviour when a network is out for an hour is to still be trying.
 
-**→ Promote to Appendix A.** Every feature that issues a request must know that an in-flight
-request dies with the connection.
+**→ Promoted to Appendix A as A-REQ (2026-09-22).** Every feature that issues a request must
+know that an in-flight request dies with the connection.
 
 ---
 
@@ -74,7 +74,8 @@ Strict FIFO until a second traffic class exists — rejected during clarificatio
 normative and unassigned, and an unassigned normative requirement is how a thing quietly
 never gets built.
 
-**→ Promote to Appendix A.** Every future caller must know which class its traffic is in.
+**→ Promoted to Appendix A as A-PRI (2026-09-22).** Every future caller must know which class
+its traffic is in.
 
 ---
 
