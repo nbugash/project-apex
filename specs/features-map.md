@@ -23,7 +23,7 @@ an intention to do it.
   - [X] Prototype layout dimensions carried as design tokens rather than literals
   - [X] Repeatable visual fidelity comparison against the approved prototype
 - [ ] **F001 ssh-transport-core**
-  - Spec: not yet specified
+  - Spec: specs/003-ssh-transport-core
   - [ ] OpenSSH subprocess invocation, master connection lifecycle and startup preflight
   - [ ] Two-phase connect sequence with the bundled askpass helper
   - [ ] Content-Length framing codec over the child process stdio
