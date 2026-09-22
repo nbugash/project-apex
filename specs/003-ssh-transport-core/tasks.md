@@ -178,18 +178,18 @@ classification and the response that belongs to it.
 
 ### Tests for User Story 4
 
-- [ ] T060 [US4] Test in `src-tauri/tests/transport_failures.rs`: each of the seven `FailureCondition` variants classifies as itself, none as a generic failure (SC-007)
-- [ ] T061 [US4] Test in `src-tauri/tests/transport_failures.rs`: the same stderr under a non-English locale classifies identically (SC-008)
-- [ ] T062 [US4] Test in `src-tauri/tests/transport_failures.rs`: `HostKeyChanged` refuses the connection and **never retries**. If it retries, that is a security defect, not a flaky test
-- [ ] T063 [US4] Test in `src-tauri/tests/transport_failures.rs`: a missing engine classifies as `EngineMissing` and is not reported as a connection failure (FR-017)
-- [ ] T064 [US4] Test in `src-tauri/tests/transport_failures.rs`: stderr beyond the retained bound degrades to `Unknown` rather than exhausting memory or misclassifying
-- [ ] T065 [US4] Integration test in `src-tauri/tests/transport_failures.rs`: forgetting a changed host key requires explicit confirmation and never happens automatically (FR-016, §3.9). The requirement is a prohibition, so the test asserts the automatic path does not exist
+- [X] T060 [US4] Test in `src-tauri/tests/transport_failures.rs`: each of the seven `FailureCondition` variants classifies as itself, none as a generic failure (SC-007)
+- [X] T061 [US4] Test in `src-tauri/tests/transport_failures.rs`: the same stderr under a non-English locale classifies identically (SC-008)
+- [X] T062 [US4] Test in `src-tauri/tests/transport_failures.rs`: `HostKeyChanged` refuses the connection and **never retries**. If it retries, that is a security defect, not a flaky test
+- [X] T063 [US4] Test in `src-tauri/tests/transport_failures.rs`: a missing engine classifies as `EngineMissing` and is not reported as a connection failure (FR-017)
+- [X] T064 [US4] Test in `src-tauri/tests/transport_failures.rs`: stderr beyond the retained bound degrades to `Unknown` rather than exhausting memory or misclassifying
+- [X] T065 [US4] Integration test in `src-tauri/tests/transport_failures.rs`: forgetting a changed host key requires explicit confirmation and never happens automatically (FR-016, §3.9). The requirement is a prohibition, so the test asserts the automatic path does not exist
 
 ### Implementation for User Story 4
 
-- [ ] T066 [US4] Implement `classify` in `src-tauri/src/adapters/outbound/openssh/classify.rs`: exit code plus a bounded 8 KiB of `LC_ALL=C` stderr matched against a fixed pattern set, yielding `Unknown` when nothing matches
-- [ ] T067 [US4] Wire each condition to its response in `src-tauri/src/application/use_cases/supervise.rs` — retry, refuse, or hand off — per the table in [data-model.md](./data-model.md)
-- [ ] T068 [US4] Implement the explicit changed-host-key warning and the user-confirmed forget action in `src-tauri/src/application/use_cases/connect.rs`, never automatic (§3.9, FR-016)
+- [X] T066 [US4] Implement `classify` in `src-tauri/src/adapters/outbound/openssh/classify.rs`: exit code plus a bounded 8 KiB of `LC_ALL=C` stderr matched against a fixed pattern set, yielding `Unknown` when nothing matches
+- [X] T067 [US4] Wire each condition to its response in `src-tauri/src/application/use_cases/supervise.rs` — retry, refuse, or hand off — per the table in [data-model.md](./data-model.md)
+- [X] T068 [US4] Implement the explicit changed-host-key warning and the user-confirmed forget action in `src-tauri/src/application/use_cases/connect.rs`, never automatic (§3.9, FR-016)
 
 **Checkpoint**: every failure is actionable and the dangerous one is unmistakable.
 
@@ -204,14 +204,14 @@ under latency and loss.
 
 ### Tests for User Story 5
 
-- [ ] T069 [US5] Test in `src-tauri/tests/transport_exchange.rs`: over the mock's 250 ms / 5% profile, no replies are lost or crossed
-- [ ] T070 [US5] Measure the transport's **added** overhead in `src-tauri/tests/transport_exchange.rs` — request handed in to answer handed back, excluding the simulated round trip — and fail above 15 ms at the 99th percentile (SC-011). Measuring wall clock would pass regardless of what the transport does, because the harness's own 250 ms dominates it
-- [ ] T071 [US5] Add a suite-level assertion in `src-tauri/tests/transport_exchange.rs` that no test opened a network socket or required a remote host (SC-010)
+- [X] T069 [US5] Test in `src-tauri/tests/transport_exchange.rs`: over the mock's 250 ms / 5% profile, no replies are lost or crossed
+- [X] T070 [US5] Measure the transport's **added** overhead in `src-tauri/tests/transport_exchange.rs` — request handed in to answer handed back, excluding the simulated round trip — and fail above 15 ms at the 99th percentile (SC-011). Measuring wall clock would pass regardless of what the transport does, because the harness's own 250 ms dominates it
+- [X] T071 [US5] Add a suite-level assertion in `src-tauri/tests/transport_exchange.rs` that no test opened a network socket or required a remote host (SC-010)
 
 ### Implementation for User Story 5
 
-- [ ] T072 [US5] Document the mock's scripted behaviours and configuration in `src-tauri/tests/mock_daemon/README.md`, so a later feature can drive it without reading its source
-- [ ] T073 [US5] Assert in `src-tauri/tests/mock_daemon/main.rs` that the mock implements no §4.8 method, keeping it a framing double rather than a second engine
+- [X] T072 [US5] Document the mock's scripted behaviours and configuration in `src-tauri/tests/mock_daemon/README.md`, so a later feature can drive it without reading its source
+- [X] T073 [US5] Assert in `src-tauri/tests/mock_daemon/main.rs` that the mock implements no §4.8 method, keeping it a framing double rather than a second engine
 
 **Checkpoint**: the feature is provable on a laptop with the network off.
 

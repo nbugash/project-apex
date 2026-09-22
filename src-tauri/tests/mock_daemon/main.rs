@@ -133,7 +133,7 @@ fn main() {
                 continue;
             }
 
-            let reply = format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"echo":true}}}}"#);
+            let reply = reply_for(&id);
 
             if script.reorder > 0 {
                 held.push(reply);
@@ -160,6 +160,17 @@ fn main() {
             let _ = out.flush();
         }
     }
+}
+
+/// The only reply this process knows how to make.
+///
+/// One shape for every method, whatever was asked. Giving the mock real behaviour would
+/// make it a second implementation of the engine, which would drift from the real one — and
+/// the drift would be discovered by F002, against a double that had been passing for
+/// months. Framing is the layer §4.1 defines normatively and exactly, so a mock restricted
+/// to framing can be checked against the same text as the engine.
+fn reply_for(id: &str) -> String {
+    format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"echo":true}}}}"#)
 }
 
 /// Pull one complete frame out of `buf`, leaving the remainder.
@@ -191,4 +202,81 @@ fn extract_id(body: &str) -> Option<String> {
     let after = &rest[open + 1..];
     let close = after.find('"')?;
     Some(after[..close].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The §4.8 catalogue, in halves so that this list is not itself a mention of the
+    /// methods the source is scanned for.
+    const CATALOGUE: &[(&str, &str)] = &[
+        ("auth", "handshake"),
+        ("session", "shutdown"),
+        ("log", "onMessage"),
+        ("workspace", "readDirectory"),
+        ("workspace", "stat"),
+        ("workspace", "readFile"),
+        ("workspace", "writeFile"),
+        ("workspace", "createFile"),
+        ("workspace", "createDirectory"),
+        ("workspace", "rename"),
+        ("workspace", "delete"),
+        ("workspace", "search"),
+        ("workspace", "onFileEvent"),
+        ("workspace", "invalidateAll"),
+    ];
+
+    /// T073. The mock is a framing double, not a second engine.
+    ///
+    /// Two assertions, because either alone is weak. The behavioural one shows that a
+    /// catalogue method gets the same generic reply as anything else. The structural one
+    /// shows that no branch for one exists at all — which is what stops the mock acquiring
+    /// engine behaviour a method at a time, each addition reasonable on its own.
+    #[test]
+    fn the_mock_implements_no_engine_method() {
+        for (namespace, method) in CATALOGUE {
+            let name = format!("{namespace}/{method}");
+            let reply = reply_for("7");
+            assert!(
+                reply.contains(r#""result":{"echo":true}"#),
+                "{name} must get the generic reply, not an implementation of itself"
+            );
+        }
+
+        let source = include_str!("main.rs");
+        for (namespace, method) in CATALOGUE {
+            let name = format!("{namespace}/{method}");
+            assert!(
+                !source.contains(&name),
+                "the mock has grown an implementation of {name}; it is a framing double, \
+                 and a second engine is what F002 would later discover had drifted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_is_taken_whole_or_not_at_all() {
+        let mut buf = b"Content-Length: 5\r\n\r\nhel".to_vec();
+        assert_eq!(
+            take_frame(&mut buf),
+            None,
+            "a partial body must not be taken"
+        );
+        buf.extend_from_slice(b"lo");
+        assert_eq!(take_frame(&mut buf), Some("hello".to_string()));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn the_id_is_read_back_so_the_reply_can_carry_it() {
+        assert_eq!(
+            extract_id(r#"{"jsonrpc":"2.0","id":"42","method":"anything"}"#),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            extract_id(r#"{"jsonrpc":"2.0","method":"notification"}"#),
+            None
+        );
+    }
 }

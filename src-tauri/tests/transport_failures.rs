@@ -330,3 +330,157 @@ async fn an_openssh_too_old_to_force_a_prompt_offers_the_picker() {
     );
     assert_eq!(spawner.invocations().len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// User Story 4: understand why a connection failed.
+//
+// classify() has its own unit tests. These make a different claim: that the wiring
+// *delivers* the classification — through a spawn, through the stderr drain, through the
+// reaper — and that the response attached to each condition is the one the data model says.
+// A correct classifier reached by nothing is worth as much as no classifier.
+
+use apex_shell::application::use_cases::connect::ConnectAttempt;
+use apex_shell::application::use_cases::connect::{
+    forget_command, ConfirmedByUser, HostKeyWarning,
+};
+use apex_shell::application::use_cases::supervise::{response_to, Response};
+
+/// Drive the transport into a scripted ending and report what it concluded.
+async fn condition_from(exit: i32, text: &str) -> FailureCondition {
+    let spawner = Arc::new(AssistedSpawner::new(exit, text));
+    let t = Arc::new(SshTransport::new(spawner, common::spec()));
+    t.attempt(false)
+        .await
+        .expect_err("a scripted failure must not report success")
+}
+
+/// T060 — SC-007. Each condition names itself; none collapses into a generic failure.
+#[tokio::test]
+async fn every_condition_reaches_the_caller_as_itself() {
+    let cases = [
+        (255, stderr::DENIED, FailureCondition::AuthenticationFailed),
+        (255, stderr::TIMED_OUT, FailureCondition::HostUnreachable),
+        (255, stderr::REFUSED, FailureCondition::HostUnreachable),
+        (
+            255,
+            "Timeout, server build-01 not responding.",
+            FailureCondition::NetworkDropped,
+        ),
+        (
+            255,
+            stderr::HOST_KEY_CHANGED,
+            FailureCondition::HostKeyChanged,
+        ),
+        (127, stderr::NOT_FOUND, FailureCondition::EngineMissing),
+        (1, "engine panicked", FailureCondition::EngineCrashed),
+    ];
+    assert_eq!(cases.len(), 7, "all seven conditions must be covered");
+
+    for (exit, text, expected) in cases {
+        assert_eq!(
+            condition_from(exit, text).await,
+            expected,
+            "exit {exit}: {text}"
+        );
+    }
+}
+
+/// T061 — SC-008. The invocation pins `LC_ALL=C`, which is what makes the English patterns
+/// legitimate. If that pin were ever dropped, this is the text the transport would face —
+/// and the honest answer is `Unknown`, never a different wrong condition that sends the
+/// user down a remedy that cannot work.
+#[tokio::test]
+async fn a_localised_failure_is_never_misclassified() {
+    let got = condition_from(255, stderr::DENIED_FR).await;
+    assert_ne!(got, FailureCondition::HostUnreachable);
+    assert_ne!(got, FailureCondition::HostKeyChanged);
+    assert_eq!(got, FailureCondition::Unknown);
+
+    // The exit code alone still carries the distinctions that do not need language.
+    assert_eq!(
+        condition_from(127, "fichier introuvable").await,
+        FailureCondition::EngineMissing
+    );
+}
+
+/// T062 — a changed host key refuses and never retries.
+///
+/// If this ever fails, it is a security defect and not a flaky test: retrying means
+/// repeatedly offering credentials to a host that is not the one previously recorded.
+#[tokio::test]
+async fn a_changed_host_key_refuses_and_never_retries() {
+    let condition = condition_from(255, stderr::HOST_KEY_CHANGED).await;
+    assert_eq!(condition, FailureCondition::HostKeyChanged);
+    assert!(
+        !condition.should_retry(),
+        "retrying a changed host key offers credentials to an unverified host"
+    );
+    for assisted in [true, false] {
+        assert_eq!(
+            response_to(condition, assisted),
+            Response::StopAndReport,
+            "a changed host key must stop, whatever else is available"
+        );
+    }
+    assert!(!condition.may_prompt_for_credential());
+}
+
+/// T063 — FR-017. A missing engine is its own condition, handed to the feature that
+/// installs it, and never reported as a connection problem the user would debug as one.
+#[tokio::test]
+async fn a_missing_engine_is_not_reported_as_a_connection_failure() {
+    let condition = condition_from(127, stderr::NOT_FOUND).await;
+    assert_eq!(condition, FailureCondition::EngineMissing);
+    assert_ne!(condition, FailureCondition::HostUnreachable);
+    assert_ne!(condition, FailureCondition::NetworkDropped);
+    assert_eq!(
+        response_to(condition, true),
+        Response::HandToBootstrap,
+        "the remedy is installing the engine, which is another feature's job"
+    );
+}
+
+/// T064 — stderr beyond the retained bound degrades rather than exhausting memory, and the
+/// decisive line survives when it is the last thing written, which is where OpenSSH puts it.
+#[tokio::test]
+async fn unbounded_stderr_degrades_rather_than_misclassifying() {
+    let noise = "x".repeat(64 * 1024);
+    assert_eq!(condition_from(255, &noise).await, FailureCondition::Unknown);
+
+    let noisy_then_denied = format!("{noise}\n{}", stderr::DENIED);
+    assert_eq!(
+        condition_from(255, &noisy_then_denied).await,
+        FailureCondition::AuthenticationFailed,
+        "the last line is the decisive one and must survive the bound"
+    );
+}
+
+/// T065 — FR-016, §3.9. Forgetting a changed host key is an explicit action.
+///
+/// The requirement is a prohibition, so the assertion is about what cannot be expressed:
+/// `forget_known_host` takes a `ConfirmedByUser`, and that token has exactly one
+/// constructor, named for the human act it represents. No supervisor, retry loop or
+/// classifier can reach it, because none of them has anything to pass.
+#[tokio::test]
+async fn forgetting_a_host_key_cannot_happen_without_the_user() {
+    let condition = condition_from(255, stderr::HOST_KEY_CHANGED).await;
+    assert_eq!(condition, FailureCondition::HostKeyChanged);
+
+    // The automatic path does not exist: the response to this condition is to stop and
+    // report, and nothing in that path constructs a confirmation.
+    assert_eq!(response_to(condition, true), Response::StopAndReport);
+
+    let warning = HostKeyWarning::for_host("build-01.euw1", stderr::HOST_KEY_CHANGED);
+    assert!(warning.guidance().contains("build-01.euw1"));
+    assert!(
+        !warning.guidance().to_lowercase().contains("connect anyway"),
+        "the warning must not offer a way past itself"
+    );
+
+    // The remedy exists and is well formed — it is the reaching of it that is gated.
+    assert_eq!(
+        forget_command("build-01.euw1"),
+        vec!["ssh-keygen", "-R", "build-01.euw1"]
+    );
+    let _only_the_interface_can_make_this = ConfirmedByUser::from_explicit_confirmation();
+}

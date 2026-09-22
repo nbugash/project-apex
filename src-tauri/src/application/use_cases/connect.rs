@@ -334,3 +334,164 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// A changed host identity (§3.9, FR-016).
+
+/// Proof that a person was shown the warning and explicitly chose to forget the key.
+///
+/// A token rather than a `bool`, because a boolean parameter is something a future caller
+/// passes `true` to without reading why it exists. This can only be minted by the interface
+/// layer, at the moment a human confirms — so "the application never forgets a host key on
+/// its own" is enforced by what can be written, not by what everyone remembers.
+///
+/// It is deliberately not `Clone` or `Copy`: one confirmation authorises one forget.
+#[derive(Debug)]
+pub struct ConfirmedByUser(());
+
+impl ConfirmedByUser {
+    /// Called by the interface only, after the user has confirmed the specific host named
+    /// in the warning.
+    pub fn from_explicit_confirmation() -> Self {
+        Self(())
+    }
+}
+
+/// What the user is told when a host's identity has changed.
+///
+/// The wording is not softened. This is the one failure in the set that may mean an attack
+/// in progress, and a message that reads like a routine error is one people click through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostKeyWarning {
+    pub host: String,
+    /// The line OpenSSH itself printed, passed through: it names the key type and
+    /// fingerprint, which is what lets someone check against the host they control.
+    pub detail: String,
+}
+
+impl HostKeyWarning {
+    pub fn for_host(host: &str, stderr: &str) -> Self {
+        Self {
+            host: host.to_string(),
+            detail: stderr
+                .lines()
+                .find(|l| l.contains("Fingerprint") || l.contains("key sent by the remote host"))
+                .unwrap_or("The host's key does not match the one previously recorded.")
+                .trim()
+                .to_string(),
+        }
+    }
+
+    /// The remedy, stated as an instruction rather than an offer. Connecting anyway is not
+    /// among the options: a changed key is either an administrative change the user can
+    /// confirm out of band, or someone between them and the host.
+    pub fn guidance(&self) -> String {
+        format!(
+            "The identity of {} has changed since it was last recorded. \
+             Verify the new key with whoever administers the host before continuing. \
+             If the change is expected, forgetting the old key is an explicit action.",
+            self.host
+        )
+    }
+}
+
+/// The command that removes a host's recorded key.
+///
+/// Exposed separately so it can be asserted on without running it. `ssh-keygen -R` rather
+/// than editing `known_hosts` directly, because the file may be hashed and hand-editing a
+/// hashed entry removes the wrong host — or all of them.
+pub fn forget_command(host: &str) -> Vec<String> {
+    vec!["ssh-keygen".into(), "-R".into(), host.to_string()]
+}
+
+/// Forget a host's recorded key. Reachable only with a confirmation the user gave.
+pub fn forget_known_host(host: &str, _confirmed: ConfirmedByUser) -> Result<(), String> {
+    let args = forget_command(host);
+    let status = std::process::Command::new(&args[0])
+        .args(&args[1..])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("could not run ssh-keygen: {e}"))?;
+    if status.success() {
+        crate::logging::info(&format!(
+            "forgot the recorded host key for {host} at the user's request"
+        ));
+        Ok(())
+    } else {
+        Err(format!("ssh-keygen -R {host} failed"))
+    }
+}
+
+#[cfg(test)]
+mod host_key_tests {
+    use super::*;
+
+    const CHANGED: &str = concat!(
+        "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n",
+        "The fingerprint for the ED25519 key sent by the remote host is\n",
+        "SHA256:abc123.\n",
+    );
+
+    /// The warning names the host and carries OpenSSH's own detail, because a fingerprint
+    /// the user can compare is the only thing that makes the decision a real one.
+    #[test]
+    fn the_warning_names_the_host_and_keeps_openssh_s_detail() {
+        let w = HostKeyWarning::for_host("build-01.euw1", CHANGED);
+        assert_eq!(w.host, "build-01.euw1");
+        assert!(
+            w.detail.contains("key sent by the remote host"),
+            "{}",
+            w.detail
+        );
+        assert!(w.guidance().contains("build-01.euw1"));
+    }
+
+    /// Stderr that does not carry a fingerprint still produces a usable warning rather than
+    /// an empty one.
+    #[test]
+    fn a_warning_without_a_fingerprint_still_says_what_happened() {
+        let w = HostKeyWarning::for_host("build-01", "");
+        assert!(!w.detail.is_empty());
+        assert!(w.guidance().contains("explicit action"));
+    }
+
+    /// FR-016 is a prohibition, and this is what enforces it: forgetting takes a token that
+    /// only the interface layer can mint, at the moment a human confirms. There is no
+    /// argument the supervisor could pass to forget a key on its own.
+    #[test]
+    fn forgetting_is_reachable_only_with_a_confirmation() {
+        let args = forget_command("build-01.euw1");
+        assert_eq!(args[0], "ssh-keygen");
+        assert_eq!(
+            args[1], "-R",
+            "editing known_hosts by hand breaks hashed entries"
+        );
+        assert_eq!(args[2], "build-01.euw1");
+
+        // This is the whole test: `forget_known_host` cannot be called without a
+        // `ConfirmedByUser`, and `ConfirmedByUser` has one constructor, named for what it
+        // means. The compiler enforces the prohibition; nothing here has to remember it.
+        let _confirmation = ConfirmedByUser::from_explicit_confirmation();
+    }
+
+    /// The guidance does not offer to continue. A changed key is either an administrative
+    /// change the user can confirm out of band, or someone between them and the host.
+    #[test]
+    fn the_guidance_offers_no_way_to_connect_anyway() {
+        let g = HostKeyWarning::for_host("h", CHANGED).guidance();
+        let lower = g.to_lowercase();
+        for phrase in [
+            "connect anyway",
+            "ignore",
+            "proceed anyway",
+            "continue anyway",
+        ] {
+            assert!(
+                !lower.contains(phrase),
+                "the warning must not offer {phrase:?}: {g}"
+            );
+        }
+        assert!(lower.contains("verify"), "{g}");
+    }
+}

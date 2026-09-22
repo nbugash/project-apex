@@ -279,3 +279,187 @@ async fn an_oversized_payload_is_refused_without_breaking_the_stream() {
     assert_eq!(t.outstanding(), 0);
     t.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// User Story 5: verify the transport without a remote machine.
+
+/// T069 — the feature map's link profile: 250 ms round trip, 5% loss. Nothing lost that was
+/// not dropped, nothing crossed.
+#[tokio::test]
+async fn a_slow_lossy_link_loses_nothing_it_was_not_given_to_lose() {
+    let (t, _s) = connected("delay=250,drop=20");
+
+    let mut work = Vec::new();
+    for n in 0..20 {
+        let mut r = Request::interactive("engine/echo", format!(r#"{{"n":{n}}}"#));
+        // Comfortably past the 250 ms round trip, so a timeout means a dropped reply
+        // rather than an impatient deadline.
+        r.timeout = Some(Duration::from_secs(10));
+        work.push(t.begin(r));
+    }
+
+    let (mut answered_count, mut dropped) = (0, 0);
+    for (id, pending) in work {
+        match pending.await {
+            outcome @ RequestOutcome::Answered(_) => {
+                assert_eq!(
+                    id_in(&outcome).as_deref(),
+                    Some(id.to_string().as_str()),
+                    "latency must not cross replies"
+                );
+                answered_count += 1;
+            }
+            RequestOutcome::TimedOut => dropped += 1,
+            other => panic!("{id}: unexpected {other:?}"),
+        }
+    }
+    assert_eq!(answered_count + dropped, 20);
+    assert!(
+        answered_count >= 18,
+        "5% loss should cost about one reply in twenty, not {dropped}"
+    );
+    assert_eq!(t.outstanding(), 0);
+    t.shutdown();
+}
+
+fn percentile(mut samples: Vec<Duration>, p: f64) -> Duration {
+    samples.sort();
+    let idx = ((samples.len() as f64 - 1.0) * p).round() as usize;
+    samples[idx]
+}
+
+/// T070 — SC-011. The transport's **added** overhead, at the 99th percentile.
+///
+/// Measuring wall clock would pass regardless of what the transport does, because the
+/// harness's own delay dominates it: a transport that took 200 ms per request would still
+/// look fine next to a 250 ms round trip. So the round trip is subtracted, and the first
+/// measurement removes it entirely — with the mock answering immediately, everything
+/// measured *is* overhead.
+#[tokio::test]
+async fn the_transport_adds_little_to_a_round_trip() {
+    const BUDGET: Duration = Duration::from_millis(15);
+
+    // Pure overhead: no simulated round trip at all.
+    let (t, _s) = connected("echo");
+    let mut samples = Vec::new();
+    for n in 0..200 {
+        let started = std::time::Instant::now();
+        let outcome = t
+            .send(Request::interactive(
+                "engine/echo",
+                format!(r#"{{"n":{n}}}"#),
+            ))
+            .await;
+        samples.push(started.elapsed());
+        assert!(answered(&outcome));
+    }
+    let p99 = percentile(samples.clone(), 0.99);
+    assert!(
+        p99 < BUDGET,
+        "added overhead at p99 was {p99:?}, over the {BUDGET:?} budget (median {:?})",
+        percentile(samples, 0.5)
+    );
+    t.shutdown();
+
+    // And with a round trip in the way, subtracted. This is the form SC-011 states, and it
+    // catches overhead that only appears once replies are not instantaneous.
+    const SIMULATED: Duration = Duration::from_millis(100);
+    let (t, _s) = connected("delay=100");
+    let mut added = Vec::new();
+    for n in 0..30 {
+        let started = std::time::Instant::now();
+        let outcome = t
+            .send(Request::interactive(
+                "engine/echo",
+                format!(r#"{{"n":{n}}}"#),
+            ))
+            .await;
+        added.push(started.elapsed().saturating_sub(SIMULATED));
+        assert!(answered(&outcome));
+    }
+    let p99 = percentile(added, 0.99);
+    assert!(
+        p99 < BUDGET,
+        "overhead beyond the simulated round trip was {p99:?} at p99, over {BUDGET:?}"
+    );
+    t.shutdown();
+}
+
+/// T071 — SC-010. No test in this suite opens a network socket or needs a remote host.
+///
+/// Asserted rather than asserted-about: the claim "runs with the network off" is the kind
+/// that stays true until someone adds a convenience, and a comment does not notice. This
+/// walks the process's own descriptors and cross-references the kernel's TCP tables, so a
+/// socket opened by anything in this binary shows up.
+#[tokio::test]
+async fn the_suite_opens_no_network_sockets() {
+    let (t, _s) = connected("echo");
+    let _ = t.send(Request::interactive("engine/echo", "{}")).await;
+
+    // Prove the detector works before trusting its silence. A check that cannot find a
+    // socket reports "no sockets" exactly as convincingly as one that finds none, and this
+    // suite has already produced one test that passed for that reason.
+    {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback socket");
+        assert!(
+            !open_tcp_sockets().is_empty(),
+            "the detector cannot see a socket that is demonstrably open, so its silence means nothing"
+        );
+        drop(listener);
+    }
+
+    let open = open_tcp_sockets();
+    assert!(
+        open.is_empty(),
+        "this suite must need no network; found TCP socket inodes {open:?}"
+    );
+    t.shutdown();
+}
+
+/// Inodes of TCP sockets held by this process, if the platform can tell us.
+#[cfg(target_os = "linux")]
+fn open_tcp_sockets() -> Vec<u64> {
+    // The kernel's tables list every socket in the namespace; /proc/self/fd says which of
+    // them are ours. The intersection is what this process opened.
+    let mut tcp_inodes = std::collections::HashSet::new();
+    for table in ["/proc/self/net/tcp", "/proc/self/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else {
+            continue;
+        };
+        for line in text.lines().skip(1) {
+            if let Some(inode) = line.split_whitespace().nth(9) {
+                if let Ok(n) = inode.parse::<u64>() {
+                    tcp_inodes.insert(n);
+                }
+            }
+        }
+    }
+
+    let mut ours = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc/self/fd") else {
+        return ours;
+    };
+    for entry in entries.flatten() {
+        let Ok(target) = std::fs::read_link(entry.path()) else {
+            continue;
+        };
+        let target = target.to_string_lossy().to_string();
+        // "socket:[12345]" — the unix sockets the askpass channel uses land here too, which
+        // is why the inode is checked against the TCP tables rather than assumed.
+        if let Some(rest) = target.strip_prefix("socket:[") {
+            if let Ok(inode) = rest.trim_end_matches(']').parse::<u64>() {
+                if tcp_inodes.contains(&inode) {
+                    ours.push(inode);
+                }
+            }
+        }
+    }
+    ours
+}
+
+/// Other platforms have no equivalent cheap check. Returning nothing makes the assertion
+/// vacuous there, which is stated rather than hidden: CI runs Linux, where it is real.
+#[cfg(not(target_os = "linux"))]
+fn open_tcp_sockets() -> Vec<u64> {
+    Vec::new()
+}
