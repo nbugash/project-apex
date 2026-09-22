@@ -50,7 +50,16 @@ The consequence is that this feature is finished and verifiable before any remot
 exists, against the mock daemon in User Story 5. That is the reason the mock is a deliverable
 rather than test scaffolding.
 
-## User Scenarios & Testing *(mandatory)*
+## Clarifications
+
+### Session 2026-09-22
+
+- Q: When the network drops mid-session, does F001 reconnect automatically, or only detect and report the loss? → A: F001 reconnects, with backoff. F012 adds the offline experience on top of a transport that already heals.
+- Q: The system spec's interaction budget names no percentile or measurement point ([OPEN: NFR]). What should F001's latency criterion actually measure? → A: The 99th percentile of the transport's _added_ overhead — handing a request in to getting its answer back, excluding the remote side's processing and the link's own round trip.
+- Q: System spec §4.6 requires outbound frames to be priority-queued, with editor traffic ahead of background work. Does F001 build that, or does it ship FIFO? → A: F001 builds it. §4.6 is normative and transport-level, and no other feature is assigned it.
+- Q: What should a request's default time limit be before it gives up? → A: 30 seconds, overridable per call site.
+
+## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - Reach the remote machine (Priority: P1)
 
@@ -79,6 +88,11 @@ confirm nothing is left running.
 5. **Given** a machine whose SSH client is absent or too old to support the connection-reuse
    path, **When** the application starts, **Then** it says so at startup with a clear message,
    rather than failing at the first connection attempt.
+6. **Given** the connection is lost mid-session, **When** the host becomes reachable again,
+   **Then** the transport re-establishes it without the developer restarting the application.
+7. **Given** the host stays unreachable, **When** the transport retries, **Then** the interval
+   between attempts grows rather than retrying in a tight loop, and the developer can see
+   that it is still trying.
 
 ---
 
@@ -222,10 +236,18 @@ confirm they exercise a link with meaningful delay and dropped packets.
   desynchronise the stream for everything after it.
 - **Two requests are given the same identifier.** Treated as a defect and refused, rather than
   silently delivering one answer to two callers.
+- **The host returns while requests are still outstanding from before the drop.** Requests
+  that were in flight when the connection died resolve as failed rather than silently waiting
+  for a reply that can never arrive on a connection that no longer exists.
+- **The connection drops repeatedly.** Retrying does not escalate into a tight loop, and
+  repeated failure is distinguishable from a first one.
+- **Background traffic is queued when an interactive request arrives.** The interactive
+  request goes ahead of it; a large background payload already being written does not have to
+  finish first for the interactive one to start.
 - **The passphrase prompt is cancelled by the developer.** The connection attempt ends
   cleanly; the application does not wait forever for an answer that will not come.
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -255,7 +277,8 @@ confirm they exercise a link with meaningful delay and dropped packets.
 - **FR-011**: The application MUST register a request's awaiting receiver before the request is
   written, so a reply cannot arrive before it can be matched.
 - **FR-012**: Every request MUST have a time limit, after which it resolves as a failure and
-  is removed from the registry.
+  is removed from the registry. The default MUST be 30 seconds, and every call site MUST be
+  able to set its own.
 - **FR-013**: The registry MUST NOT retain entries for requests that have resolved, by any
   route.
 - **FR-014**: A request MUST be withdrawable, and a withdrawn request MUST resolve rather than
@@ -273,6 +296,13 @@ confirm they exercise a link with meaningful delay and dropped packets.
   packet loss.
 - **FR-019**: The transport's own tests MUST run against that mock, with no remote host and no
   network.
+- **FR-020**: After a connection is lost, the transport MUST attempt to re-establish it
+  without user action, with a growing interval between attempts, and MUST expose whether it
+  is connected, retrying, or given up. Requests outstanding when the connection died MUST
+  resolve as failed rather than wait.
+- **FR-021**: Outbound frames MUST be ordered by priority, with interactive traffic ahead of
+  background work, as §4.6 requires. A large background payload already in flight MUST NOT
+  delay an interactive request beyond one frame.
 
 ### Key Entities
 
@@ -290,7 +320,7 @@ confirm they exercise a link with meaningful delay and dropped packets.
 - **Mock daemon**: A stand-in for the remote engine that speaks the framing but no application
   protocol, and whose delay, loss and failure behaviour are set by the test.
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 
@@ -315,9 +345,15 @@ confirm they exercise a link with meaningful delay and dropped packets.
 - **SC-010**: The transport's full test suite runs to completion on a machine with no network
   access and no remote host.
 - **SC-011**: Over a simulated link with 250 ms round-trip time and 5% packet loss, request
-  exchange completes without lost or crossed replies, and the transport's own overhead —
-  measured as the time added beyond the link's round trip — stays within the budget recorded
-  in Assumptions.
+  exchange completes without lost or crossed replies, and the transport's added overhead —
+  the time from handing a request to the transport until its answer is handed back, excluding
+  the remote side's processing and the link's own round trip — stays at or below 15 ms at the
+  99th percentile.
+- **SC-012**: A connection dropped mid-session is re-established without user action once the
+  host returns, in 100% of trials, and every request outstanding at the moment of the drop
+  resolves rather than hanging.
+- **SC-013**: With background traffic saturating the link, an interactive request is written
+  ahead of the queued background work in 100% of trials.
 
 ## Assumptions
 
@@ -334,22 +370,20 @@ confirm they exercise a link with meaningful delay and dropped packets.
 - **`[OPEN: NFR]` is not closed, and this specification does not close it.** The system
   specification's sub-250 ms budget names no percentile and no measurement point, and Appendix
   B, NFR records that. SC-011 therefore measures what this feature can be held to on its own:
-  the transport's *added* overhead over the link's round trip, rather than an end-to-end
+  the transport's _added_ overhead over the link's round trip, rather than an end-to-end
   interaction time that depends on features not yet built.
 
-  **Assumed for this feature, pending NFR**: the transport adds no more than 15 ms at the 99th
-  percentile over the link's own round trip, measured from the moment a request is handed to
-  the transport to the moment its answer is handed back, excluding the remote side's own
-  processing. The alternative reading — a median rather than a tail — was rejected because a
-  transport's median is uninformative; queueing failures show up in the tail, and the tail is
-  what a developer feels. If NFR closes on a different figure, this criterion changes with it.
+  **Decided for this feature** (Clarifications, 2026-09-22), pending NFR: no more than 15 ms
+  at the 99th percentile. A median was rejected because a transport's median is
+  uninformative — queueing failures show up in the tail, and the tail is what a developer
+  feels. This is a criterion F001 can be held to today; it does not define the product's
+  budget, and if NFR closes on a different figure this changes with it.
 
-- **Request time limits are per-request, not global**, with a default assumed at 30 seconds and
-  callers free to set their own. The alternative — one global limit — was rejected because the
-  same limit cannot serve a completion request that is stale after 250 ms and a build that
-  runs for minutes. The default is deliberately generous: a limit that fires early turns a slow
-  link into a broken one, and the interaction budget is protected by withdrawal (FR-014), not
-  by timeouts.
+- **Request time limits are per-request, not global** (Clarifications, 2026-09-22), with a
+  30-second default that any call site may override. One global limit cannot serve both a
+  completion that is stale after 250 ms and a build that runs for minutes. The default is
+  deliberately generous: a limit that fires early turns a slow link into a broken one, and the
+  interaction budget is protected by withdrawal (FR-014), not by timeouts.
 
 - **Forgetting a changed host identity is offered here, not deferred.** §3.9 requires the
   action to exist and to be explicitly confirmed. It is in scope because the refusal it
@@ -361,6 +395,26 @@ confirm they exercise a link with meaningful delay and dropped packets.
   the classification in Story 4 degrades — this is recorded as a known dependency on the
   engine's discipline rather than defended against here, because no framing on one channel can
   constrain another.
+
+- **Reconnection lives here, the offline experience does not** (Clarifications, 2026-09-22).
+  The transport owns the connection, so it owns recovery: it retries with a growing interval
+  and reports whether it is connected, retrying or given up. F012 offline-readonly consumes
+  that state and adds the read-only lock, cached-only behaviour and hash reconciliation on
+  top. The alternative — detect here, recover in F012 — was rejected because F012 is four
+  features downstream, and until it shipped a single network blip would end every session
+  permanently, including for the features built in between.
+
+  **This overlaps the feature map**, which currently gives F012 a subfeature reading
+  "Connection state detection from keepalive expiry and pipe EOF". That detection is FR-004
+  and FR-020 here. The map entry should be reworded to consume this feature's connection
+  state rather than re-detect it; that edit is outside this specification's scope and is
+  flagged rather than made.
+
+- **The priority queue is built here** (Clarifications, 2026-09-22), even though only one
+  class of traffic exists until prefetch and indexing arrive. §4.6 is normative and
+  transport-level, no other feature in the map is assigned it, and an unassigned normative
+  requirement is how a thing quietly never gets built. The second traffic class is exercised
+  by the mock rather than by a real producer until F003.
 
 - **Platforms too old to prompt inside the application degrade to the credential picker.**
   §3.3 notes the assisted attempt needs a newer SSH client than some supported distributions

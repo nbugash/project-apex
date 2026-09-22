@@ -46,9 +46,21 @@ simulating 250ms RTT and 5% packet loss"), which is to say from the backlog this
 drawn from, and they describe the conditions a measurement is taken under rather than the
 technology taking it.
 
-Two decisions in Assumptions are defaults chosen here, not settled elsewhere, and are the
-right subjects for review:
+**Settled by clarification on 2026-09-22.** The two defaults previously flagged here — the
+latency budget and the request time limit — were confirmed, and two further gaps surfaced
+that the first pass had missed entirely:
 
-1. The transport's latency budget (15 ms added at the 99th percentile), assumed pending
-   `[OPEN: NFR]`.
-2. The default request time limit (30 seconds, per-request rather than global).
+1. **Reconnection was unspecified.** The spec detected a lost connection and said nothing
+   about recovering it. F001 now owns reconnection with backoff (FR-020, SC-012); F012 adds
+   the offline experience on top.
+2. **The priority queue was unassigned.** §4.6 of the system specification makes it
+   normative, and no feature in the map had it. F001 now owns it (FR-021, SC-013).
+
+Neither was a vague requirement — both were _absent_, which is the failure this checklist is
+weakest at catching: every item can pass while something nobody wrote down is missing. Worth
+remembering the next time this list reads 16 of 16 on a first draft.
+
+**One item flagged for the feature map, not for this spec.** F012 currently carries a
+subfeature reading "Connection state detection from keepalive expiry and pipe EOF", which is
+now FR-004 and FR-020 here. The map needs rewording so F012 consumes this feature's
+connection state rather than re-detecting it.
