@@ -26,10 +26,10 @@ demonstrate nothing about whether they would catch the bug.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add the `process` and `io-util` tokio features and the `bytes` dependency to `src-tauri/Cargo.toml`, keeping the existing feature set intact
-- [ ] T002 Declare the `apex-askpass` binary target in `src-tauri/Cargo.toml` pointing at `src-tauri/bin/apex-askpass.rs`
-- [ ] T003 Declare the mock daemon as a test-only binary target in `src-tauri/Cargo.toml` pointing at `src-tauri/tests/mock_daemon/main.rs`
-- [ ] T004 Create the empty module tree — `src-tauri/src/adapters/outbound/openssh/{mod,spawner,framing,registry,sendq,classify}.rs` and `src-tauri/src/adapters/outbound/askpass/ipc.rs` — wired into their parent `mod.rs` files so the crate still builds
+- [X] T001 Add the `process` and `io-util` tokio features and the `bytes` dependency to `src-tauri/Cargo.toml`, keeping the existing feature set intact
+- [X] T002 Declare the `apex-askpass` binary target in `src-tauri/Cargo.toml` pointing at `src-tauri/bin/apex-askpass.rs`
+- [X] T003 Declare the mock daemon as a test-only binary target in `src-tauri/Cargo.toml` pointing at `src-tauri/tests/mock_daemon/main.rs`
+- [X] T004 Create the empty module tree — `src-tauri/src/adapters/outbound/openssh/{mod,spawner,framing,registry,sendq,classify}.rs` and `src-tauri/src/adapters/outbound/askpass/ipc.rs` — wired into their parent `mod.rs` files so the crate still builds
 
 ---
 
@@ -41,31 +41,31 @@ possible, not the mock's existence.
 
 ### Domain types
 
-- [ ] T005 Define `RequestId`, `Priority` and `RequestOutcome` in `src-tauri/src/domain/request.rs` per [data-model.md](./data-model.md)
-- [ ] T006 [P] Define `FailureCondition` with all seven variants in `src-tauri/src/domain/failure.rs` per [data-model.md](./data-model.md)
-- [ ] T007 Extend `ConnectionState` with `Retrying { attempt, next_at }` in `src-tauri/src/domain/connection.rs`, preserving the four existing variants F000's status bar already renders
-- [ ] T008 [P] Unit tests for the `ConnectionState` transition table in `src-tauri/src/domain/connection.rs`, including that `HostKeyChanged` reaches `Disconnected` and never `Retrying`
-- [ ] T009 Define `Secret` in `src-tauri/src/domain/request.rs` — zeroes its buffer on drop, redacts on `Debug` and `Display` (FR-008)
-- [ ] T010 Unit test asserting `Secret` renders no plaintext through `Debug`, `Display` or a formatted panic payload, in `src-tauri/src/domain/request.rs`
+- [X] T005 Define `RequestId`, `Priority` and `RequestOutcome` in `src-tauri/src/domain/request.rs` per [data-model.md](./data-model.md)
+- [X] T006 [P] Define `FailureCondition` with all seven variants in `src-tauri/src/domain/failure.rs` per [data-model.md](./data-model.md)
+- [X] T007 Extend `ConnectionState` with `Retrying { attempt, next_at }` in `src-tauri/src/domain/connection.rs`, preserving the four existing variants F000's status bar already renders
+- [X] T008 [P] Unit tests for the `ConnectionState` transition table in `src-tauri/src/domain/connection.rs`, including that `HostKeyChanged` reaches `Disconnected` and never `Retrying`
+- [X] T009 Define `Secret` in `src-tauri/src/domain/request.rs` — zeroes its buffer on drop, redacts on `Debug` and `Display` (FR-008)
+- [X] T010 Unit test asserting `Secret` renders no plaintext through `Debug`, `Display` or a formatted panic payload, in `src-tauri/src/domain/request.rs`
 
 ### Ports
 
-- [ ] T011 [P] Define the `RequestTransport` trait in `src-tauri/src/application/ports/transport.rs` per [contracts/transport.md](./contracts/transport.md) and [design.md](./design.md)
-- [ ] T012 [P] Define the `ProcessSpawner` trait and `SpawnSpec`/`SpawnedChild` in `src-tauri/src/application/ports/spawner.rs`
-- [ ] T013 [P] Define the `CredentialPrompt` trait and `PromptContext`/`PromptError` in `src-tauri/src/application/ports/credential.rs`
+- [X] T011 [P] Define the `RequestTransport` trait in `src-tauri/src/application/ports/transport.rs` per [contracts/transport.md](./contracts/transport.md) and [design.md](./design.md)
+- [X] T012 [P] Define the `ProcessSpawner` trait and `SpawnSpec`/`SpawnedChild` in `src-tauri/src/application/ports/spawner.rs`
+- [X] T013 [P] Define the `CredentialPrompt` trait and `PromptContext`/`PromptError` in `src-tauri/src/application/ports/credential.rs`
 
 ### Framing codec — tests first (Principle VII)
 
-- [ ] T014 Write the failing conformance tests for `FrameCodec::decode` in `src-tauri/src/adapters/outbound/openssh/framing.rs`, one per row of the table in [contracts/framing.md](./contracts/framing.md). **These must fail before T016 exists.** The three rows that are not hostile input — header split across reads, body split across reads, two frames in one read — matter most: an implementation that assumes one read yields one frame fails intermittently under load rather than reliably in a test
-- [ ] T015 Write the failing test asserting a declared length above the cap is refused **before** any allocation, in `src-tauri/src/adapters/outbound/openssh/framing.rs`. Checking the cap after allocating defeats the defence entirely
-- [ ] T016 Implement `FrameCodec` encode and decode in `src-tauri/src/adapters/outbound/openssh/framing.rs` until T014 and T015 pass, reading the format from §4.1 and restating none of its constants
+- [X] T014 Write the failing conformance tests for `FrameCodec::decode` in `src-tauri/src/adapters/outbound/openssh/framing.rs`, one per row of the table in [contracts/framing.md](./contracts/framing.md). **These must fail before T016 exists.** The three rows that are not hostile input — header split across reads, body split across reads, two frames in one read — matter most: an implementation that assumes one read yields one frame fails intermittently under load rather than reliably in a test
+- [X] T015 Write the failing test asserting a declared length above the cap is refused **before** any allocation, in `src-tauri/src/adapters/outbound/openssh/framing.rs`. Checking the cap after allocating defeats the defence entirely
+- [X] T016 Implement `FrameCodec` encode and decode in `src-tauri/src/adapters/outbound/openssh/framing.rs` until T014 and T015 pass, reading the format from §4.1 and restating none of its constants
 
 ### Mock daemon
 
-- [ ] T017 Implement the mock daemon's framing loop in `src-tauri/tests/mock_daemon/main.rs` — read a frame, echo a reply — reusing `FrameCodec` so mock and transport cannot disagree about the wire
-- [ ] T018 Add scripted behaviours to `src-tauri/tests/mock_daemon/main.rs`: delay a reply, drop a reply, emit a malformed frame, emit an oversized length, close the pipe mid-frame, and **stall** — go silent and then close after a configurable delay, which is how `ssh` behaves when its keepalive gives up
-- [ ] T019 Add per-frame delay and loss to `src-tauri/tests/mock_daemon/main.rs`, configurable, defaulting to the 250 ms / 5% profile the feature map names
-- [ ] T020 [P] Implement `ScriptedSpawner` in `src-tauri/tests/mock_daemon/spawner.rs` — produces a chosen exit code and chosen stderr without running `ssh`
+- [X] T017 Implement the mock daemon's framing loop in `src-tauri/tests/mock_daemon/main.rs` — read a frame, echo a reply — reusing `FrameCodec` so mock and transport cannot disagree about the wire
+- [X] T018 Add scripted behaviours to `src-tauri/tests/mock_daemon/main.rs`: delay a reply, drop a reply, emit a malformed frame, emit an oversized length, close the pipe mid-frame, and **stall** — go silent and then close after a configurable delay, which is how `ssh` behaves when its keepalive gives up
+- [X] T019 Add per-frame delay and loss to `src-tauri/tests/mock_daemon/main.rs`, configurable, defaulting to the 250 ms / 5% profile the feature map names
+- [X] T020 [P] Implement `ScriptedSpawner` in `src-tauri/tests/mock_daemon/spawner.rs` — produces a chosen exit code and chosen stderr without running `ssh`
 
 **Checkpoint**: the codec is proven against hostile and awkward input, and the mock can be
 driven into every condition the later stories need.

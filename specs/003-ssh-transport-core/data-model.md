@@ -86,7 +86,7 @@ something truthful to say during recovery.
 | `Connecting`                    | An attempt is in progress.                                  | Existing (F000)  |
 | `Connected`                     | Established and usable.                                     | Existing (F000)  |
 | `Disconnected`                  | Not connected, not trying.                                  | Existing (F000)  |
-| `Retrying { attempt, next_at }` | Lost, and the supervisor is backing off before another try. | **New** (FR-020) |
+| `Retrying { attempt, next_in_secs }` | Lost, and the supervisor is backing off before another try. | **New** (FR-020) |
 
 **Transitions**:
 
@@ -100,7 +100,7 @@ Unknown ──────→ Connecting ──→ Connected
                     └── user stops ┘
 ```
 
-`Retrying` carries the attempt count and when the next try happens, because "reconnecting"
+`Retrying` carries the attempt count and how long until the next try, because "reconnecting"
 with no sense of progress is indistinguishable from a hang — which is the complaint F000's
 hidden window taught this project to take seriously.
 
