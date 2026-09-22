@@ -176,18 +176,33 @@ credential store, not a cache of our own, and is in scope only where §3.7 puts 
 
 ## Detecting a dead connection
 
-**Decision**: Two signals, both required. OpenSSH's own keepalive (`ServerAliveInterval=15`,
-`ServerAliveCountMax=3`, ~45 s) surfaces a silently dropped network; EOF on the child's stdout
-surfaces a dead process immediately.
+**Decision**: The transport observes exactly **one** thing — the child process ending, which
+arrives as EOF on its stdout. OpenSSH's keepalive (`ServerAliveInterval=15`,
+`ServerAliveCountMax=3`) is not a second detector; it is what *bounds the time* to that one
+observation when a network dies silently, because exceeding it makes `ssh` itself exit.
 
-**Rationale**: They catch different failures. A cable pulled mid-session produces no EOF —
-the socket simply stops answering, and only the keepalive notices. A crashed engine or an
-`ssh` that exits produces EOF at once, and waiting 45 s for a keepalive to conclude what EOF
-already proved would be a needless delay.
+So this feature has two obligations, and they are tested differently:
 
-**Alternatives considered**: An application-level ping over the pipe — rejected, it
-duplicates what `ServerAliveInterval` already does at the layer that owns the socket, and
-adds traffic to the pipe the interaction budget protects.
+1. **Pass the flags.** The §3.1 invocation must carry them, or a pulled cable hangs forever.
+   Unit-testable against the spawner: assert the invocation contains them.
+2. **React to EOF promptly.** Integration-testable against the mock, which emulates `ssh` by
+   going silent and then closing after the simulated window.
+
+**Rationale**: An earlier version of this decision said "two signals, both required — EOF and
+keepalive expiry", and claimed a pulled cable "produces no EOF". That is true only
+momentarily. After the keepalive gives up, `ssh` exits and EOF follows; there is no second
+detector for the transport to implement, and it has no socket to implement one on.
+
+The distinction is not academic. The earlier wording produced a test that drove the mock to
+stop answering *without* closing the pipe and expected loss to be reported — which, with no
+OpenSSH in the test path, would have waited forever. It described a mechanism this feature
+does not own and cannot exercise.
+
+**Alternatives considered**: A transport-level idle timer, so loss is detected without
+relying on OpenSSH — rejected, it duplicates `ServerAliveInterval` at a layer that cannot see
+the socket, and would fire spuriously on a legitimately slow reply. An application-level ping
+over the pipe — rejected for the same reason, and it adds traffic to the pipe the interaction
+budget protects.
 
 ---
 

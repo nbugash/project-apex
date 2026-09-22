@@ -19,7 +19,7 @@ src-tauri/
 ├── src/
 │   ├── domain/
 │   │   ├── connection.rs           # EXISTING — ConnectionState gains Retrying
-│   │   ├── request.rs              # RequestId, Priority, RequestOutcome
+│   │   ├── request.rs              # RequestId, Priority, RequestOutcome, Secret
 │   │   └── failure.rs              # FailureCondition + classification rules
 │   ├── application/
 │   │   ├── ports/

@@ -298,7 +298,8 @@ confirm they exercise a link with meaningful delay and dropped packets.
   network.
 - **FR-020**: After a connection is lost, the transport MUST attempt to re-establish it
   without user action, with a growing interval between attempts, and MUST expose whether it
-  is connected, retrying, or given up. Requests outstanding when the connection died MUST
+  is connected, retrying, or has stopped trying (`Disconnected`, which is reached only when
+  the user stops it — the transport itself retries indefinitely). Requests outstanding when the connection died MUST
   resolve as failed rather than wait.
 - **FR-021**: Outbound frames MUST be ordered by priority, with interactive traffic ahead of
   background work, as §4.6 requires. A large background payload already in flight MUST NOT
