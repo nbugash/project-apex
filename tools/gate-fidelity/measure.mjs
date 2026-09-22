@@ -9,7 +9,6 @@ import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'node:net';
 import { remote } from 'webdriverio';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -19,15 +18,28 @@ const PROFILE = join(REPO, '.gate-profile');
 
 export const REFERENCE = { width: 1200, height: 800 };
 
+/** The application's devUrl, verbatim. Probing 127.0.0.1 instead looked equivalent and was
+ *  not: vite binds the name `localhost`, which on a machine that resolves it to ::1 leaves
+ *  an IPv4 probe refused while the webview connects perfectly well. The gate waited out its
+ *  full timeout against a server that was up the whole time. */
+const PREVIEW_URL = 'http://localhost:1420';
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const portFree = (port) =>
-  new Promise((resolve) => {
-    const probe = createServer();
-    probe.once('error', () => resolve(false));
-    probe.once('listening', () => probe.close(() => resolve(true)));
-    probe.listen(port, '127.0.0.1');
-  });
+/** Is something already answering where the bundle should be served?
+ *
+ *  An HTTP check rather than a socket bind. Binding 127.0.0.1 to test availability gave a
+ *  false "free" against a server listening on ::1 — the same address-family mismatch that
+ *  made the readiness probe fail. What matters is whether something answers, not which
+ *  family it answers on. */
+async function somethingIsServing() {
+  try {
+    await fetch(PREVIEW_URL, { signal: AbortSignal.timeout(1500) });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Kill a child and everything it spawned. Requires the child to be detached. */
 function killGroup(child) {
@@ -50,7 +62,7 @@ async function waitForPreview(log, timeoutMs = 30_000) {
   let lastError = 'no response';
   while (Date.now() < deadline) {
     try {
-      const res = await fetch('http://127.0.0.1:1420');
+      const res = await fetch(PREVIEW_URL);
       if (res.ok) return;
       // A response means the server is up. Retrying will not change what it serves, so a
       // 404 is reported now rather than after thirty seconds of polling something that
@@ -62,6 +74,14 @@ async function waitForPreview(log, timeoutMs = 30_000) {
     } catch (e) {
       if (e instanceof PreviewUnservable) throw e;
       lastError = e.message;
+    }
+    // vite says so plainly when it cannot bind. Waiting out the timeout after that adds
+    // thirty seconds and tells the reader nothing the first line had not already said.
+    if (log.join('').includes('already in use')) {
+      throw new PreviewUnservable(
+        'the preview server could not bind port 1420 — something else holds it.\n' +
+          `  Its output was:\n${log.join('').trim().replace(/^/gm, '    ')}`,
+      );
     }
     await sleep(500);
   }
@@ -92,7 +112,7 @@ export async function withShell(fn) {
   // application's devUrl is fixed at 1420, so the gate cannot move to another port — and
   // a server it did not start may be serving an older build, which would make the
   // comparison judge the wrong pixels while reporting success.
-  if (!(await portFree(1420))) {
+  if (await somethingIsServing()) {
     throw new Error(
       'port 1420 is already in use, so the gate cannot serve the bundle it is meant to judge.\n' +
         '  Something else is listening — most likely a preview server left behind by an\n' +

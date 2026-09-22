@@ -3,7 +3,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, rmSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { createServer } from 'node:net';
 import { assertCaptureIsNotBlank } from './helpers';
 
 /** Fixed, repo-local profile. Not a temp dir: WDIO workers are separate processes, so an
@@ -26,20 +25,22 @@ function killGroup(child: ChildProcess | null): void {
   }
 }
 
-/** Wait until nothing is listening on `port`, so the next step starts from a clean slate. */
-async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+/** Wait until nothing answers on the preview URL, so the next step starts clean.
+ *
+ *  An HTTP check, not a socket bind on 127.0.0.1. Binding an IPv4 address to test
+ *  availability reports "free" while a server listens on ::1, which is the address-family
+ *  mismatch that had the fidelity gate waiting out its timeout against a live server. */
+async function waitForNothingServing(url: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const free = await new Promise<boolean>((resolve) => {
-      const probe = createServer();
-      probe.once('error', () => resolve(false));
-      probe.once('listening', () => probe.close(() => resolve(true)));
-      probe.listen(port, '127.0.0.1');
-    });
-    if (free) return;
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(1000) });
+    } catch {
+      return; // nothing answered
+    }
     await new Promise((r) => setTimeout(r, 250));
   }
-  console.warn(`port ${port} was still held after teardown`);
+  console.warn(`something was still serving ${url} after teardown`);
 }
 
 /** Where a worker records a blank capture for the launcher to find.
@@ -138,7 +139,7 @@ export const config: WebdriverIO.Config = {
     driver = null;
     preview = null;
     // And confirm the port actually came back, so the next step does not inherit it.
-    await waitForPortFree(1420);
+    await waitForNothingServing('http://localhost:1420');
     // KEEP_E2E_PROFILE leaves the profile and its log in place for diagnosis.
     if (!process.env.KEEP_E2E_PROFILE) {
       rmSync(E2E_PROFILE, { recursive: true, force: true });
