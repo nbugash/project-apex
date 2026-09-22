@@ -11,14 +11,14 @@ stories and measurable outcomes in [spec.md](./spec.md). Entity shapes are in
 
 ## Prerequisites
 
-| Requirement | Notes |
-|-------------|-------|
-| Rust 1.75+ | `rustup` toolchain, stable channel |
-| Node 20+ | For the interface layer build |
+| Requirement                  | Notes                                                                                            |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| Rust 1.75+                   | `rustup` toolchain, stable channel                                                               |
+| Node 20+                     | For the interface layer build                                                                    |
 | Tauri v2 system dependencies | macOS: Xcode command line tools. Linux: `webkit2gtk-4.1`, `libayatana-appindicator3`, `librsvg2` |
-| `WebKitWebDriver` | Linux only, required for end-to-end. Packaged as `webkit2gtk-driver` |
-| `tauri-driver` | `cargo install tauri-driver --locked`. Bridges WebDriver to the platform webview |
-| `xvfb` and ImageMagick | Linux only. `xvfb-run` provides a display; `import` captures screenshots |
+| `WebKitWebDriver`            | Linux only, required for end-to-end. Packaged as `webkit2gtk-driver`                             |
+| `tauri-driver`               | `cargo install tauri-driver --locked`. Bridges WebDriver to the platform webview                 |
+| `xvfb` and ImageMagick       | Linux only. `xvfb-run` provides a display; `import` captures screenshots                         |
 
 macOS has no WebDriver for its platform webview, so the end-to-end suite does not run there.
 See [research.md](./research.md), "End-to-end testing on macOS".
@@ -148,7 +148,7 @@ While it runs, drag a splitter, switch tabs, resize the window.
 cargo test --manifest-path src-tauri/Cargo.toml    # unit + integration
 npm run test:unit                                  # interface-layer unit
 npm run perf:budget                                # asserts SC-001 and SC-004
-npm run lint:ds                                    # design adherence — CI-required
+npm run lint:ds                                    # design adherence
 npx tsc --noEmit                                   # typechecks the e2e specs too
 xvfb-run -a npm run e2e                            # Linux only; ~16 minutes
 ```
@@ -161,7 +161,9 @@ Set `KEEP_E2E_PROFILE=1` to retain `.e2e-profile/` and its `shell.log` after a r
 is the fastest way to tell whether the window was ever shown — look for "readiness signal
 received".
 
-`lint:ds` and `perf:budget` are required checks, not advisory. The first enforces Principle I
+`lint:ds` and `perf:budget` are mandatory before pushing, not advisory. CI runs on manual
+dispatch only (`gh workflow run ci.yml --ref <branch>`), so nothing catches a skipped check
+for you. The first enforces Principle I
 mechanically; the second is what makes Principle V a measurement rather than a claim.
 
 ---

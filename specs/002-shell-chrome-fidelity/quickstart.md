@@ -139,7 +139,7 @@ what it judges against passes unconditionally.
 cargo test --manifest-path src-tauri/Cargo.toml    # includes the migration test
 npm run test:unit
 npm run lint:ds
-npm run gate:fidelity                              # CI-required
+npm run gate:fidelity                              # run before pushing
 npm run gate:fidelity:test                         # the gate's own tests
 xvfb-run -a npm run e2e                            # Linux only
 ```
