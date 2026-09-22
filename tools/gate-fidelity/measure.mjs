@@ -9,6 +9,7 @@ import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:net';
 import { remote } from 'webdriverio';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -19,6 +20,28 @@ const PROFILE = join(REPO, '.gate-profile');
 export const REFERENCE = { width: 1200, height: 800 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const portFree = (port) =>
+  new Promise((resolve) => {
+    const probe = createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => probe.close(() => resolve(true)));
+    probe.listen(port, '127.0.0.1');
+  });
+
+/** Kill a child and everything it spawned. Requires the child to be detached. */
+function killGroup(child) {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // already gone
+    }
+  }
+}
 
 class PreviewUnservable extends Error {}
 
@@ -65,12 +88,26 @@ export async function withShell(fn) {
 
   // A debug build loads devUrl, so without a server on that port the webview renders blank
   // and the gate would compare two empty windows and pass.
+  // The gate serves the bundle itself and refuses to borrow someone else's server. The
+  // application's devUrl is fixed at 1420, so the gate cannot move to another port — and
+  // a server it did not start may be serving an older build, which would make the
+  // comparison judge the wrong pixels while reporting success.
+  if (!(await portFree(1420))) {
+    throw new Error(
+      'port 1420 is already in use, so the gate cannot serve the bundle it is meant to judge.\n' +
+        '  Something else is listening — most likely a preview server left behind by an\n' +
+        '  earlier run. Stop it and try again; the gate will not compare against a server\n' +
+        '  it did not start, because that server may hold a different build.',
+    );
+  }
+
   // Output is captured rather than discarded, and drained as it arrives so a full pipe
   // cannot block the server. A silent failure here used to surface only as a timeout.
   const previewLog = [];
   const preview = spawn('npx', ['vite', 'preview', '--port', '1420', '--strictPort'], {
     cwd: REPO,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
   });
   preview.stdout.on('data', (d) => previewLog.push(d.toString()));
   preview.stderr.on('data', (d) => previewLog.push(d.toString()));
@@ -84,7 +121,7 @@ export async function withShell(fn) {
   // portal activation timeout on a machine with no desktop session.
   process.env.DBUS_SESSION_BUS_ADDRESS = '/dev/null';
 
-  const driver = spawn('tauri-driver', [], { stdio: 'ignore' });
+  const driver = spawn('tauri-driver', [], { stdio: 'ignore', detached: true });
   let browser = null;
   try {
     await waitForPreview(previewLog);
@@ -112,8 +149,10 @@ export async function withShell(fn) {
     return await fn(browser);
   } finally {
     if (browser) await browser.deleteSession().catch(() => {});
-    driver.kill();
-    preview.kill();
+    // Groups, not wrappers: npx spawns vite as a child, and killing npx alone leaves vite
+    // holding port 1420 for whatever runs next.
+    killGroup(driver);
+    killGroup(preview);
     rmSync(PROFILE, { recursive: true, force: true });
   }
 }

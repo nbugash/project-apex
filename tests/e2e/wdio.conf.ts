@@ -3,6 +3,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, rmSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { createServer } from 'node:net';
 import { assertCaptureIsNotBlank } from './helpers';
 
 /** Fixed, repo-local profile. Not a temp dir: WDIO workers are separate processes, so an
@@ -11,6 +12,36 @@ import { assertCaptureIsNotBlank } from './helpers';
 export const E2E_PROFILE = join(process.cwd(), '.e2e-profile');
 
 const BINARY = join(process.cwd(), 'src-tauri/target/debug/apex-shell');
+/** Kill a child and everything it spawned. Requires the child to be detached. */
+function killGroup(child: ChildProcess | null): void {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/** Wait until nothing is listening on `port`, so the next step starts from a clean slate. */
+async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const free = await new Promise<boolean>((resolve) => {
+      const probe = createServer();
+      probe.once('error', () => resolve(false));
+      probe.once('listening', () => probe.close(() => resolve(true)));
+      probe.listen(port, '127.0.0.1');
+    });
+    if (free) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  console.warn(`port ${port} was still held after teardown`);
+}
+
 /** Where a worker records a blank capture for the launcher to find.
  *
  *  A file, not a module-level array: specs run in worker processes and onPrepare and
@@ -85,21 +116,29 @@ export const config: WebdriverIO.Config = {
     // stdio must not be an unread pipe. A full pipe blocks the writer, and a blocked
     // driver makes every WebDriver command hang until the test times out — which reads as
     // 33 unrelated failures rather than one stalled process.
+    // detached so the whole process group can be killed. `npx` spawns vite as a child,
+    // and killing the npx wrapper alone orphans vite still listening on 1420 — which then
+    // blocks the fidelity gate's own server in the next CI step, where it surfaced as
+    // "Port 1420 is already in use" followed by thirty seconds of refused connections.
     preview = spawn('npx', ['vite', 'preview', '--port', '1420', '--strictPort'], {
       stdio: 'ignore',
+      detached: true,
     });
 
     // One driver for the whole run. Spawning per session races on the port: every spec
     // after the first fails to bind and the run stalls.
-    driver = spawn('tauri-driver', [], { stdio: 'ignore' });
+    driver = spawn('tauri-driver', [], { stdio: 'ignore', detached: true });
     await new Promise((resolve) => setTimeout(resolve, 3000));
   },
 
-  onComplete: () => {
-    driver?.kill();
-    preview?.kill();
+  onComplete: async () => {
+    // Negative pid kills the process group, not just the wrapper.
+    killGroup(driver);
+    killGroup(preview);
     driver = null;
     preview = null;
+    // And confirm the port actually came back, so the next step does not inherit it.
+    await waitForPortFree(1420);
     // KEEP_E2E_PROFILE leaves the profile and its log in place for diagnosis.
     if (!process.env.KEEP_E2E_PROFILE) {
       rmSync(E2E_PROFILE, { recursive: true, force: true });
