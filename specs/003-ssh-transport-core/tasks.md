@@ -146,22 +146,22 @@ outcome lands correctly and the registry empties.
 
 ### Tests for User Story 3
 
-- [ ] T047 [US3] Failing test in `src-tauri/tests/transport_exchange.rs`: with many requests in flight and replies reordered, every outcome reaches its own request and none is misdelivered (SC-004). **Write before T052**
-- [ ] T048 [US3] Failing test in `src-tauri/tests/transport_exchange.rs`: a reply arriving the instant a write completes is still matched, proving registration precedes transmission (FR-011)
-- [ ] T049 [US3] Test in `src-tauri/tests/transport_exchange.rs`: after a sustained run of answered, timed-out and withdrawn requests, the registry retains nothing. Assert on the registry's **size**, not on the run completing — a leak does not fail a short test (SC-005)
-- [ ] T050 [US3] Test in `src-tauri/tests/transport_exchange.rs`: a request the mock never answers resolves as `TimedOut` within its limit and stops occupying the connection (SC-006)
-- [ ] T051 [US3] Test in `src-tauri/tests/transport_exchange.rs`: a withdrawn request resolves as `Withdrawn`, a cancellation is sent, and withdrawing an unknown or already-resolved id is a no-op
-- [ ] T052 [US3] Test in `src-tauri/tests/transport_exchange.rs`: with background requests saturating the queue, an interactive request is written ahead of all queued background work — but not ahead of a frame already being written (SC-013)
-- [ ] T053 [US3] Test in `src-tauri/tests/transport_exchange.rs`: a payload over the frame cap is refused before transmission, and a normal request **afterwards** still succeeds, proving the stream stayed aligned
+- [X] T047 [US3] Failing test in `src-tauri/tests/transport_exchange.rs`: with many requests in flight and replies reordered, every outcome reaches its own request and none is misdelivered (SC-004). **Write before T052**
+- [X] T048 [US3] Failing test in `src-tauri/tests/transport_exchange.rs`: a reply arriving the instant a write completes is still matched, proving registration precedes transmission (FR-011)
+- [X] T049 [US3] Test in `src-tauri/tests/transport_exchange.rs`: after a sustained run of answered, timed-out and withdrawn requests, the registry retains nothing. Assert on the registry's **size**, not on the run completing — a leak does not fail a short test (SC-005)
+- [X] T050 [US3] Test in `src-tauri/tests/transport_exchange.rs`: a request the mock never answers resolves as `TimedOut` within its limit and stops occupying the connection (SC-006)
+- [X] T051 [US3] Test in `src-tauri/tests/transport_exchange.rs`: a withdrawn request resolves as `Withdrawn`, a cancellation is sent, and withdrawing an unknown or already-resolved id is a no-op
+- [X] T052 [US3] Test in `src-tauri/tests/transport_exchange.rs`: with background requests saturating the queue, an interactive request is written ahead of all queued background work — but not ahead of a frame already being written (SC-013)
+- [X] T053 [US3] Test in `src-tauri/tests/transport_exchange.rs`: a payload over the frame cap is refused before transmission, and a normal request **afterwards** still succeeds, proving the stream stayed aligned
 
 ### Implementation for User Story 3
 
-- [ ] T054 [US3] Implement `Registry` in `src-tauri/src/adapters/outbound/openssh/registry.rs`: mint ids, register before write, resolve exactly once, remove on every outcome
-- [ ] T055 [US3] Implement deadline expiry in `src-tauri/src/adapters/outbound/openssh/registry.rs` with the 30-second default and a per-call override (FR-012)
-- [ ] T056 [US3] Implement `Registry::fail_all` in `src-tauri/src/adapters/outbound/openssh/registry.rs`, called by the supervisor on connection loss so nothing waits for a dead link (FR-020)
-- [ ] T057 [US3] Implement `SendQueue` in `src-tauri/src/adapters/outbound/openssh/sendq.rs`: `Interactive` ahead of `Background`, FIFO within a class (FR-021)
-- [ ] T058 [US3] Implement the exchange use case in `src-tauri/src/application/use_cases/exchange.rs` — send, correlate, expire, withdraw — wiring registry and queue behind `RequestTransport`
-- [ ] T059 [US3] Implement cancellation emission in `src-tauri/src/application/use_cases/exchange.rs` per §4.5, and resolve the withdrawn request regardless of whether the remote side stops
+- [X] T054 [US3] Implement `Registry` in `src-tauri/src/adapters/outbound/openssh/registry.rs`: mint ids, register before write, resolve exactly once, remove on every outcome
+- [X] T055 [US3] Implement deadline expiry in `src-tauri/src/adapters/outbound/openssh/registry.rs` with the 30-second default and a per-call override (FR-012)
+- [X] T056 [US3] Implement `Registry::fail_all` in `src-tauri/src/adapters/outbound/openssh/registry.rs`, called by the supervisor on connection loss so nothing waits for a dead link (FR-020)
+- [X] T057 [US3] Implement `SendQueue` in `src-tauri/src/adapters/outbound/openssh/sendq.rs`: `Interactive` ahead of `Background`, FIFO within a class (FR-021)
+- [X] T058 [US3] Implement the exchange use case in `src-tauri/src/application/use_cases/exchange.rs` — send, correlate, expire, withdraw — wiring registry and queue behind `RequestTransport`
+- [X] T059 [US3] Implement cancellation emission in `src-tauri/src/application/use_cases/exchange.rs` per §4.5, and resolve the withdrawn request regardless of whether the remote side stops
 
 **Checkpoint**: the transport carries concurrent traffic correctly under reordering, loss and
 withdrawal.

@@ -22,13 +22,13 @@ pub use spawner::{parse_version, OpenSshSpawner, ASKPASS_MIN_VERSION};
 
 use crate::adapters::outbound::askpass::ipc::AskpassChannel;
 use crate::application::ports::spawner::{ProcessSpawner, SpawnError, SpawnSpec};
-use crate::application::ports::transport::{Request, RequestTransport};
+use crate::application::ports::transport::{Pending, Request, RequestTransport};
 use crate::application::use_cases::connect::ConnectAttempt;
+use crate::application::use_cases::exchange;
 use crate::domain::connection::ConnectionState;
 use crate::domain::failure::{FailureCondition, MAX_STDERR_BYTES};
 use crate::domain::request::{
-    Priority, RequestId, RequestOutcome, Secret, DEFAULT_TIMEOUT_SECS, ERR_INTERNAL,
-    ERR_PAYLOAD_TOO_LARGE,
+    Priority, RequestId, RequestOutcome, Secret, ERR_INTERNAL, ERR_PAYLOAD_TOO_LARGE,
 };
 use bytes::BytesMut;
 use framing::{FrameCodec, FrameError};
@@ -364,32 +364,50 @@ fn deliver(registry: &Registry, body: &str) {
 #[allow(async_fn_in_trait)]
 impl RequestTransport for SshTransport {
     async fn send(&self, request: Request) -> RequestOutcome {
-        // Refused before transmission. An oversized frame is never partially written, and
-        // the caller learns the cap rather than watching everything behind it stall.
-        let codec = FrameCodec::new();
+        let (_id, pending) = self.begin(request);
+        pending.await
+    }
 
+    fn begin(&self, request: Request) -> (RequestId, Pending) {
         // Registration precedes transmission (FR-011), so a reply arriving the instant the
-        // write completes is still matched.
+        // write completes is still matched. The other order leaves a window in which a
+        // correct reply is discarded as unknown, and the request then times out — a bug
+        // that appears only under load and looks like a slow engine.
         let (id, awaiting) = self.registry.register();
-        let body = format!(
-            r#"{{"jsonrpc":"2.0","id":"{id}","method":"{}","params":{}}}"#,
-            request.method, request.params
-        );
-        let frame = match codec.encode(&body) {
+        let registry = self.registry.clone();
+
+        let ready = |registry: &Arc<Registry>, id: &RequestId, outcome: RequestOutcome| {
+            // Clear the entry: a request that never reached the wire must not be retained.
+            registry.resolve(id, RequestOutcome::Withdrawn);
+            let out = outcome;
+            (id.clone(), Box::pin(async move { out }) as Pending)
+        };
+
+        let body = exchange::request_body(&id, &request);
+        let frame = match FrameCodec::new().encode(&body) {
             Ok(f) => f,
+            // Refused before transmission. An oversized frame is never partially written,
+            // so the stream stays aligned and the caller learns the cap rather than
+            // watching everything behind it stall.
             Err(FrameError::TooLarge(n)) => {
-                self.registry.resolve(&id, RequestOutcome::TimedOut); // clear the entry
-                return RequestOutcome::Failed {
-                    code: ERR_PAYLOAD_TOO_LARGE,
-                    message: format!("payload of {n} bytes exceeds the frame limit"),
-                };
+                return ready(
+                    &registry,
+                    &id,
+                    RequestOutcome::Failed {
+                        code: ERR_PAYLOAD_TOO_LARGE,
+                        message: format!("payload of {n} bytes exceeds the frame limit"),
+                    },
+                )
             }
             Err(FrameError::Malformed(why)) => {
-                self.registry.resolve(&id, RequestOutcome::TimedOut);
-                return RequestOutcome::Failed {
-                    code: ERR_INTERNAL,
-                    message: why,
-                };
+                return ready(
+                    &registry,
+                    &id,
+                    RequestOutcome::Failed {
+                        code: ERR_INTERNAL,
+                        message: why,
+                    },
+                )
             }
         };
 
@@ -397,26 +415,27 @@ impl RequestTransport for SshTransport {
             let guard = self.live.lock().expect("live lock");
             let Some(live) = guard.as_ref() else {
                 // Never queue for a connection that may never return.
-                self.registry.resolve(&id, RequestOutcome::ConnectionLost);
-                return RequestOutcome::ConnectionLost;
+                return ready(&registry, &id, RequestOutcome::ConnectionLost);
             };
             live.queue.push(request.priority, frame);
         }
 
-        let limit = request
-            .timeout
-            .unwrap_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
-        match tokio::time::timeout(limit, awaiting).await {
-            Ok(Ok(outcome)) => outcome,
-            // The sender was dropped without sending: the connection went away.
-            Ok(Err(_)) => RequestOutcome::ConnectionLost,
-            Err(_) => {
-                // Remove the entry: a timed-out request must stop occupying the registry
-                // whether or not a late reply ever arrives.
-                self.registry.resolve(&id, RequestOutcome::TimedOut);
-                RequestOutcome::TimedOut
+        let limit = exchange::deadline_for(&request);
+        let for_timeout = id.clone();
+        let pending: Pending = Box::pin(async move {
+            match tokio::time::timeout(limit, awaiting).await {
+                Ok(Ok(outcome)) => outcome,
+                // The sender was dropped without sending: the connection went away.
+                Ok(Err(_)) => RequestOutcome::ConnectionLost,
+                Err(_) => {
+                    // Remove the entry: a timed-out request must stop occupying the
+                    // registry whether or not a late reply ever arrives.
+                    registry.resolve(&for_timeout, RequestOutcome::TimedOut);
+                    RequestOutcome::TimedOut
+                }
             }
-        }
+        });
+        (id, pending)
     }
 
     fn withdraw(&self, id: &RequestId) {
@@ -424,9 +443,7 @@ impl RequestTransport for SshTransport {
         // caller is released regardless.
         if let Ok(guard) = self.live.lock() {
             if let Some(live) = guard.as_ref() {
-                let body = format!(
-                    r#"{{"jsonrpc":"2.0","method":"$/cancelRequest","params":{{"id":"{id}"}}}}"#
-                );
+                let body = exchange::cancellation_body(id);
                 if let Ok(frame) = FrameCodec::new().encode(&body) {
                     live.queue.push(Priority::Interactive, frame);
                 }

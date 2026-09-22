@@ -19,6 +19,9 @@
 //!                     keepalive gives up, which is the only way a silent network death
 //!                     becomes observable to the transport
 //!   close-mid-frame   write half a frame and exit
+//!   reorder=<n>       hold n replies, then emit them in reverse — a work pool finishing
+//!                     out of order, which is the ordinary case for a real engine and the
+//!                     one correlation exists for
 //!
 //! Run with `harness = false`: this is a binary the transport spawns, not a test.
 
@@ -44,6 +47,7 @@ struct Script {
     oversized: bool,
     stall_ms: Option<u64>,
     close_mid_frame: bool,
+    reorder: usize,
 }
 
 impl Script {
@@ -55,6 +59,7 @@ impl Script {
                 Some(("delay", v)) => s.delay_ms = v.parse().unwrap_or(0),
                 Some(("drop", v)) => s.drop_every = v.parse().unwrap_or(0),
                 Some(("stall", v)) => s.stall_ms = Some(v.parse().unwrap_or(0)),
+                Some(("reorder", v)) => s.reorder = v.parse().unwrap_or(0),
                 _ => match part {
                     "malformed" => s.malformed = true,
                     "oversized" => s.oversized = true,
@@ -92,6 +97,8 @@ fn main() {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let mut seen = 0usize;
+    // Replies held back when `reorder` is in play.
+    let mut held: Vec<String> = Vec::new();
 
     loop {
         match stdin.read(&mut chunk) {
@@ -127,6 +134,21 @@ fn main() {
             }
 
             let reply = format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"echo":true}}}}"#);
+
+            if script.reorder > 0 {
+                held.push(reply);
+                if held.len() == script.reorder {
+                    // Reversed, so the first request asked is the last one answered. If
+                    // correlation were positional rather than by id, every outcome would
+                    // land on the wrong request and the test would say so.
+                    for r in held.drain(..).rev() {
+                        let _ = out.write_all(format!("{HEADER}{}\r\n\r\n{r}", r.len()).as_bytes());
+                    }
+                    let _ = out.flush();
+                }
+                continue;
+            }
+
             if script.close_mid_frame {
                 let whole = format!("{HEADER}{}\r\n\r\n{reply}", reply.len());
                 let half = &whole.as_bytes()[..whole.len() / 2];
