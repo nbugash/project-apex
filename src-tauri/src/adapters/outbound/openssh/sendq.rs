@@ -77,11 +77,16 @@ impl SendQueue {
         self.ready.notify_all();
     }
 
+    /// Depth, for the tests that assert a closed queue discards its work. Production never
+    /// consults it: a writer that checks the depth before popping has raced by the time it
+    /// pops.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         let q = self.queues.lock().expect("send queue lock");
         q.interactive.len() + q.background.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -143,6 +148,9 @@ mod tests {
             let q = q.clone();
             std::thread::spawn(move || q.pop_blocking())
         };
+        // A real blocking wait, in a test with no runtime: the point is that a thread
+        // parked in `pop_blocking` is woken by `close`, which is a thread-level property.
+        #[allow(clippy::disallowed_methods)]
         std::thread::sleep(std::time::Duration::from_millis(50));
         q.close();
         assert_eq!(writer.join().unwrap(), None, "close must wake the writer");

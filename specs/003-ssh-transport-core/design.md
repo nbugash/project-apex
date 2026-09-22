@@ -121,7 +121,9 @@ trait RequestTransport
         postcondition: returns immediately; never blocks
 
     fn observe(&self) -> Receiver<ConnectionState>
-        postcondition: every subsequent transition is delivered; none skipped
+        postcondition: every change wakes subscribers, and the value they then read is the
+                       transport's current state — never a stale one. Intermediate states
+                       may coalesce; see contracts/transport.md, which owns this guarantee
 
 trait ProcessSpawner
     fn spawn(&self, spec: SpawnSpec) -> Result<SpawnedChild, SpawnError>

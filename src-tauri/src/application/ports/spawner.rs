@@ -22,6 +22,15 @@ pub struct SpawnedChild {
     pub stdout: Box<dyn std::io::Read + Send>,
     /// Bounded by `MAX_STDERR_BYTES` — see `domain::failure`.
     pub stderr: Box<dyn std::io::Read + Send>,
+    /// Block until the child ends, and yield its exit code.
+    ///
+    /// Without this the transport can observe that a connection ended but never why:
+    /// `classify` takes an exit code, and 255 with "Permission denied" is a different
+    /// remedy from 127 with "No such file". A boxed closure rather than a
+    /// `std::process::Child` because the three implementations — `ssh`, the mock daemon and
+    /// the scripted double — have three different notions of ending, and naming the std
+    /// type here would drag process handling into the core.
+    pub wait: Box<dyn FnOnce() -> Option<i32> + Send>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +54,14 @@ pub trait ProcessSpawner: Send + Sync {
     /// flags are present — the keepalive flags in particular, whose absence no integration
     /// test can catch because the mock has no socket.
     fn invocation(&self, spec: &SpawnSpec) -> Vec<String>;
+
+    /// The environment this spawner would set for `spec`, as key/value pairs.
+    ///
+    /// Exposed for the same reason as `invocation`: `SSH_ASKPASS_REQUIRE=force` and an
+    /// absolute `SSH_ASKPASS` are normative (§3.3), and their absence is invisible to an
+    /// integration test — OpenSSH would simply never prompt, which reads as an ordinary
+    /// authentication failure.
+    fn environment(&self, spec: &SpawnSpec) -> Vec<(String, String)>;
 
     /// Hand a passphrase to an assisted attempt in progress.
     fn supply_passphrase(&self, secret: Secret) -> Result<(), SpawnError>;

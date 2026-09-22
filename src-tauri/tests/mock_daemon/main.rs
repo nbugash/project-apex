@@ -22,6 +22,11 @@
 //!
 //! Run with `harness = false`: this is a binary the transport spawns, not a test.
 
+// This process exists to be slow on demand: delays, stalls and lossy links are its
+// whole purpose. The crate forbids `std::thread::sleep` to keep the interaction path
+// honest, and none of this runs on that path — it is a separate binary with no runtime.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::{Read, Write};
 
 const HEADER: &str = "Content-Length: ";

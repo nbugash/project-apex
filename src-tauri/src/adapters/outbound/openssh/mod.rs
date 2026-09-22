@@ -20,12 +20,15 @@ pub mod spawner;
 pub use classify::classify;
 pub use spawner::{parse_version, OpenSshSpawner, ASKPASS_MIN_VERSION};
 
+use crate::adapters::outbound::askpass::ipc::AskpassChannel;
 use crate::application::ports::spawner::{ProcessSpawner, SpawnError, SpawnSpec};
 use crate::application::ports::transport::{Request, RequestTransport};
+use crate::application::use_cases::connect::ConnectAttempt;
 use crate::domain::connection::ConnectionState;
-use crate::domain::failure::MAX_STDERR_BYTES;
+use crate::domain::failure::{FailureCondition, MAX_STDERR_BYTES};
 use crate::domain::request::{
-    Priority, RequestId, RequestOutcome, DEFAULT_TIMEOUT_SECS, ERR_INTERNAL, ERR_PAYLOAD_TOO_LARGE,
+    Priority, RequestId, RequestOutcome, Secret, DEFAULT_TIMEOUT_SECS, ERR_INTERNAL,
+    ERR_PAYLOAD_TOO_LARGE,
 };
 use bytes::BytesMut;
 use framing::{FrameCodec, FrameError};
@@ -52,7 +55,28 @@ pub struct SshTransport {
     spec: SpawnSpec,
     /// Collected for classification when the child ends.
     stderr: Arc<Mutex<String>>,
+    /// The child's exit code, once it has ended. `None` while it is still running.
+    ///
+    /// Half of what classification needs; `stderr` is the other half. They are collected by
+    /// the same thread because stderr's EOF and the child's exit are the same moment.
+    exit: Arc<Mutex<Option<i32>>>,
+    /// The channel a passphrase reaches OpenSSH through, when one is in play.
+    askpass: Mutex<Option<Arc<AskpassChannel>>>,
+    /// False below OpenSSH 8.4 — see `ASKPASS_MIN_VERSION`.
+    assisted_available: std::sync::atomic::AtomicBool,
 }
+
+/// How long a freshly spawned child must survive before the attempt counts as established.
+///
+/// There is no handshake to wait for: this feature defines no connect message, and the
+/// first real exchange belongs to User Story 3. So the only observation available is that
+/// `ssh` has not given up — a refused credential ends the child in well under this, and a
+/// working connection stays open indefinitely.
+///
+/// The error is asymmetric, which is why a window is acceptable at all. Too short reports
+/// `Connected` for a connection that dies a moment later, and the loss path already handles
+/// exactly that. Too long makes every connect feel slow, and nothing recovers that.
+const SETTLE: Duration = Duration::from_millis(400);
 
 impl SshTransport {
     pub fn new(spawner: Arc<dyn ProcessSpawner>, spec: SpawnSpec) -> Self {
@@ -65,7 +89,28 @@ impl SshTransport {
             spawner,
             spec,
             stderr: Arc::new(Mutex::new(String::new())),
+            exit: Arc::new(Mutex::new(None)),
+            askpass: Mutex::new(None),
+            assisted_available: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Give the transport somewhere to put a passphrase, and say whether the assisted phase
+    /// is usable at all. Both come from the composition root, which is the only place that
+    /// knows the local OpenSSH version and where the helper was installed.
+    pub fn with_askpass(&self, channel: Arc<AskpassChannel>, available: bool) {
+        *self.askpass.lock().expect("askpass lock") = Some(channel);
+        self.assisted_available
+            .store(available, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Why the last connection ended, if it has ended (§3.4).
+    ///
+    /// `None` while a child is running: a connection that has not failed has no condition,
+    /// and inventing one would make every caller check a sentinel.
+    pub fn last_failure(&self) -> Option<FailureCondition> {
+        let code = (*self.exit.lock().expect("exit lock"))?;
+        Some(classify(code, &self.stderr_tail()))
     }
 
     /// FR-005. Refused at startup rather than discovered at the first connection failure.
@@ -88,9 +133,17 @@ impl SshTransport {
     /// backpressure: a blocked writer — the child not draining stdin — must not stop replies
     /// being read, or a full pipe deadlocks both directions at once.
     pub fn connect(&self) -> Result<(), SpawnError> {
-        let _ = self.state_tx.send(ConnectionState::Connecting);
+        self.connect_with(&self.spec)
+    }
 
-        let child = match self.spawner.spawn(&self.spec) {
+    fn connect_with(&self, spec: &SpawnSpec) -> Result<(), SpawnError> {
+        let _ = self.state_tx.send(ConnectionState::Connecting);
+        // A new attempt starts with no memory of the last one's ending, or the first
+        // `last_failure()` after a successful reconnect would report the previous failure.
+        *self.exit.lock().expect("exit lock") = None;
+        self.stderr.lock().expect("stderr lock").clear();
+
+        let child = match self.spawner.spawn(spec) {
             Ok(c) => c,
             Err(e) => {
                 let _ = self.state_tx.send(ConnectionState::Disconnected);
@@ -161,16 +214,25 @@ impl SshTransport {
         // cannot exhaust memory.
         {
             let sink = self.stderr.clone();
+            let exit = self.exit.clone();
             let mut stderr = child.stderr;
+            let wait = child.wait;
             threads.push(std::thread::spawn(move || {
                 let mut text = String::new();
                 let _ = stderr.read_to_string(&mut text);
-                let mut guard = sink.lock().expect("stderr lock");
-                guard.push_str(&text);
-                if guard.len() > MAX_STDERR_BYTES {
-                    let cut = guard.len() - MAX_STDERR_BYTES;
-                    *guard = guard[cut..].to_string();
+                {
+                    let mut guard = sink.lock().expect("stderr lock");
+                    guard.push_str(&text);
+                    if guard.len() > MAX_STDERR_BYTES {
+                        let cut = guard.len() - MAX_STDERR_BYTES;
+                        *guard = guard[cut..].to_string();
+                    }
                 }
+                // Stderr reaching EOF and the child exiting are the same moment, so the
+                // reap happens here rather than in a thread of its own. It also means the
+                // exit code is never published before the stderr that explains it.
+                let code = wait();
+                *exit.lock().expect("exit lock") = code;
             }));
         }
 
@@ -214,6 +276,56 @@ impl SshTransport {
             .stderr(std::process::Stdio::null())
             .status();
         let _ = self.state_tx.send(ConnectionState::Disconnected);
+    }
+}
+
+/// The transport as the connect sequence sees it: one attempt, in one phase, with a
+/// classified ending. Keeping this impl here rather than in the use case is what lets the
+/// sequence be tested without a process at all.
+impl ConnectAttempt for SshTransport {
+    async fn attempt(&self, assisted: bool) -> Result<(), FailureCondition> {
+        let mut spec = self.spec.clone();
+        spec.assisted = assisted;
+
+        if let Err(e) = self.connect_with(&spec) {
+            // The child never started. That is not a classified remote condition — it is a
+            // local one — so it is reported as `Unknown` rather than guessed into a remedy
+            // the user cannot act on.
+            crate::logging::warn(&format!("could not start ssh: {e}"));
+            return Err(FailureCondition::Unknown);
+        }
+
+        // Watch for an early exit. Polling rather than a condition variable because the
+        // waiting is bounded and one allocation-free loop is easier to reason about than a
+        // second synchronisation primitive shared with three threads.
+        let deadline = std::time::Instant::now() + SETTLE;
+        while std::time::Instant::now() < deadline {
+            if let Some(condition) = self.last_failure() {
+                self.shutdown();
+                return Err(condition);
+            }
+            // `tokio::time::sleep`, not the thread's: this runs on the interaction path,
+            // and blocking the runtime for the settle period would freeze the window it is
+            // reporting to.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok(())
+    }
+
+    fn arm(&self, secret: Secret) {
+        match self.askpass.lock().expect("askpass lock").as_ref() {
+            Some(channel) => channel.arm(secret),
+            // Dropping the secret here zeroes it. An assisted attempt with nowhere to send
+            // a passphrase is refused by the spawner, so this path ends in a clean failure
+            // rather than a prompt that hangs.
+            None => crate::logging::warn("a passphrase was offered with no askpass channel"),
+        }
+    }
+
+    fn assisted_available(&self) -> bool {
+        self.assisted_available
+            .load(std::sync::atomic::Ordering::SeqCst)
+            && self.askpass.lock().expect("askpass lock").is_some()
     }
 }
 

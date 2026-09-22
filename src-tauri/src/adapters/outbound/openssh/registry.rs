@@ -75,6 +75,9 @@ impl Registry {
         self.pending.lock().expect("registry lock").len()
     }
 
+    /// Only the tests ask this; `outstanding()` is what production reads. Kept because
+    /// "nothing survived the loss" is the assertion `fail_all` exists for.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

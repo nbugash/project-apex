@@ -116,20 +116,20 @@ confirm each reaches the right outcome with no terminal.
 
 ### Tests for User Story 2
 
-- [ ] T036 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: a credential the agent holds connects with no prompt at all
-- [ ] T037 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: the assisted phase is entered **only** from `AuthenticationFailed` — an unreachable host and a missing engine must never raise a passphrase prompt (FR-006)
-- [ ] T038 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: after an assisted connect, a sentinel passphrase appears in no log, no error and no panic payload (FR-008, SC-001)
-- [ ] T039 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: a cancelled prompt ends the attempt cleanly rather than waiting forever
-- [ ] T040 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: when every automatic route has failed, the identity picker is offered rather than an error the user cannot act on (FR-009, US2 acceptance scenario 3). This is the third of the three credential situations US2's independent test names, and the only one with no coverage
-- [ ] T041 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: no prompt ever reaches a tty during any connect phase — the passphrase is requested through `CredentialPrompt` and nowhere else (FR-007)
+- [X] T036 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: a credential the agent holds connects with no prompt at all
+- [X] T037 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: the assisted phase is entered **only** from `AuthenticationFailed` — an unreachable host and a missing engine must never raise a passphrase prompt (FR-006)
+- [X] T038 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: after an assisted connect, a sentinel passphrase appears in no log, no error and no panic payload (FR-008, SC-001)
+- [X] T039 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: a cancelled prompt ends the attempt cleanly rather than waiting forever
+- [X] T040 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: when every automatic route has failed, the identity picker is offered rather than an error the user cannot act on (FR-009, US2 acceptance scenario 3). This is the third of the three credential situations US2's independent test names, and the only one with no coverage
+- [X] T041 [US2] Integration test in `src-tauri/tests/transport_failures.rs`: no prompt ever reaches a tty during any connect phase — the passphrase is requested through `CredentialPrompt` and nowhere else (FR-007)
 
 ### Implementation for User Story 2
 
-- [ ] T042 [US2] Implement the local IPC channel in `src-tauri/src/adapters/outbound/askpass/ipc.rs` that the helper reaches back through
-- [ ] T043 [US2] Implement the helper in `src-tauri/bin/apex-askpass.rs` — read the prompt, ask the running app, write the answer to stdout, zero the buffer. Deliberately tiny: all judgement stays in the app
-- [ ] T044 [US2] Implement the two-phase connect sequence in `src-tauri/src/application/use_cases/connect.rs`: silent with `BatchMode`, then assisted with `SSH_ASKPASS` as an **absolute** path and `SSH_ASKPASS_REQUIRE=force` (§3.3)
-- [ ] T045 [US2] Implement the identity-picker fallback in `src-tauri/src/application/use_cases/connect.rs` for when every automatic route fails (FR-009)
-- [ ] T046 [US2] Degrade gracefully below OpenSSH 8.4 in `src-tauri/src/application/use_cases/connect.rs`: attempt the silent route, then offer the picker, rather than appearing to hang (§3.3)
+- [X] T042 [US2] Implement the local IPC channel in `src-tauri/src/adapters/outbound/askpass/ipc.rs` that the helper reaches back through
+- [X] T043 [US2] Implement the helper in `src-tauri/bin/apex-askpass.rs` — read the prompt, ask the running app, write the answer to stdout, zero the buffer. Deliberately tiny: all judgement stays in the app
+- [X] T044 [US2] Implement the two-phase connect sequence in `src-tauri/src/application/use_cases/connect.rs`: silent with `BatchMode`, then assisted with `SSH_ASKPASS` as an **absolute** path and `SSH_ASKPASS_REQUIRE=force` (§3.3)
+- [X] T045 [US2] Implement the identity-picker fallback in `src-tauri/src/application/use_cases/connect.rs` for when every automatic route fails (FR-009)
+- [X] T046 [US2] Degrade gracefully below OpenSSH 8.4 in `src-tauri/src/application/use_cases/connect.rs`: attempt the silent route, then offer the picker, rather than appearing to hang (§3.3)
 
 **Checkpoint**: every credential situation reaches an outcome without a terminal.
 

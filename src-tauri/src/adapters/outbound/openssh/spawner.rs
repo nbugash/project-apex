@@ -120,31 +120,51 @@ impl ProcessSpawner for OpenSshSpawner {
         v
     }
 
+    /// The environment §3.1 and §3.3 require. One source of truth with `spawn`, which
+    /// applies exactly this list — a second copy would drift, and the drift would be
+    /// invisible until a user needed a prompt.
+    fn environment(&self, spec: &SpawnSpec) -> Vec<(String, String)> {
+        // §3.4: stable stderr across locales, which is what makes classification
+        // locale-independent rather than merely hopeful.
+        let mut env = vec![("LC_ALL".to_string(), "C".to_string())];
+        if spec.assisted {
+            if let (Some(path), Some(socket)) = (&self.askpass_path, &self.askpass_socket) {
+                env.push(("SSH_ASKPASS".into(), path.clone()));
+                // Without force, OpenSSH consults askpass only when it finds no tty, and
+                // that varies by platform and by DISPLAY.
+                env.push(("SSH_ASKPASS_REQUIRE".into(), "force".into()));
+                env.push(("APEX_ASKPASS_SOCKET".into(), socket.clone()));
+            }
+        }
+        env
+    }
+
     fn spawn(&self, spec: &SpawnSpec) -> Result<SpawnedChild, SpawnError> {
+        if spec.assisted && (self.askpass_path.is_none() || self.askpass_socket.is_none()) {
+            // Refuse rather than spawn a process that will block on a prompt nobody can
+            // answer: without the helper, an assisted attempt is an assisted attempt in
+            // name only.
+            return Err(SpawnError::Io(
+                "an assisted attempt needs an askpass helper and socket".into(),
+            ));
+        }
+        if let Some(path) = &self.askpass_path {
+            if spec.assisted && !std::path::Path::new(path).is_absolute() {
+                // §3.3. OpenSSH execs the helper with an unpredictable working directory,
+                // so a relative path fails exactly when a user needs the prompt.
+                return Err(SpawnError::Io(format!(
+                    "SSH_ASKPASS must be an absolute path, got {path:?}"
+                )));
+            }
+        }
+
         let mut cmd = Command::new("ssh");
         cmd.args(self.invocation(spec))
-            // §3.4: stable stderr across locales, which is what makes classification
-            // locale-independent rather than merely hopeful.
-            .env("LC_ALL", "C")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-
-        if spec.assisted {
-            match (&self.askpass_path, &self.askpass_socket) {
-                (Some(path), Some(socket)) => {
-                    cmd.env("SSH_ASKPASS", path)
-                        // Without force, OpenSSH consults askpass only when it finds no tty,
-                        // and that varies by platform and by DISPLAY.
-                        .env("SSH_ASKPASS_REQUIRE", "force")
-                        .env("APEX_ASKPASS_SOCKET", socket);
-                }
-                _ => {
-                    return Err(SpawnError::Io(
-                        "an assisted attempt needs an askpass helper and socket".into(),
-                    ))
-                }
-            }
+        for (k, v) in self.environment(spec) {
+            cmd.env(k, v);
         }
 
         let mut child = cmd.spawn().map_err(|e| match e.kind() {
@@ -152,10 +172,17 @@ impl ProcessSpawner for OpenSshSpawner {
             _ => SpawnError::Io(e.to_string()),
         })?;
 
+        let stdin = Box::new(child.stdin.take().expect("piped stdin"));
+        let stdout = Box::new(child.stdout.take().expect("piped stdout"));
+        let stderr = Box::new(child.stderr.take().expect("piped stderr"));
+
         Ok(SpawnedChild {
-            stdin: Box::new(child.stdin.take().expect("piped stdin")),
-            stdout: Box::new(child.stdout.take().expect("piped stdout")),
-            stderr: Box::new(child.stderr.take().expect("piped stderr")),
+            stdin,
+            stdout,
+            stderr,
+            // Owning the handle here is what makes the child reapable. A `Child` dropped
+            // without a wait leaves a zombie until the process itself exits.
+            wait: Box::new(move || child.wait().ok().and_then(|s| s.code())),
         })
     }
 
@@ -249,6 +276,55 @@ mod tests {
 
     /// An assisted attempt with nowhere to send the prompt must refuse rather than spawn a
     /// process that will block on a prompt nobody can answer.
+    /// §3.3 makes the absolute path normative. A relative one fails only in the moment a
+    /// user is waiting for a prompt, which is the worst possible time to discover it.
+    #[test]
+    fn a_relative_askpass_path_is_refused_before_anything_is_spawned() {
+        let s = OpenSshSpawner {
+            askpass_path: Some("apex-askpass".into()),
+            askpass_socket: Some("/tmp/apex.sock".into()),
+            ..Default::default()
+        };
+        match s.spawn(&spec(true)) {
+            Err(SpawnError::Io(m)) => assert!(m.contains("absolute"), "{m}"),
+            Err(other) => panic!("expected an Io refusal, got {other:?}"),
+            Ok(_) => panic!("a relative SSH_ASKPASS must be refused"),
+        }
+    }
+
+    /// The two settings §3.3 makes normative, asserted where their absence is visible.
+    /// An integration test cannot catch them: without them OpenSSH simply never prompts,
+    /// which is indistinguishable from an ordinary authentication failure.
+    #[test]
+    fn an_assisted_attempt_forces_the_helper_and_names_it_absolutely() {
+        let s = OpenSshSpawner {
+            askpass_path: Some("/opt/apex/bin/apex-askpass".into()),
+            askpass_socket: Some("/run/apex/askpass.sock".into()),
+            ..Default::default()
+        };
+        let env = s.environment(&spec(true));
+        let get = |k: &str| env.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+
+        assert_eq!(get("SSH_ASKPASS_REQUIRE").as_deref(), Some("force"));
+        let path = get("SSH_ASKPASS").expect("assisted attempts must name a helper");
+        assert!(std::path::Path::new(&path).is_absolute(), "{path}");
+
+        // And the silent phase must set neither, or phase one would prompt.
+        let silent = s.environment(&spec(false));
+        assert!(!silent.iter().any(|(k, _)| k.starts_with("SSH_ASKPASS")));
+    }
+
+    #[test]
+    fn every_invocation_pins_the_c_locale() {
+        for assisted in [false, true] {
+            let env = OpenSshSpawner::default().environment(&spec(assisted));
+            assert!(
+                env.contains(&("LC_ALL".to_string(), "C".to_string())),
+                "without LC_ALL=C, classification reads a language we did not ask for"
+            );
+        }
+    }
+
     #[test]
     fn an_assisted_spawn_without_a_helper_is_refused() {
         match OpenSshSpawner::default().spawn(&spec(true)) {

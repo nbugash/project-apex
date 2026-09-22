@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn interactive_orders_ahead_of_background() {
         assert!(Priority::Interactive > Priority::Background);
-        let mut v = vec![
+        let mut v = [
             Priority::Background,
             Priority::Interactive,
             Priority::Background,
