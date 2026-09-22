@@ -199,7 +199,16 @@ test(
         stderr = e.stderr ?? '';
       }
 
-      assert.equal(exitCode, 1, 'an altered dimension must fail the gate, not error it');
+      // The gate's own output goes into the message. Asserting on a number alone and
+      // discarding the diagnostic turned a CI failure into thirty seconds of silence and
+      // an exit code, which had to be reproduced locally to learn anything.
+      assert.equal(
+        exitCode,
+        1,
+        `an altered dimension must fail the gate (1), not error it (2).\nGate output:\n${
+          stderr.trim() || '(nothing on stderr)'
+        }`,
+      );
       assert.match(stderr, /activity rail/, 'the failure must name the surface');
     });
   },

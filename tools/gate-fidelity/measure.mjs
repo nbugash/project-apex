@@ -20,18 +20,38 @@ export const REFERENCE = { width: 1200, height: 800 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function waitForPreview(timeoutMs = 30_000) {
+class PreviewUnservable extends Error {}
+
+async function waitForPreview(log, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
+  let lastError = 'no response';
   while (Date.now() < deadline) {
     try {
       const res = await fetch('http://127.0.0.1:1420');
       if (res.ok) return;
-    } catch {
-      // not up yet
+      // A response means the server is up. Retrying will not change what it serves, so a
+      // 404 is reported now rather than after thirty seconds of polling something that
+      // was answering the whole time.
+      throw new PreviewUnservable(
+        `the preview server is running on port 1420 but returned HTTP ${res.status}.\n` +
+          '  It has nothing to serve: the built bundle is missing. Run: npm run build',
+      );
+    } catch (e) {
+      if (e instanceof PreviewUnservable) throw e;
+      lastError = e.message;
     }
     await sleep(500);
   }
-  throw new Error('the preview server never became reachable on port 1420');
+  // The server's own output, not just "it never came up". Without this the gate reports a
+  // 30-second silence and the reader has to reproduce the whole job to learn why.
+  const output = log.join('').trim();
+  throw new Error(
+    `the preview server never became reachable on port 1420 (last attempt: ${lastError}).\n` +
+      (output
+        ? `  Its output was:\n${output.replace(/^/gm, '    ')}`
+        : '  It produced no output at all, which usually means it never started. ' +
+          'A built bundle must exist: npm run build'),
+  );
 }
 
 /** Launch the shell, hand it to `fn`, and tear everything down afterwards. */
@@ -45,10 +65,16 @@ export async function withShell(fn) {
 
   // A debug build loads devUrl, so without a server on that port the webview renders blank
   // and the gate would compare two empty windows and pass.
+  // Output is captured rather than discarded, and drained as it arrives so a full pipe
+  // cannot block the server. A silent failure here used to surface only as a timeout.
+  const previewLog = [];
   const preview = spawn('npx', ['vite', 'preview', '--port', '1420', '--strictPort'], {
     cwd: REPO,
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  preview.stdout.on('data', (d) => previewLog.push(d.toString()));
+  preview.stderr.on('data', (d) => previewLog.push(d.toString()));
+  preview.on('error', (e) => previewLog.push(`could not spawn the preview server: ${e.message}\n`));
 
   rmSync(PROFILE, { recursive: true, force: true });
   mkdirSync(PROFILE, { recursive: true });
@@ -61,7 +87,7 @@ export async function withShell(fn) {
   const driver = spawn('tauri-driver', [], { stdio: 'ignore' });
   let browser = null;
   try {
-    await waitForPreview();
+    await waitForPreview(previewLog);
     await sleep(3000); // tauri-driver needs its port before the first session
 
     browser = await remote({
