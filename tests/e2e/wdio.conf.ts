@@ -1,7 +1,14 @@
 // End-to-end harness. Linux only: `tauri-driver` delegates to the platform's WebDriver, and
 // macOS provides none for WKWebView (Appendix A, A-E2E).
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, rmSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  rmSync,
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+} from 'node:fs';
 import { join, dirname } from 'node:path';
 import { assertCaptureIsNotBlank } from './helpers';
 
@@ -48,7 +55,29 @@ async function waitForNothingServing(url: string, timeoutMs = 10_000): Promise<v
  *  A file, not a module-level array: specs run in worker processes and onPrepare and
  *  onComplete run in the launcher, so nothing in memory survives the trip. This is the same
  *  boundary that made an environment variable set in onPrepare invisible to the specs. */
-const BLANK_LOG = join('reports/screenshots', '.blank-captures.log');
+const SHOTS = 'reports/screenshots';
+const BLANK_LOG = join(SHOTS, '.blank-captures.log');
+/** One line per test that started, written by `beforeTest`.
+ *
+ *  A separate witness from the captures themselves, and deliberately on a different hook.
+ *  The count WebdriverIO hands `onComplete` is spec **files** — 21 here, against 65 tests —
+ *  so comparing captures against it would accept a run that photographed a third of them.
+ *  `beforeTest` knows the real number, and it keeps knowing it when the capture path is
+ *  broken, which is the only circumstance this comparison exists for. */
+const STARTED_LOG = join(SHOTS, '.tests-started.log');
+
+/** Every PNG under `reports/screenshots`, one directory deep (`linux/`, `darwin/`). */
+function capturedFiles(): string[] {
+  if (!existsSync(SHOTS)) return [];
+  const found: string[] = [];
+  for (const entry of readdirSync(SHOTS, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    for (const file of readdirSync(join(SHOTS, entry.name))) {
+      if (file.endsWith('.png')) found.push(join(entry.name, file));
+    }
+  }
+  return found;
+}
 
 let driver: ChildProcess | null = null;
 let preview: ChildProcess | null = null;
@@ -81,8 +110,11 @@ export const config: WebdriverIO.Config = {
   },
 
   onPrepare: async () => {
-    // Stale records from a previous run would fail this one.
-    rmSync(BLANK_LOG, { force: true });
+    // The whole directory, not just the log: onComplete counts the captures this run
+    // produced, and files left by a previous one would make that count meaningless — a run
+    // that photographed nothing would inherit yesterday's evidence and pass.
+    rmSync(SHOTS, { recursive: true, force: true });
+    mkdirSync(SHOTS, { recursive: true });
 
     spawnSync('npm', ['run', 'build'], { stdio: 'inherit' });
     spawnSync('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml'], {
@@ -132,6 +164,13 @@ export const config: WebdriverIO.Config = {
     await new Promise((resolve) => setTimeout(resolve, 3000));
   },
 
+  beforeTest: async (test) => {
+    // Recorded before anything can go wrong with the capture, so a missing screenshot is
+    // always visible as a shortfall rather than as a smaller denominator.
+    mkdirSync(dirname(STARTED_LOG), { recursive: true });
+    appendFileSync(STARTED_LOG, `${test.title}\n`);
+  },
+
   onComplete: async () => {
     // Negative pid kills the process group, not just the wrapper.
     killGroup(driver);
@@ -164,6 +203,43 @@ export const config: WebdriverIO.Config = {
         process.exit(1);
       }
     }
+
+    // Then the positive assertion, which is the one the check above cannot make.
+    //
+    // The blank-capture log records only failures, so its absence means either "nothing
+    // was blank" or "nothing was captured" — and those are the same silence. That is the
+    // shape of the defect this whole gate exists for: the job ran its entire history
+    // photographing nothing, and every assertion about the captures was dead code that
+    // reported success. Recording a missing capture tool fixed one route to that silence;
+    // an `afterTest` that never runs at all is another, and no amount of failure logging
+    // can catch it, because the thing that would do the logging is what is missing.
+    //
+    // So: one capture per test that ran. Counting rather than existence, because a
+    // shortfall means some tests were not photographed, and "some" is as untrustworthy as
+    // "none" when the captures are the evidence.
+    const captured = capturedFiles().length;
+    const started = existsSync(STARTED_LOG)
+      ? readFileSync(STARTED_LOG, 'utf8').trim().split('\n').filter(Boolean).length
+      : 0;
+    rmSync(STARTED_LOG, { force: true });
+
+    if (started === 0) {
+      console.error(
+        '\ne2e — no test reported starting, so this run proves nothing. Either the suite ' +
+          'selected no tests or the hooks are not running.\n',
+      );
+      process.exit(1);
+    }
+    if (captured < started) {
+      console.error(
+        `\ne2e — ${started} test(s) ran but only ${captured} screenshot(s) exist in ` +
+          `${SHOTS}.\n\nThe captures are the evidence that a window rendered. A run that ` +
+          `produces fewer than it ran cannot support that claim, whatever the assertions ` +
+          `above reported.\n`,
+      );
+      process.exit(1);
+    }
+    console.log(`e2e — ${captured} screenshot(s) for ${started} test(s).`);
   },
 
   /**
