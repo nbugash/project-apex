@@ -35,6 +35,16 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           webkit2gtk-driver xvfb libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev librsvg2-dev
+          imagemagick x11-utils
+      # imagemagick supplies import, convert, identify and compare; x11-utils supplies
+      # xwininfo. The screenshot capture, the blank-window assertion and the fidelity
+      # gate all shell out to them. They were missing for this job's entire history:
+      # every capture failed, the hook warned and carried on, and the suite reported
+      # success having photographed nothing 65 times.
+      - run: |
+          for tool in import convert identify compare xwininfo; do
+            command -v "$tool" >/dev/null || { echo "missing required tool: $tool"; exit 1; }
+          done
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
       # tauri-driver bridges WebDriver to the platform webview; the suite cannot start

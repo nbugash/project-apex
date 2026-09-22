@@ -157,10 +157,14 @@ export const config: WebdriverIO.Config = {
         ? spawnSync('screencapture', ['-x', '-o', file], { timeout: 10_000 })
         : spawnSync('import', ['-window', 'root', file], { timeout: 10_000 });
 
-    // A failed capture must never fail the test it followed.
+    // A capture tool that is absent or broken is recorded, not warned about. Warning and
+    // returning is what let this job run its entire history with no screenshots at all:
+    // ImageMagick was never installed, every capture failed, and the suite passed having
+    // photographed nothing. The blank-window assertion below was dead code throughout.
     let shot = capture();
     if (shot.error) {
-      console.warn(`screenshot failed for "${test.title}": ${shot.error.message}`);
+      mkdirSync(dirname(BLANK_LOG), { recursive: true });
+      appendFileSync(BLANK_LOG, `${test.title}: could not capture — ${shot.error.message}\n`);
       return;
     }
 
@@ -175,7 +179,7 @@ export const config: WebdriverIO.Config = {
     while (problem && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 150));
       shot = capture();
-      if (shot.error) return;
+      if (shot.error) break;
       problem = assertCaptureIsNotBlank(file);
     }
 

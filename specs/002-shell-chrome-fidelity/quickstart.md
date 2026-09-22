@@ -16,12 +16,17 @@ replacing it. See [`../001-app-shell/quickstart.md`](../001-app-shell/quickstart
 
 Those of the shell, plus:
 
-| Requirement | Notes                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------- |
-| ImageMagick | Already required for end-to-end screenshot capture. `compare` provides the pixel check |
+| Requirement | Notes                                                                      |
+| ----------- | -------------------------------------------------------------------------- |
+| ImageMagick | `import` captures, `identify` inspects, `compare` provides the pixel check |
+| `x11-utils` | `xwininfo` locates the window so the capture can be cropped to it          |
 
-No new prerequisite. The fidelity gate deliberately reuses what the end-to-end harness
-already needs.
+The fidelity gate reuses what the end-to-end harness needs rather than adding a tool of its
+own. That is not the same as needing nothing: this section previously said "no new
+prerequisite", and on the strength of that neither package was ever added to CI. Every
+capture there failed for the job's entire history, the hook warned and carried on, and the
+suite reported success having photographed nothing sixty-five times. The end-to-end job now
+verifies each binary is present before it runs anything.
 
 ---
 

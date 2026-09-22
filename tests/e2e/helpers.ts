@@ -85,7 +85,12 @@ export function assertCaptureIsNotBlank(file: string): string | null {
     encoding: 'utf8',
     timeout: 10_000,
   });
-  if (probe.error || probe.status !== 0) return null; // cannot inspect; not evidence of a defect
+  // A check that cannot run is not a check that passes. This previously returned null —
+  // "cannot inspect, not evidence of a defect" — which meant that on a machine without
+  // ImageMagick the assertion silently disabled itself and every run went green. That is
+  // the same shape as the defect this function exists to catch.
+  if (probe.error) return `cannot inspect ${file}: ${probe.error.message}`;
+  if (probe.status !== 0) return `cannot inspect ${file}: identify exited ${probe.status}`;
 
   const colours = Number.parseInt((probe.stdout || '').trim(), 10);
   if (!Number.isFinite(colours)) return null;
