@@ -16,7 +16,7 @@ describe('tab persistence across restart', () => {
       timeoutMsg: 'documents were never persisted',
     });
 
-    const tabs = await $$('[role="tab"]');
+    const tabs = await $$('.strip [role="tab"]');
     await tabs[1]!.click();
     const focusedBefore = await browser.waitUntil(
       async () => readSession()?.focused_document_id as string,
@@ -29,11 +29,11 @@ describe('tab persistence across restart', () => {
     const after = readSession()!;
     expect((after.documents as any[]).map((d) => d.id)).toEqual(orderBefore);
     expect(after.focused_document_id).toBe(focusedBefore);
-    expect(await $$('[role="tab"]')).toHaveLength(3);
+    expect(await $$('.strip [role="tab"]')).toHaveLength(3);
   });
 
   it('re-packs order contiguously after a close', async () => {
-    const tabs = await $$('[role="tab"]');
+    const tabs = await $$('.strip [role="tab"]');
     await tabs[0]!.$('.close').click();
     await browser.waitUntil(async () => (readSession()?.documents as any[])?.length === 2, {
       timeout: 5000,

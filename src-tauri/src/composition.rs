@@ -12,6 +12,7 @@ use crate::application::ports::session_store::SessionStore;
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
 use crate::application::use_cases::restore_session::RestoreSession;
+use crate::domain::rail::RailCatalogue;
 use crate::window::controller::WindowController;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,6 +33,7 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
 
     let persist = Arc::new(PersistSession::new(store, restored));
 
+    let rail = Arc::new(RailCatalogue::default());
     let stub = Arc::new(StubConnectionStatusSource::new());
     let source: Arc<dyn ConnectionStatusSource> = stub.clone();
     let connection = Arc::new(ObserveConnection::new(source));
@@ -41,6 +43,7 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
         persist,
         connection,
         window,
+        rail: rail.clone(),
         stub: stub.clone(),
     };
     #[cfg(not(debug_assertions))]
@@ -48,6 +51,7 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
         persist,
         connection,
         window,
+        rail,
     };
 
     Wiring { shell, stub }

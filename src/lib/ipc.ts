@@ -3,7 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-export type RegionId = 'navigation' | 'output' | 'document_area';
+export type RegionId = 'output' | 'document_area';
 export type ConnectionState = 'unknown' | 'connecting' | 'connected' | 'disconnected';
 export type LocationType = 'REMOTE' | 'LOCAL';
 
@@ -21,7 +21,6 @@ export interface WindowGeometry {
 }
 
 export interface Layout {
-  navigation: RegionState;
   output: RegionState;
   document_area: RegionState;
 }
@@ -44,6 +43,21 @@ export interface SessionSnapshot {
   layout: Layout;
   documents: OpenDocumentReference[];
   focused_document_id: string | null;
+  tool_window: ToolWindowState;
+}
+
+export interface RailDestination {
+  id: string;
+  label: string;
+  icon: string;
+  available: boolean;
+  order: number;
+}
+
+export interface ToolWindowState {
+  active_destination_id: string | null;
+  collapsed: boolean;
+  width: number;
 }
 
 export const shellReady = (): Promise<void> => invoke('shell_ready');
@@ -70,3 +84,9 @@ export const onWorkspaceChanged = (
   handler: (workspace: WorkspaceReference | null) => void,
 ): Promise<UnlistenFn> =>
   listen<WorkspaceReference | null>('workspace:changed', (e) => handler(e.payload));
+
+export const railSelect = (destinationId: string): Promise<ToolWindowState> =>
+  invoke('rail_select', { destinationId });
+export const toolWindowResize = (width: number): Promise<void> =>
+  invoke('tool_window_resize', { width });
+export const railDestinations = (): Promise<RailDestination[]> => invoke('rail_destinations');

@@ -8,13 +8,20 @@ an intention to do it.
 
 ## Features
 
-- [ ] **F000 app-shell** [P]
+- [X] **F000 app-shell** [P]
   - Spec: specs/001-app-shell
-  - [ ] Tauri v2 scaffold with scoped capabilities and permissions
-  - [ ] Window, dockable panel layout and tab management
-  - [ ] Webview to Rust core async IPC bridge
-  - [ ] Status bar with connection and workspace state
-  - [ ] Theme system and IntelliJ-style chrome
+  - [X] Tauri v2 scaffold with scoped capabilities and permissions
+  - [X] Window, dockable panel layout and tab management
+  - [X] Webview to Rust core async IPC bridge
+  - [X] Status bar with connection and workspace state
+  - [X] Theme system and appearance conformance (chrome is F018)
+- [X] **F018 shell-chrome-fidelity** [P] (depends: F000)
+  - Spec: specs/002-shell-chrome-fidelity
+  - [X] Activity icon rail at the prototype's 44px width, navigating between tool windows
+  - [X] Window chrome header row with its title, controls and metrics
+  - [X] Tool window header and tree row rhythm at the prototype's dimensions
+  - [X] Prototype layout dimensions carried as design tokens rather than literals
+  - [X] Repeatable visual fidelity comparison against the approved prototype
 - [ ] **F001 ssh-transport-core**
   - Spec: not yet specified
   - [ ] OpenSSH subprocess invocation, master connection lifecycle and startup preflight

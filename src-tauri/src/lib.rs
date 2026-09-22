@@ -26,6 +26,9 @@ pub fn run() {
             cmd::documents_reorder,
             cmd::documents_focus,
             cmd::connection_current,
+            cmd::rail_select,
+            cmd::tool_window_resize,
+            cmd::rail_destinations,
             #[cfg(debug_assertions)]
             cmd::stub_set_connection,
         ])

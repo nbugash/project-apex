@@ -2,6 +2,7 @@
 //! See specs/001-app-shell/contracts/shell-commands.md.
 
 use crate::domain::layout::LayoutError;
+use crate::domain::rail::RailError;
 use crate::domain::session::SessionError;
 use serde::Serialize;
 
@@ -20,6 +21,10 @@ pub enum ShellError {
     UnknownDocument,
     #[error("target position is outside the current tab count")]
     OrderOutOfRange,
+    #[error("no rail destination with that identifier")]
+    UnknownDestination,
+    #[error("requested tool window width is below the minimum")]
+    WidthBelowMinimum,
     /// Reported, but never blocks the interaction that triggered it: a failed write should
     /// degrade persistence, not usability (FR-023).
     #[error("session state could not be written")]
@@ -31,6 +36,15 @@ impl From<LayoutError> for ShellError {
         match e {
             LayoutError::ExtentBelowMinimum => Self::ExtentBelowMinimum,
             LayoutError::DocumentAreaNotHideable => Self::DocumentAreaNotHideable,
+        }
+    }
+}
+
+impl From<RailError> for ShellError {
+    fn from(e: RailError) -> Self {
+        match e {
+            RailError::UnknownDestination => Self::UnknownDestination,
+            RailError::WidthBelowMinimum => Self::WidthBelowMinimum,
         }
     }
 }

@@ -4,6 +4,7 @@ use crate::application::error::ShellError;
 use crate::application::ports::session_store::SessionStore;
 use crate::domain::geometry::WindowGeometry;
 use crate::domain::layout::RegionId;
+use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use crate::domain::session::{DocumentId, PersistedSession, SessionSnapshot};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
@@ -78,6 +79,32 @@ impl PersistSession {
         self.mutate(|s| s.focus_document(id).map_err(Into::into))
     }
 
+    pub fn select_destination(
+        &self,
+        id: &DestinationId,
+        catalogue: &RailCatalogue,
+    ) -> Result<ToolWindowState, ShellError> {
+        let mut guard = self.state.lock().expect("session state lock");
+        guard.tool_window.select(id, catalogue)?;
+        let resulting = guard.tool_window.clone();
+        let copy = guard.clone();
+        drop(guard);
+        self.schedule(copy);
+        Ok(resulting)
+    }
+
+    pub fn resize_tool_window(&self, width: u32) -> Result<(), ShellError> {
+        self.mutate(|s| s.tool_window.resize(width).map_err(Into::into))
+    }
+
+    pub fn tool_window(&self) -> ToolWindowState {
+        self.state
+            .lock()
+            .expect("session state lock")
+            .tool_window
+            .clone()
+    }
+
     /// Geometry is observed from native window events, so it cannot fail and is not a
     /// command (see contracts/shell-commands.md, Non-goals).
     pub fn record_geometry(&self, geometry: WindowGeometry) {
@@ -148,9 +175,7 @@ mod tests {
 
         // Roughly a second of dragging at 60fps.
         for i in 0..60 {
-            persist
-                .set_region(RegionId::Navigation, true, 200 + i)
-                .unwrap();
+            persist.set_region(RegionId::Output, true, 200 + i).unwrap();
         }
         std::thread::sleep(DEBOUNCE * 3);
 
@@ -166,7 +191,7 @@ mod tests {
     fn mutations_return_without_waiting_on_the_store() {
         let persist = PersistSession::new(Arc::new(FailingStore), PersistedSession::default());
         // A store that always fails must not make the interaction fail (FR-023).
-        assert!(persist.set_region(RegionId::Navigation, true, 300).is_ok());
+        assert!(persist.set_region(RegionId::Output, true, 300).is_ok());
     }
 
     #[test]
@@ -174,11 +199,9 @@ mod tests {
         let store = Arc::new(CountingStore::default());
         let persist = PersistSession::new(store.clone(), PersistedSession::default());
         for extent in [200, 300, 400, 500] {
-            persist
-                .set_region(RegionId::Navigation, true, extent)
-                .unwrap();
+            persist.set_region(RegionId::Output, true, extent).unwrap();
         }
         std::thread::sleep(DEBOUNCE * 3);
-        assert_eq!(persist.snapshot().layout.navigation.extent, 500);
+        assert_eq!(persist.snapshot().layout.output.extent, 500);
     }
 }

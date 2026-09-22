@@ -32,6 +32,11 @@ tools/gate-fidelity/reference/difference.png
 # a diff is useless. The machine's check is the fidelity comparison below.
 reports/screenshots/
 
+# The fidelity gate's working output: the capture it judged, the difference image it wrote
+# and the numbers behind the verdict. All regenerated on every run. The approved baseline
+# lives in tools/gate-fidelity/reference/ and IS tracked — it is the thing under review.
+reports/fidelity/
+
 # Conversion intermediates. assets/fonts/ holds the faces actually embedded, and
 # tools/build-fonts.sh regenerates them from the woff2 the prototype vendors.
 mockups/fonts/ttf/
@@ -80,3 +85,5 @@ src-tauri/gen/
 # output, and tracking both would create two copies that can disagree.
 src/lib/ds/
 .e2e-profile/
+# The fidelity gate's isolated profile; removed on a clean run, left behind by an aborted one.
+.gate-profile/

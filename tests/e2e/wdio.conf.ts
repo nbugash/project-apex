@@ -1,8 +1,9 @@
 // End-to-end harness. Linux only: `tauri-driver` delegates to the platform's WebDriver, and
 // macOS provides none for WKWebView (Appendix A, A-E2E).
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, rmSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { assertCaptureIsNotBlank } from './helpers';
 
 /** Fixed, repo-local profile. Not a temp dir: WDIO workers are separate processes, so an
  *  environment variable set in onPrepare never reaches the specs. A known path both sides
@@ -10,6 +11,45 @@ import { join } from 'node:path';
 export const E2E_PROFILE = join(process.cwd(), '.e2e-profile');
 
 const BINARY = join(process.cwd(), 'src-tauri/target/debug/apex-shell');
+/** Kill a child and everything it spawned. Requires the child to be detached. */
+function killGroup(child: ChildProcess | null): void {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/** Wait until nothing answers on the preview URL, so the next step starts clean.
+ *
+ *  An HTTP check, not a socket bind on 127.0.0.1. Binding an IPv4 address to test
+ *  availability reports "free" while a server listens on ::1, which is the address-family
+ *  mismatch that had the fidelity gate waiting out its timeout against a live server. */
+async function waitForNothingServing(url: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(1000) });
+    } catch {
+      return; // nothing answered
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  console.warn(`something was still serving ${url} after teardown`);
+}
+
+/** Where a worker records a blank capture for the launcher to find.
+ *
+ *  A file, not a module-level array: specs run in worker processes and onPrepare and
+ *  onComplete run in the launcher, so nothing in memory survives the trip. This is the same
+ *  boundary that made an environment variable set in onPrepare invisible to the specs. */
+const BLANK_LOG = join('reports/screenshots', '.blank-captures.log');
+
 let driver: ChildProcess | null = null;
 let preview: ChildProcess | null = null;
 
@@ -41,10 +81,29 @@ export const config: WebdriverIO.Config = {
   },
 
   onPrepare: async () => {
+    // Stale records from a previous run would fail this one.
+    rmSync(BLANK_LOG, { force: true });
+
     spawnSync('npm', ['run', 'build'], { stdio: 'inherit' });
     spawnSync('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml'], {
       stdio: 'inherit',
     });
+
+    // Launch time here is dominated by something that is not the application. On a machine
+    // with no desktop session, GTK asks the session bus to activate
+    // org.freedesktop.portal.Desktop during window creation, and waits out a ~22 second
+    // activation timeout for a service that will never arrive. Measured: 22s to the first
+    // log line with the bus reachable, 1s with it pointed at nothing.
+    //
+    // Pointing the variable at a non-bus is the honest description of this environment
+    // rather than a trick: there is no session bus, and saying so up front costs a failed
+    // connect instead of a timeout. It does not mask a delay real users see — on a desktop
+    // the portal answers immediately — and the application requests no portal services.
+    //
+    // This is what the runtime task asked for. Sharing one launch across specs was the
+    // other option and was not taken: it would trade per-spec isolation, which this suite
+    // depends on, for a saving this already delivers.
+    process.env.DBUS_SESSION_BUS_ADDRESS = '/dev/null';
 
     // Must exist and be exported before the driver starts: the app inherits its
     // environment from the driver process.
@@ -58,24 +117,52 @@ export const config: WebdriverIO.Config = {
     // stdio must not be an unread pipe. A full pipe blocks the writer, and a blocked
     // driver makes every WebDriver command hang until the test times out — which reads as
     // 33 unrelated failures rather than one stalled process.
+    // detached so the whole process group can be killed. `npx` spawns vite as a child,
+    // and killing the npx wrapper alone orphans vite still listening on 1420 — which then
+    // blocks the fidelity gate's own server in the next CI step, where it surfaced as
+    // "Port 1420 is already in use" followed by thirty seconds of refused connections.
     preview = spawn('npx', ['vite', 'preview', '--port', '1420', '--strictPort'], {
       stdio: 'ignore',
+      detached: true,
     });
 
     // One driver for the whole run. Spawning per session races on the port: every spec
     // after the first fails to bind and the run stalls.
-    driver = spawn('tauri-driver', [], { stdio: 'ignore' });
+    driver = spawn('tauri-driver', [], { stdio: 'ignore', detached: true });
     await new Promise((resolve) => setTimeout(resolve, 3000));
   },
 
-  onComplete: () => {
-    driver?.kill();
-    preview?.kill();
+  onComplete: async () => {
+    // Negative pid kills the process group, not just the wrapper.
+    killGroup(driver);
+    killGroup(preview);
     driver = null;
     preview = null;
+    // And confirm the port actually came back, so the next step does not inherit it.
+    await waitForNothingServing('http://localhost:1420');
     // KEEP_E2E_PROFILE leaves the profile and its log in place for diagnosis.
     if (!process.env.KEEP_E2E_PROFILE) {
       rmSync(E2E_PROFILE, { recursive: true, force: true });
+    }
+
+    // After teardown, so a blank-window failure never leaks a driver or a profile.
+    //
+    // `process.exit` rather than a thrown error or `process.exitCode`, because neither
+    // gates: WebdriverIO logs an error thrown from a hook and carries on, and the launcher
+    // overwrites the exit code with one computed from the test results. Both were tried,
+    // and both produced a red message above a green run — the precise failure this check
+    // exists to prevent, reproduced in the check itself.
+    if (existsSync(BLANK_LOG)) {
+      const blanks = readFileSync(BLANK_LOG, 'utf8').trim().split('\n').filter(Boolean);
+      rmSync(BLANK_LOG, { force: true });
+      if (blanks.length > 0) {
+        console.error(
+          `\ne2e — ${blanks.length} screenshot(s) showed no rendered window:\n` +
+            blanks.map((b) => `  ${b}`).join('\n') +
+            '\n\nThe suite passes against a hidden window; a user cannot use one.\n',
+        );
+        process.exit(1);
+      }
     }
   },
 
@@ -105,13 +192,44 @@ export const config: WebdriverIO.Config = {
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `${stub}-${timestamp}.png`);
 
-    // A failed capture must never fail the test it followed.
-    const shot =
+    const capture = () =>
       os === 'darwin'
         ? spawnSync('screencapture', ['-x', '-o', file], { timeout: 10_000 })
         : spawnSync('import', ['-window', 'root', file], { timeout: 10_000 });
+
+    // A capture tool that is absent or broken is recorded, not warned about. Warning and
+    // returning is what let this job run its entire history with no screenshots at all:
+    // ImageMagick was never installed, every capture failed, and the suite passed having
+    // photographed nothing. The blank-window assertion below was dead code throughout.
+    let shot = capture();
     if (shot.error) {
-      console.warn(`screenshot failed for "${test.title}": ${shot.error.message}`);
+      mkdirSync(dirname(BLANK_LOG), { recursive: true });
+      appendFileSync(BLANK_LOG, `${test.title}: could not capture — ${shot.error.message}\n`);
+      return;
+    }
+
+    // Retry while the capture is blank. A window that has just been shown is mapped before
+    // it is painted, so a capture taken immediately after a relaunch can be empty even
+    // though nothing is wrong. Waiting for the paint is the difference between an assertion
+    // that means something and one that cries wolf on every restart — seventeen of
+    // sixty-five captures on the first run after the launch time dropped.
+    const PAINT_DEADLINE_MS = 3000;
+    const deadline = Date.now() + PAINT_DEADLINE_MS;
+    let problem = assertCaptureIsNotBlank(file);
+    while (problem && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      shot = capture();
+      if (shot.error) break;
+      problem = assertCaptureIsNotBlank(file);
+    }
+
+    // Collected rather than thrown: WebdriverIO logs an error thrown from this hook and
+    // carries on, so throwing here would produce a red line in the output and a green run —
+    // a check that reports without gating. onComplete fails the process.
+    if (problem) {
+      mkdirSync(dirname(BLANK_LOG), { recursive: true });
+      appendFileSync(BLANK_LOG, `${test.title}: ${problem}\n`);
     }
   },
+
 };

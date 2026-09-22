@@ -7,6 +7,7 @@ use crate::application::error::ShellError;
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
 use crate::domain::layout::RegionId;
+use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use crate::domain::session::{DocumentId, SessionSnapshot};
 use crate::window::controller::WindowController;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ pub struct Shell {
     pub persist: Arc<PersistSession>,
     pub connection: Arc<ObserveConnection>,
     pub window: Arc<WindowController>,
+    pub rail: Arc<RailCatalogue>,
     /// Debug builds only: lets the end-to-end suite drive connection transitions. Absent
     /// from release builds, so it cannot become a production surface by accident.
     #[cfg(debug_assertions)]
@@ -25,7 +27,6 @@ pub struct Shell {
 /// Region identifiers arrive as strings from the bridge and are not trusted to be valid.
 fn parse_region(raw: &str) -> Result<RegionId, ShellError> {
     match raw {
-        "navigation" => Ok(RegionId::Navigation),
         "output" => Ok(RegionId::Output),
         "document_area" => Ok(RegionId::DocumentArea),
         _ => Err(ShellError::InvalidRegion),
@@ -100,6 +101,51 @@ pub fn stub_set_connection(state: String, shell: State<'_, Shell>) -> Result<(),
     Ok(())
 }
 
+/// Destination identifiers arrive as strings and are matched against the catalogue rather
+/// than trusted — the same rule as region identifiers above.
+#[tauri::command]
+pub fn rail_select(
+    destination_id: String,
+    shell: State<'_, Shell>,
+) -> Result<ToolWindowState, ShellError> {
+    shell
+        .persist
+        .select_destination(&DestinationId(destination_id), &shell.rail)
+}
+
+#[tauri::command]
+pub fn tool_window_resize(width: u32, shell: State<'_, Shell>) -> Result<(), ShellError> {
+    shell.persist.resize_tool_window(width)
+}
+
+#[tauri::command]
+pub fn rail_destinations(shell: State<'_, Shell>) -> Vec<RailDestinationView> {
+    shell
+        .rail
+        .all()
+        .iter()
+        .map(|d| RailDestinationView {
+            id: d.id.0.clone(),
+            label: d.label.to_string(),
+            icon: d.icon.to_string(),
+            available: d.is_selectable(),
+            order: d.order,
+        })
+        .collect()
+}
+
+/// The bridge shape for a destination. Separate from the domain type because `&'static str`
+/// labels do not cross a serialisation boundary, and the interface has no use for the
+/// availability enum's spelling.
+#[derive(serde::Serialize)]
+pub struct RailDestinationView {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+    pub available: bool,
+    pub order: u32,
+}
+
 #[tauri::command]
 pub fn connection_current(shell: State<'_, Shell>) -> crate::domain::connection::ConnectionState {
     shell.connection.current()
@@ -117,8 +163,20 @@ mod tests {
     }
 
     #[test]
+    fn unknown_destination_identifiers_are_rejected_at_the_boundary() {
+        let catalogue = RailCatalogue::default();
+        let mut state = ToolWindowState::default();
+        assert!(state
+            .select(&DestinationId::new("../../etc"), &catalogue)
+            .is_err());
+        assert!(state.select(&DestinationId::new(""), &catalogue).is_err());
+    }
+
+    #[test]
     fn known_region_identifiers_parse() {
-        assert_eq!(parse_region("navigation"), Ok(RegionId::Navigation));
+        // "navigation" is no longer a region: F018 replaced it with the tool window,
+        // which carries its own state rather than being a generic resizable slot.
+        assert_eq!(parse_region("navigation"), Err(ShellError::InvalidRegion));
         assert_eq!(parse_region("output"), Ok(RegionId::Output));
         assert_eq!(parse_region("document_area"), Ok(RegionId::DocumentArea));
     }
