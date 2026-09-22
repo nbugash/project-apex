@@ -178,7 +178,7 @@ credential store, not a cache of our own, and is in scope only where §3.7 puts 
 
 **Decision**: The transport observes exactly **one** thing — the child process ending, which
 arrives as EOF on its stdout. OpenSSH's keepalive (`ServerAliveInterval=15`,
-`ServerAliveCountMax=3`) is not a second detector; it is what *bounds the time* to that one
+`ServerAliveCountMax=3`) is not a second detector; it is what _bounds the time_ to that one
 observation when a network dies silently, because exceeding it makes `ssh` itself exit.
 
 So this feature has two obligations, and they are tested differently:
@@ -194,7 +194,7 @@ momentarily. After the keepalive gives up, `ssh` exits and EOF follows; there is
 detector for the transport to implement, and it has no socket to implement one on.
 
 The distinction is not academic. The earlier wording produced a test that drove the mock to
-stop answering *without* closing the pipe and expected loss to be reported — which, with no
+stop answering _without_ closing the pipe and expected loss to be reported — which, with no
 OpenSSH in the test path, would have waited forever. It described a mechanism this feature
 does not own and cannot exercise.
 
