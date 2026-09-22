@@ -1,6 +1,16 @@
 name: CI
 
-on: [push, pull_request]
+# Manual only. Every push with an open pull request previously fired both `push` and
+# `pull_request`, running all four jobs twice for identical results — and smoke-macos runs
+# on a macOS runner, which private repositories are billed for at ten times the rate of a
+# Linux one. Roughly thirty-two billed minutes per run, doubled, for no extra information.
+#
+# The cost of this choice is that nothing gates a merge automatically. The checks are the
+# ones in each feature's quickstart; run them locally, and dispatch this when you want the
+# same suite on a clean machine:
+#
+#   gh workflow run ci.yml --ref <branch>
+on: workflow_dispatch
 
 jobs:
   core:

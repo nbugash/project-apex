@@ -66,8 +66,8 @@ npm install && npm run ds:sync
 npm run tauri dev          # development
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run test:unit
-npm run lint:ds            # required in CI
-npm run perf:budget        # required in CI
+npm run lint:ds            # run before pushing
+npm run perf:budget        # run before pushing
 xvfb-run -a npm run e2e    # Linux only; see Appendix A, A-E2E
 ```
 
