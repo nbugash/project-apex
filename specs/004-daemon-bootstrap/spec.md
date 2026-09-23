@@ -11,6 +11,10 @@ verification on first connect, `auth/handshake` with capability exchange, protoc
 negotiation and mismatch policy, in-place binary replacement and re-execution, and recovery of
 session state after restart.
 
+**Terminology**: the feature map calls this feature `daemon-bootstrap`; §4.8 calls the remote
+process `ide-engine`; this document says **engine** throughout. They are the same thing. The
+engine is the daemon, and no distinction is intended anywhere.
+
 ## On the source of values
 
 Every normative value in this specification comes from the system specification or from a
@@ -393,7 +397,10 @@ is worse than none, because it stops anyone asking the question again.
 - **SC-001**: A developer connects to a host that has never run the engine and reaches a usable
   session with zero manual steps — no terminal, no copied file, no installed package.
 - **SC-002**: First connect to a host with no engine present completes within 30 seconds on a
-  10 Mbit/s link, excluding any time spent waking the instance.
+  10 Mbit/s link, excluding any time spent waking the instance. Verified against a **simulated**
+  link of that rate, in the same way F001 simulates latency and loss — a criterion measured only
+  against whatever link the developer happens to have is not a gate, and an ungated criterion
+  that reads like a gate is exactly the pattern this project keeps catching.
 - **SC-003**: A second connect to a host already running the current engine establishes a session
   without transferring the artifact again.
 - **SC-004**: An artifact that fails verification is executed zero times. Not "rarely" — the

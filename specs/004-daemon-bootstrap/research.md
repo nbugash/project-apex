@@ -70,6 +70,36 @@ master, not through it.
 
 ---
 
+## How the client gets an engine binary to embed
+
+**Decision**: The engine is built **before** the client, by the script layer that already
+orchestrates builds, into a conventional path. `src-tauri/build.rs` reads that path — overridable
+with `APEX_ENGINE_BIN` — embeds the bytes and computes the digest. If the artifact is absent,
+the build fails with a message naming the step that was skipped.
+
+**Rationale**: Cargo has no stable way to depend on another crate's *binary* artifact. Artifact
+dependencies (`bindeps`) are nightly-only, and MSRV here is 1.75 stable. The obvious workaround —
+having `build.rs` shell out to `cargo build -p engine` — invokes Cargo recursively while the
+outer invocation holds the package lock, which deadlocks or races depending on version and
+platform. It is the kind of thing that works on one machine and hangs in CI.
+
+Ordering the two builds outside Cargo sidesteps the problem entirely, and this project already
+has a place to do it: `npm run build` and the Tauri build already sequence steps today, so the
+engine build is one more step rather than a new mechanism. No `xtask` crate, no build tool, no
+nightly.
+
+Failing loudly on a missing artifact matters more than it sounds. The alternative — embedding an
+empty slice and discovering it at deployment — produces a client that ships, connects, deploys
+zero bytes and fails verification against a host that did nothing wrong.
+
+**Alternatives considered**: *Artifact dependencies* — exactly the right feature, and nightly.
+*Recursive `cargo build` from the build script* — the lock problem above. *An `xtask` crate* —
+the idiomatic Cargo answer to build orchestration, and a whole crate to introduce when a script
+step already exists. *Check the binary into the repository* — a multi-megabyte artifact in git
+that must be rebuilt by hand on every engine change.
+
+---
+
 ## Which digest, and where it is computed
 
 **Decision**: SHA-256. The client computes the digest of the artifact it ships at build time; the

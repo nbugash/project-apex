@@ -33,7 +33,12 @@ interface layer is unchanged Svelte 5 and TypeScript 5.x, touched only for deplo
 
 **Primary Dependencies**: Existing — `tokio`, `serde`, `serde_json`, `thiserror`. New — a
 cryptographic digest for artifact verification (selected in research.md). No SSH library: A-B1
-stands, and deployment uses the system `ssh` and `sftp` clients over F001's control master.
+stands, and deployment uses the system `ssh` client over F001's control master.
+
+**Build ordering**: The engine is built before the client, sequenced by the existing script layer
+rather than by Cargo. Cargo cannot depend on another crate's binary artifact on stable, and a
+build script that invokes Cargo recursively races the outer invocation's lock. See research.md,
+"How the client gets an engine binary to embed".
 
 **Storage**: None new on the client. The engine holds session state in memory only, which is
 what makes a session not survive an engine crash — a deliberate limit recorded in the spec's
@@ -59,6 +64,14 @@ on the remote host. Nothing partially transferred may ever be executable (FR-006
 engine stays intact until the replacement completes a handshake (FR-021b). Every behaviour
 verifiable with no remote host, no network and no real engine beyond a locally spawned one
 (FR-026, SC-010).
+
+**Screenshot convention**: End-to-end screenshots are written to
+`reports/screenshots/${OS}/${FEATURE}/`, where `FEATURE` is the **feature map identity** — `F002`
+here — and not the spec directory number. The two diverge (F001's directory is
+`003-ssh-transport-core`), and the map identity is the one the map guarantees never to renumber
+or reuse. The segment is derived from the git branch, so a run on a feature branch files its own
+screenshots with nothing to tag. This is a project convention rather than a requirement of this
+feature, recorded here so the tasks that implement it trace to something.
 
 **Scale/Scope**: One engine per host, one session per engine, one client attached at a time.
 Deployment is measured in tens of megabytes; sessions in single digits.

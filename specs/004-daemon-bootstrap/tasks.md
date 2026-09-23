@@ -56,8 +56,10 @@ convention and the gate still bites.
 - [ ] T010 [P] Implement `DeploymentState` and `DeploymentFailure` in `src-tauri/src/domain/artifact.rs` with the six named failure causes
 - [ ] T011 [P] Define the `ArtifactDeployer` port in `src-tauri/src/application/ports/deployer.rs` with `deploy`, `retire_previous` and `observe`, matching the signatures in [design.md](./design.md)
 - [ ] T012 [P] Define the `HandshakePeer` port in `src-tauri/src/application/ports/handshake.rs`
-- [ ] T013 Extend `src-tauri/build.rs` to embed the host-native engine binary and compute its SHA-256 at build time, so the constant and the bytes cannot disagree
+- [ ] T076 Sequence the engine build before the client build in the existing script layer (`package.json` and the CI workflow), producing the engine at a conventional path. Cargo cannot depend on another crate's binary artifact on stable, and a build script that invokes Cargo recursively races the outer invocation's lock — see research.md, "How the client gets an engine binary to embed"
+- [ ] T013 Extend `src-tauri/build.rs` to read the engine artifact from that path (overridable with `APEX_ENGINE_BIN`), embed its bytes and compute its SHA-256 at build time, so the constant and the bytes cannot disagree. A **missing** artifact must fail the build naming the skipped step — embedding an empty slice produces a client that ships, deploys zero bytes and fails verification against a host that did nothing wrong
 - [ ] T014 Add `session/onRestart` to the Session group in §4.8 of `project-apex-predator.md`, with its params and its notification kind. **This is a system specification edit, not a note in a plan** — Principle II makes §4.8 the source of truth for method signatures, and a method described only in `design.md` would make this feature a second source
+- [ ] T077 [P] Add an `assert_no_network()` helper to `src-tauri/tests/common/mod.rs` that walks this process's own descriptors against the kernel's TCP tables, and prove it works by opening a loopback socket and confirming the helper sees it. F001's equivalent lives in one test binary and checks only that process — each integration test file is a separate binary, so `bootstrap_*.rs` are entirely unchecked without this (FR-026, SC-010)
 - [ ] T015 [P] Implement `ScriptedDeployer` in `src-tauri/tests/common/mod.rs` — chosen failures, recorded calls, no bytes moved. This is the seam that makes every deployment failure path testable without a host
 
 **Checkpoint**: Both crates compile, ports exist, the protocol is shared, and §4.8 describes the
@@ -82,6 +84,9 @@ and the deployed artifact matches what the client shipped.
 - [ ] T020 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: progress is published at least once per second while transferring, carrying bytes and total. Assert on the **number and spacing** of reports, not their existence — one report at the start satisfies "progress was reported" and still looks exactly like a hang (SC-013)
 - [ ] T021 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: interleaved concurrent deployments yield one valid engine or a reported failure, never a mixed artifact, across a sustained run rather than a single pair that may happen to serialise (SC-012)
 - [ ] T022 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: each of the six `DeploymentFailure` causes is reported as itself and not collapsed into a generic failure
+
+- [ ] T078 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a deployment over a **simulated 10 Mbit/s link** completes within 30 seconds, and the measured value is printed rather than only compared (SC-002, A-NFR). Every other success criterion has a gate; a budget verified only against whatever link the developer happens to have is not one
+- [ ] T079 [P] [US1] Call `assert_no_network()` from `src-tauri/tests/bootstrap_deploy.rs` (SC-010)
 
 ### Implementation for User Story 1
 
@@ -111,7 +116,10 @@ offered functionality follows, with no request for an unadvertised capability re
 - [ ] T031 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: the handshake is the first request on a session, and nothing precedes it (FR-010)
 - [ ] T032 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a request for a capability the engine did not advertise produces **no frame on the wire**. Assert on what was written, not on the error the caller received — a request that was sent and rejected also produces an error (SC-008)
 - [ ] T033 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a handshake that is never answered fails distinguishably from a transport failure (FR-014)
-- [ ] T034 [P] [US2] Test in `engine/src/handshake.rs`: unknown capability tokens are ignored rather than rejected, on both sides — the property that lets a method be added without a version bump
+- [ ] T034 [P] [US2] Create `engine/src/handshake.rs` with its test module and a test that unknown capability tokens are ignored rather than rejected, on both sides — the property that lets a method be added without a version bump. This task creates the file; T036 fills in the responder, because a Rust unit test lives in the file it tests and cannot precede it
+
+- [ ] T080 [P] [US2] Test in `engine/src/handshake.rs`: a well-framed but malformed handshake payload is rejected without panicking and without the engine acting on any part of it. Constitution Principle VI is a MUST and makes inbound input untrusted at the receiving end; the codec tests inherited from `protocol` cover framing, not payloads, so nothing currently exercises this
+- [ ] T081 [P] [US2] Call `assert_no_network()` from `src-tauri/tests/bootstrap_handshake.rs` (SC-010)
 
 ### Implementation for User Story 2
 
@@ -194,6 +202,9 @@ notification, unchanged identity, and that unpreserved state is reported.
 - [ ] T062 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: presenting an identity the engine has forgotten yields a stated refusal and a new session — never a silent new session presented as a resumption (FR-024c)
 - [ ] T063 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: A-REQ still holds — an in-flight request dies with its connection even though the session outlives it. The two rules are easy to conflate and the distinction is the point
 
+- [ ] T082 [P] [US5] Unit tests in `engine/src/session.rs`: mint yields distinct identities, resume of an unknown identity returns false, and identity is stable across re-execution. These are engine-side invariants currently covered only through the client's integration tests, which cannot fail for an engine-internal reason
+- [ ] T083 [P] [US5] Call `assert_no_network()` from `src-tauri/tests/bootstrap_restart.rs` (SC-010)
+
 ### Implementation for User Story 5
 
 - [ ] T064 [US5] Implement `SessionRegistry` in `engine/src/session.rs`: mint, resume, and the in-memory lifetime that makes a crash fatal to a session by design
@@ -209,6 +220,7 @@ notification, unchanged identity, and that unpreserved state is reported.
 ## Phase 8: Polish & Cross-Cutting Concerns
 
 - [ ] T069 Add the opt-in real-`sshd` deployment test in `src-tauri/tests/bootstrap_real_sshd.rs`, skipped with a clear reason when unavailable. This is the only place the transfer, the remote `sha256sum` and the atomic promotion run against a real remote filesystem
+- [ ] T084 Assert in `src-tauri/tests/bootstrap_real_sshd.rs` that nothing in the deployment path requires elevated privilege: every path written is owned by the connecting account, and no `sudo`, `su` or setuid invocation appears in what the deployer runs (FR-005). This is the only suite with a real filesystem and a real account, so it is the only place the property is observable
 - [ ] T070 [P] Document the engine and bootstrap in `docs/engine.md` — deployment, the handshake, the version rule, and what a session outlives
 - [ ] T071 [P] Add `reports/screenshots/README.md` recording the `${OS}/${FEATURE}/` convention and why `FEATURE` is the map identity rather than the spec directory number
 - [ ] T072 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md), including the SC-002 and SC-013 measurements as numbers rather than verdicts, per A-NFR
@@ -259,6 +271,9 @@ maintainable, and US5 makes it trustworthy across restarts.
 
 ## Notes
 
+- Tasks **T076–T084** were added by the analysis pass and are placed in the phase they belong to,
+  so ids are unique but not in numeric order within a phase. Renumbering would have broken the
+  cross-references below
 - `[P]` marks different files with no incomplete dependency
 - Verify each test fails before implementing against it
 - Commit at each checkpoint
