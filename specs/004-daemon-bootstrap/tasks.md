@@ -116,15 +116,15 @@ offered functionality follows, with no request for an unadvertised capability re
 - [ ] T031 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: the handshake is the first request on a session, and nothing precedes it (FR-010)
 - [ ] T032 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a request for a capability the engine did not advertise produces **no frame on the wire**. Assert on what was written, not on the error the caller received — a request that was sent and rejected also produces an error (SC-008)
 - [ ] T033 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a handshake that is never answered fails distinguishably from a transport failure (FR-014)
-- [ ] T034 [P] [US2] Create `engine/src/handshake.rs` with its test module and a test that unknown capability tokens are ignored rather than rejected, on both sides — the property that lets a method be added without a version bump. This task creates the file; T036 fills in the responder, because a Rust unit test lives in the file it tests and cannot precede it
+- [X] T034 [P] [US2] Create `engine/src/handshake.rs` with its test module and a test that unknown capability tokens are ignored rather than rejected, on both sides — the property that lets a method be added without a version bump. This task creates the file; T036 fills in the responder, because a Rust unit test lives in the file it tests and cannot precede it
 
-- [ ] T080 [P] [US2] Test in `engine/src/handshake.rs`: a well-framed but malformed handshake payload is rejected without panicking and without the engine acting on any part of it. Constitution Principle VI is a MUST and makes inbound input untrusted at the receiving end; the codec tests inherited from `protocol` cover framing, not payloads, so nothing currently exercises this
+- [X] T080 [P] [US2] Test in `engine/src/handshake.rs`: a well-framed but malformed handshake payload is rejected without panicking and without the engine acting on any part of it. Constitution Principle VI is a MUST and makes inbound input untrusted at the receiving end; the codec tests inherited from `protocol` cover framing, not payloads, so nothing currently exercises this
 - [ ] T081 [P] [US2] Call `assert_no_network()` from `src-tauri/tests/bootstrap_handshake.rs` (SC-010)
 
 ### Implementation for User Story 2
 
-- [ ] T035 [US2] Implement the stdio frame loop in `engine/src/main.rs`, reusing `protocol::framing` and treating every inbound frame as untrusted per Principle VI
-- [ ] T036 [US2] Implement the `auth/handshake` responder in `engine/src/handshake.rs`, advertising the capability set this engine actually serves
+- [X] T035 [US2] Implement the stdio frame loop in `engine/src/main.rs`, reusing `protocol::framing` and treating every inbound frame as untrusted per Principle VI
+- [X] T036 [US2] Implement the `auth/handshake` responder in `engine/src/handshake.rs`, advertising the capability set this engine actually serves
 - [ ] T037 [US2] Implement `TransportHandshake` in `src-tauri/src/adapters/outbound/deploy/mod.rs` over F001's `RequestTransport`
 - [ ] T038 [US2] Record the engine's capabilities for the session's life in `src-tauri/src/application/use_cases/bootstrap.rs`
 - [X] T039 [US2] Implement the local refusal for unadvertised capabilities in `src-tauri/src/application/use_cases/bootstrap.rs`, so the request never reaches the transport
@@ -207,9 +207,9 @@ notification, unchanged identity, and that unpreserved state is reported.
 
 ### Implementation for User Story 5
 
-- [ ] T064 [US5] Implement `SessionRegistry` in `engine/src/session.rs`: mint, resume, and the in-memory lifetime that makes a crash fatal to a session by design
-- [ ] T065 [US5] Implement resumption in `engine/src/handshake.rs`, setting `resumed` truthfully so the client can tell a new session from a re-attached one
-- [ ] T066 [US5] Implement `session/onRestart` emission in `engine/src/main.rs` after re-execution
+- [X] T064 [US5] Implement `SessionRegistry` in `engine/src/session.rs`: mint, resume, and the in-memory lifetime that makes a crash fatal to a session by design
+- [X] T065 [US5] Implement resumption in `engine/src/handshake.rs`, setting `resumed` truthfully so the client can tell a new session from a re-attached one
+- [X] T066 [US5] Implement `session/onRestart` emission in `engine/src/main.rs` after re-execution
 - [ ] T067 [US5] Implement restart handling in `src-tauri/src/application/use_cases/bootstrap.rs`, surfacing `unpreserved` rather than absorbing it
 - [ ] T068 [US5] Implement the refused-resumption path in `src-tauri/src/application/use_cases/bootstrap.rs`
 
