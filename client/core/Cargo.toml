@@ -57,5 +57,7 @@ async-trait = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# test-util gives the paused clock: a test that really waits two seconds for the confirmation
+# limit is a test nobody runs on every commit, and the limit is the thing under test.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "test-util"] }
 

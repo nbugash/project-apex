@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod cached_workspace;
 pub mod connect;
 pub mod exchange;
 pub mod observe_connection;
