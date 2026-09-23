@@ -58,6 +58,11 @@ impl FakeFileSystem {
         self
     }
 
+    /// Delete a node, so a root can vanish underneath a registration (FR-038).
+    pub fn remove(&self, path: &str) {
+        self.nodes.lock().unwrap().remove(path);
+    }
+
     /// Make every subsequent call fail. For the paths that must survive an unusable disk.
     pub fn fail(&self, kind: io::ErrorKind) {
         *self.fail_with.lock().unwrap() = Some(kind);

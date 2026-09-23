@@ -78,6 +78,39 @@ pub fn dispatch(
             Some(frame) => Action::Restart(frame),
             None => Action::Nothing,
         },
+        // ---- Workspace (§4.8). Registration first: every other method needs it. ----
+        "workspace/register" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::RegisterParams>(params) {
+                Ok(req) => match roots.register(&req.workspace_id.0, &req.path) {
+                    Ok(root) => {
+                        let canonical = root.as_path().to_string_lossy().to_string();
+                        let name = root
+                            .as_path()
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| canonical.clone());
+                        let result = apex_protocol::wire::RegisterResult {
+                            name,
+                            canonical_path: canonical,
+                        };
+                        reply_or_nothing(encode_result(codec, &id, &result))
+                    }
+                    Err(e) => {
+                        let (code, message) =
+                            crate::application::use_cases::workspace::RequestRefusal::Root(e)
+                                .wire();
+                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
         "session/shutdown" => {
             if let Some(frame) = encode_result(codec, &id, &serde_json::Value::Null) {
                 let mut out = std::io::stdout();
