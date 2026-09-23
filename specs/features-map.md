@@ -31,7 +31,7 @@ an intention to do it.
   - [X] Failure classification from exit codes and locale-pinned stderr
   - [X] Mock SSH daemon harness simulating 250ms RTT and 5% packet loss
 - [ ] **F002 daemon-bootstrap** (depends: F001)
-  - Spec: not yet specified
+  - Spec: specs/004-daemon-bootstrap
   - [ ] Engine binary deployment and integrity verification on first connect
   - [ ] auth/handshake request and response with capability exchange
   - [ ] Protocol version negotiation and mismatch policy
