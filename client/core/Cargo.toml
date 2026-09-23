@@ -56,6 +56,8 @@ sha2 = "0.10"
 async-trait = "0.1"
 
 [dev-dependencies]
+# The maintenance tests build a v0 database by hand to exercise a failing step.
+rusqlite = { version = "0.32", features = ["bundled"] }
 tempfile = "3"
 # test-util gives the paused clock: a test that really waits two seconds for the confirmation
 # limit is a test nobody runs on every commit, and the limit is the thing under test.
