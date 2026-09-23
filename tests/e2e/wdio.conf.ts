@@ -17,7 +17,11 @@ import { assertCaptureIsNotBlank } from './helpers';
  *  can compute is simpler than plumbing the value through. */
 export const E2E_PROFILE = join(process.cwd(), '.e2e-profile');
 
-const BINARY = join(process.cwd(), 'src-tauri/target/debug/apex-shell');
+// The workspace root owns the target directory: F002 made this three crates, and Cargo puts
+// every member's artifacts under the root. The old member path still exists on machines that
+// built before the split, holding a stale binary — which is why this was green locally and
+// red in CI, where a clean checkout has no leftover to fall back on.
+const BINARY = join(process.cwd(), 'target/debug/apex-shell');
 /** Kill a child and everything it spawned. Requires the child to be detached. */
 function killGroup(child: ChildProcess | null): void {
   if (!child?.pid) return;
