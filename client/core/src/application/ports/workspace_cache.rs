@@ -39,7 +39,9 @@ pub enum StoreOutcome {
     Stored,
     /// Above A-CACHECAP's 8 MiB limit. Distinguishable from a failure: nothing went wrong, and
     /// the file is simply never available offline.
-    NotEligible { size: u64 },
+    NotEligible {
+        size: u64,
+    },
     Failed(CacheError),
 }
 
@@ -87,7 +89,12 @@ pub trait WorkspaceCache: Send + Sync {
     /// survives. It cannot recognise a rename: a re-listing shows one name gone and another
     /// present with nothing linking them, and the vanished entry's content cascades away (C9,
     /// FR-022a). The file is re-cached on next open and stays listed throughout (FR-022b).
-    fn put_listing(&self, ws: &WorkspaceId, parent: &RelPath, entries: &[FsEntry]) -> CacheResult<()>;
+    fn put_listing(
+        &self,
+        ws: &WorkspaceId,
+        parent: &RelPath,
+        entries: &[FsEntry],
+    ) -> CacheResult<()>;
 
     // ---- content ----
     fn lookup(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<Option<CacheEntry>>;
@@ -107,7 +114,12 @@ pub trait WorkspaceCache: Send + Sync {
 
     // ---- search ----
     /// `files_fts`, never a leading-wildcard `LIKE` (§5.2, §5.4). Never consults a provider (C6).
-    fn search_paths(&self, ws: &WorkspaceId, fragment: &str, limit: u32) -> CacheResult<Vec<RelPath>>;
+    fn search_paths(
+        &self,
+        ws: &WorkspaceId,
+        fragment: &str,
+        limit: u32,
+    ) -> CacheResult<Vec<RelPath>>;
 
     // ---- maintenance ----
     /// Remove content only. Never removes a `files` row (C4, FR-027, §5.5).

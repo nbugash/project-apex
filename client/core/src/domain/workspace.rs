@@ -54,7 +54,9 @@ impl Sha256 {
     /// a comparison would simply never match, turning a corrupt row into a permanent cache miss
     /// that looks like a slow network.
     pub fn parse(s: &str) -> Option<Self> {
-        let ok = s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        let ok = s.len() == 64
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
         ok.then(|| Self(s.to_string()))
     }
 
@@ -128,7 +130,11 @@ impl RelPath {
             return None;
         }
         let cut = self.0.rfind('/').unwrap_or(0);
-        Some(Self(if cut == 0 { "/".into() } else { self.0[..cut].to_string() }))
+        Some(Self(if cut == 0 {
+            "/".into()
+        } else {
+            self.0[..cut].to_string()
+        }))
     }
 
     /// The final component, or `""` at the root.
@@ -186,7 +192,9 @@ impl FsEntry {
     /// receives without re-sorting.
     pub fn listing_order(a: &Self, b: &Self) -> std::cmp::Ordering {
         let dir = |e: &Self| matches!(e.kind, EntryKind::Directory);
-        dir(b).cmp(&dir(a)).then_with(|| a.name.as_bytes().cmp(b.name.as_bytes()))
+        dir(b)
+            .cmp(&dir(a))
+            .then_with(|| a.name.as_bytes().cmp(b.name.as_bytes()))
     }
 }
 
@@ -229,7 +237,10 @@ pub struct PageRequest {
 
 impl Default for PageRequest {
     fn default() -> Self {
-        Self { cursor: None, limit: apex_protocol::wire::MAX_DIRECTORY_PAGE }
+        Self {
+            cursor: None,
+            limit: apex_protocol::wire::MAX_DIRECTORY_PAGE,
+        }
     }
 }
 
@@ -272,7 +283,11 @@ mod tests {
         ] {
             let p = RelPath::parse(raw).expect("valid");
             assert_eq!(p.as_str(), want, "{raw:?}");
-            assert_eq!(RelPath::parse(p.as_str()).unwrap(), p, "not idempotent: {raw:?}");
+            assert_eq!(
+                RelPath::parse(p.as_str()).unwrap(),
+                p,
+                "not idempotent: {raw:?}"
+            );
         }
     }
 
@@ -282,7 +297,10 @@ mod tests {
         assert_eq!(p.name(), "user.go");
         assert_eq!(p.parent().unwrap().as_str(), "/src/controllers");
         assert_eq!(RelPath::root().parent(), None);
-        assert_eq!(RelPath::parse("/top").unwrap().parent().unwrap(), RelPath::root());
+        assert_eq!(
+            RelPath::parse("/top").unwrap().parent().unwrap(),
+            RelPath::root()
+        );
     }
 
     #[test]
@@ -308,8 +326,13 @@ mod tests {
 
     #[test]
     fn listing_order_puts_directories_first_then_bytewise_by_name() {
-        let e = |n: &str, k| FsEntry { name: n.into(), kind: k, size: 0, modified: 0 };
-        let mut v = vec![
+        let e = |n: &str, k| FsEntry {
+            name: n.into(),
+            kind: k,
+            size: 0,
+            modified: 0,
+        };
+        let mut v = [
             e("b.rs", EntryKind::File),
             e("Z", EntryKind::Directory),
             e("a.rs", EntryKind::File),

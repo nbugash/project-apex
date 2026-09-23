@@ -4,8 +4,8 @@
 //! master rather than being chunked through the control pipe, which §4.6 forbids: one pipe is one
 //! queue, and a large response serialises ahead of every interactive request behind it.
 
-use async_trait::async_trait;
 use crate::domain::workspace::ByteRange;
+use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BulkError {

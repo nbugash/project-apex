@@ -80,16 +80,16 @@ this phase owns the mechanism.
 
 ### Engine — path safety first (fail-first, Principle VII)
 
-- [ ] T019 Write the path containment tests in `engine/tests/path_containment.rs` **before** the implementation, against a real temp-directory tree: `../../etc/passwd` refused; a symlink inside the workspace pointing outside it refused; an escape to a target that exists and one that does not producing the **same** error (FR-007); an unchecked path from a client still refused (FR-008). Confirm they fail
-- [ ] T020 Implement `ResolvedPath` and `PathRefusal` in `engine/src/domain/path.rs` with the two-stage check from research.md: lexical rejection before the filesystem is consulted, then `canonicalize` and a descendant assertion. **`ResolvedPath` has no public constructor other than `resolve`**, so a use case cannot name a path it has not checked. T019 must now pass
-- [ ] T021 [P] Define the engine's `FileSystem` port in `engine/src/application/ports/file_system.rs` — synchronous, with `canonicalize`, `read_dir`, `metadata`, `read_range` — and the `WorkspaceRoots` port in `engine/src/application/ports/roots.rs`
-- [ ] T022 [P] Implement `StdFileSystem` in `engine/src/adapters/outbound/std_fs.rs` over `std::fs`, and an in-memory `FakeFileSystem` in `engine/tests/common/mod.rs` so use cases are testable without a real tree
+- [X] T019 Write the path containment tests in `engine/tests/path_containment.rs` **before** the implementation, against a real temp-directory tree: `../../etc/passwd` refused; a symlink inside the workspace pointing outside it refused; an escape to a target that exists and one that does not producing the **same** error (FR-007); an unchecked path from a client still refused (FR-008). Confirm they fail
+- [X] T020 Implement `ResolvedPath` and `PathRefusal` in `engine/src/domain/path.rs` with the two-stage check from research.md: lexical rejection before the filesystem is consulted, then `canonicalize` and a descendant assertion. **`ResolvedPath` has no public constructor other than `resolve`**, so a use case cannot name a path it has not checked. T019 must now pass
+- [X] T021 [P] Define the engine's `FileSystem` port in `engine/src/application/ports/file_system.rs` — synchronous, with `canonicalize`, `read_dir`, `metadata`, `read_range` — and the `WorkspaceRoots` port in `engine/src/application/ports/roots.rs`
+- [X] T022 [P] Implement `StdFileSystem` in `engine/src/adapters/outbound/std_fs.rs` over `std::fs`, and an in-memory `FakeFileSystem` in `engine/tests/common/mod.rs` so use cases are testable without a real tree
 
 ### Engine — hexagonal restructure
 
-- [ ] T023 Move the method dispatch out of `engine/src/main.rs` into `engine/src/adapters/inbound/rpc.rs`, carrying F002's `auth/handshake`, `session/restart` and `session/shutdown` across **unchanged**, including the `-32000` drain-before-exec behaviour. F002's engine tests must pass without edits — if any needs changing, the move was not behaviour-preserving
-- [ ] T024 Reduce `engine/src/main.rs` to a composition root and the stdio loop: construct `StdFileSystem`, the roots registry and the use cases, and hand them to the dispatch adapter. No business rule remains in `main.rs` (Principle VIII)
-- [ ] T025 Implement the in-memory `WorkspaceRoots` registry in `engine/src/application/use_cases/workspace.rs`, canonicalising each root once at registration, and the `Register` use case with the idempotence and refusal rules from [contracts/workspace-methods.md](./contracts/workspace-methods.md)
+- [X] T023 Move the method dispatch out of `engine/src/main.rs` into `engine/src/adapters/inbound/rpc.rs`, carrying F002's `auth/handshake`, `session/restart` and `session/shutdown` across **unchanged**, including the `-32000` drain-before-exec behaviour. F002's engine tests must pass without edits — if any needs changing, the move was not behaviour-preserving
+- [X] T024 Reduce `engine/src/main.rs` to a composition root and the stdio loop: construct `StdFileSystem`, the roots registry and the use cases, and hand them to the dispatch adapter. No business rule remains in `main.rs` (Principle VIII)
+- [X] T025 Implement the in-memory `WorkspaceRoots` registry in `engine/src/application/use_cases/workspace.rs`, canonicalising each root once at registration, and the `Register` use case with the idempotence and refusal rules from [contracts/workspace-methods.md](./contracts/workspace-methods.md)
 - [ ] T026 Wire `workspace/register` into `engine/src/adapters/inbound/rpc.rs`, returning `-32001` for every workspace method called against an unregistered id, and `-32009` when the id is registered but its root no longer resolves
 
 ### The projection

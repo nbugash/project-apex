@@ -96,7 +96,10 @@ pub enum MaintenancePhase {
 impl MaintenancePhase {
     /// Whether the interface shows this phase. `Idle`, `Checking` and `Ready` are not rendered.
     pub fn is_rendered(&self) -> bool {
-        matches!(self, Self::Migrating { .. } | Self::Rebuilding | Self::Evicting)
+        matches!(
+            self,
+            Self::Migrating { .. } | Self::Rebuilding | Self::Evicting
+        )
     }
 }
 

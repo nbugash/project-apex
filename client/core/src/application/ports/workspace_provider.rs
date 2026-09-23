@@ -9,7 +9,9 @@
 //! trait must be `dyn`-compatible, which native AFIT is not. F001's `RequestTransport` uses the
 //! native form correctly: it is selected once at composition and never varies at a call site.
 
-use crate::domain::workspace::{ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId};
+use crate::domain::workspace::{
+    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId,
+};
 use async_trait::async_trait;
 
 /// Which feature owns a method this build does not implement.
@@ -112,30 +114,54 @@ pub trait WorkspaceProvider: Send + Sync {
         _content: &[u8],
         _base: &Sha256,
     ) -> ProviderResult<Sha256> {
-        Err(ProviderError::Unsupported { owner: Owner::F006Editor })
+        Err(ProviderError::Unsupported {
+            owner: Owner::F006Editor,
+        })
     }
 
     async fn create_file(&self, _ws: &WorkspaceId, _path: &RelPath) -> ProviderResult<Sha256> {
-        Err(ProviderError::Unsupported { owner: Owner::F006Editor })
+        Err(ProviderError::Unsupported {
+            owner: Owner::F006Editor,
+        })
     }
 
     async fn create_directory(&self, _ws: &WorkspaceId, _path: &RelPath) -> ProviderResult<()> {
-        Err(ProviderError::Unsupported { owner: Owner::F006Editor })
+        Err(ProviderError::Unsupported {
+            owner: Owner::F006Editor,
+        })
     }
 
-    async fn rename(&self, _ws: &WorkspaceId, _from: &RelPath, _to: &RelPath) -> ProviderResult<()> {
-        Err(ProviderError::Unsupported { owner: Owner::F006Editor })
+    async fn rename(
+        &self,
+        _ws: &WorkspaceId,
+        _from: &RelPath,
+        _to: &RelPath,
+    ) -> ProviderResult<()> {
+        Err(ProviderError::Unsupported {
+            owner: Owner::F006Editor,
+        })
     }
 
-    async fn delete(&self, _ws: &WorkspaceId, _path: &RelPath, _recursive: bool) -> ProviderResult<()> {
-        Err(ProviderError::Unsupported { owner: Owner::F006Editor })
+    async fn delete(
+        &self,
+        _ws: &WorkspaceId,
+        _path: &RelPath,
+        _recursive: bool,
+    ) -> ProviderResult<()> {
+        Err(ProviderError::Unsupported {
+            owner: Owner::F006Editor,
+        })
     }
 
     async fn search(&self, _ws: &WorkspaceId, _query: &str) -> ProviderResult<Vec<RelPath>> {
-        Err(ProviderError::Unsupported { owner: Owner::F013Search })
+        Err(ProviderError::Unsupported {
+            owner: Owner::F013Search,
+        })
     }
 
     async fn watch(&self, _ws: &WorkspaceId, _path: &RelPath) -> ProviderResult<()> {
-        Err(ProviderError::Unsupported { owner: Owner::F004FileWatch })
+        Err(ProviderError::Unsupported {
+            owner: Owner::F004FileWatch,
+        })
     }
 }
