@@ -50,6 +50,7 @@ versioning rule, adding optional parameters and result fields does **not** incre
 |---|---|
 | `-32002` | Path escapes the workspace root, lexically or after symlink resolution |
 | `-32001` | Unknown or unregistered `workspaceId` (§4.4) |
+| `-32009` | The `workspaceId` is registered but its root no longer exists — **the workspace is gone**, not the path |
 | `-32003` | Path is inside the root and does not exist (§4.4) |
 | `-32602` | `limit` is not a positive integer, or `cursor` is not a string |
 
@@ -86,6 +87,13 @@ which is exactly the signal a client needs to know it must redeploy.
 4. **In-memory only.** The registry dies with the engine. A client reconnecting to a restarted
    engine re-registers, and `session/onRestart`'s `unpreserved` list is how it learns it must
    (F002, §4.8).
+5. **A registered root that stops existing is reported as `-32009`, never `-32001`.** The two
+   demand opposite responses from the client — re-register versus tell the developer and stop
+   presenting the projection — and `-32001`'s documented response would send a deleted workspace
+   into a re-registration that fails on guarantee 3 above, reporting a registration problem for a
+   deletion. **This adds `-32009` to §4.4**, which is a fourth amendment this feature owes the
+   system specification. Adding an error code does not increment `protocolVersion`: an older engine
+   simply never sends it.
 
 `workspace/unregister` is deliberately **not** added. Deletion removes the remote directory and the
 local cache (A-WORKSPACE) and is F00-series lifecycle work; dropping a registration without
@@ -149,6 +157,7 @@ needs confirming.
 |---|---|
 | `-32002` | Path escapes the root |
 | `-32001` | Unknown or unregistered `workspaceId` |
+| `-32009` | Registered, but the root no longer exists |
 | `-32602` | `length` exceeds 512 KiB, or the file exceeds it and no range was given |
 | `-32007` | Frame cap — should be unreachable given the 512 KiB refusal; retained as defence |
 | `-32003` | Path inside the root does not exist |

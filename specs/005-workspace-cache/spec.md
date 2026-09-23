@@ -350,8 +350,10 @@ come from the projection with no request attempted.
   hashing every entry, which costs more than the refetch it would save. The requirement that makes
   FR-022 pay — a rename the client itself performed — arrives with the write path in F006, which is
   the first feature with a caller for the operation FR-022 requires.
-- **FR-022b**: Losing cached content to a rename MUST NOT lose the file. The tree entry MUST remain
-  listed and navigable, exactly as after an eviction.
+- **FR-022b**: Losing cached content to a rename MUST NOT lose the file. This is the same guarantee
+  FR-027 makes for eviction, under a different trigger: content can go, the tree entry stays listed
+  and navigable. Stated in both places because the two causes are found in different code, and an
+  implementation can satisfy one while breaking the other.
 
 **Size**
 
@@ -383,7 +385,7 @@ come from the projection with no request attempted.
   its duration. This is an accepted limit rather than an oversight: the alternative triggers all
   reclaim while somebody is working.
 - **FR-027**: Eviction MUST remove content only. The tree MUST remain navigable and the file
-  MUST remain listed.
+  MUST remain listed. FR-022b requires the same of the other way content is lost.
 - **FR-028**: Every cache hit MUST record that access, so retention measures use rather than age.
 - **FR-029**: Evicted content MUST be re-fetchable without the developer being told anything
   unusual happened.

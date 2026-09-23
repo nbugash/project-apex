@@ -543,10 +543,86 @@ closing with `openat2`.
 
 ---
 
+## What happens to cached content when a rename is only observed
+
+**Decision.** A rename the projection is *told about* moves the file's row and keeps its content.
+A rename *discovered* by re-listing a folder drops the content and refetches on next open. The
+entry stays listed either way.
+
+**Rationale.** A-B5 made `file_id` opaque specifically so a rename would not orphan a blob, and it
+is easy to read that as "renames are handled". It handles the case where something passes an
+identity — `WorkspaceCache::rename`. A re-listing passes no identity at all: it returns a set of
+names, one of which has gone and one of which is new, and nothing in that payload says they are the
+same file.
+
+Recovering the link would mean hashing every entry in the folder and matching by content. That is
+proportional to the folder, not to the one file that moved, and it runs on the path §1.4 budgets at
+250 ms — to save refetching a single file that is, by the eligibility cap, at most 8 MiB. The trade
+is plainly bad, and it is worth writing down because the opposite conclusion looks obvious from
+A-B5 alone.
+
+The consequence is bounded by what a cache is: the content is refetched, nothing is lost, and the
+file never disappears from the tree (FR-022b, the same guarantee FR-027 makes for eviction).
+
+**Alternatives considered.**
+
+*Hash every entry on re-listing and match by content.* Above. Also wrong in a second way: two files
+with identical content — empty files, repeated licence headers — would match each other.
+
+*Ask the engine what moved.* That is a file-watch event, which is F004's subject. F003 has no
+mechanism to learn it and should not grow one.
+
+*Keep the orphaned blob and garbage-collect it later.* Keeps the content available if the file comes
+back under its old name, and costs a reachability sweep the retention window already performs more
+simply.
+
+**Reversal conditions.** A directory listing that carries a stable per-entry identity — the same
+condition recorded under the pagination cursor, which would also make the cursor survive renames.
+F004's watcher arriving is the other: once rename *events* exist, the link is given rather than
+inferred, and `WorkspaceCache::rename` gains a second caller.
+
+---
+
+## Reporting a workspace whose root has been deleted
+
+**Decision.** A new application error code, `-32009` "Workspace root no longer exists", distinct
+from `-32001` "Workspace not found or not registered".
+
+**Rationale.** The two failures demand **opposite** responses. `-32001` means the engine has never
+been told about this workspace, and the client's answer is to register it — which is also how a
+client recovers after an engine restart, since the registry is in memory. `-32009` means the
+workspace was registered and the thing it pointed at is gone, and the client's answer is to tell the
+developer and stop presenting the projection as a live view.
+
+Overloading `-32001` produces a concrete misbehaviour rather than mere imprecision: a read against a
+deleted workspace returns `-32001`, the client re-registers, registration refuses the path because it
+is no longer a directory, and the developer is shown a registration error for a deletion. FR-038
+exists precisely so that a deleted workspace is legible, and routing it through the code that means
+"re-register" defeats it.
+
+**Alternatives considered.**
+
+*Reuse `-32001` with a discriminator in the `data` object.* §4.4 already specifies `data` for errors
+a user can act on, so this needs no new code. Rejected because the discriminator is something a
+caller can forget to read, and the failure mode of forgetting is the re-registration loop above. A
+code cannot be ignored by a client that dispatches on codes.
+
+*Return `-32003` (not found).* Conflates the workspace with a path inside it, which is the exact
+distinction FR-038 requires.
+
+*Detect it client-side by stat-ing the root.* Adds a round trip to every operation to discover a
+condition the engine already knows while answering.
+
+**Reversal conditions.** A protocol revision that replaces numeric codes with structured error
+types, which would make the discriminator approach safe.
+
+---
+
 ## Summary of amendments this plan owes the system specification
 
 | Amendment | Where | Why it is owed |
 |---|---|---|
+| **`-32009` is added** to the application error table, distinct from `-32001` | §4.4 | Found by the second analysis pass. The two demand opposite client responses, and overloading `-32001` sends a deleted workspace into a re-registration loop. No `protocolVersion` bump — an older engine never sends it. |
 | **`workspace/register` is added** — the catalogue defines no way to tell the engine what a `workspaceId` means, yet §15.4 step 3 and §4.4's `-32001` both presume it | §4.8 | Found during Phase 1 reconciliation. Without it, every other workspace method is unusable. No `protocolVersion` bump — adding a method is exempt. |
 | `workspace/readDirectory` gains `cursor?`, `limit?`, `nextCursor?`, with the entry ordering stated as contractual | §4.8 | FR-024. No `protocolVersion` bump — §4.8's own rule exempts optional additions. |
 | `files_fts` gains three external-content synchronisation triggers | §5.2 | Without them the table stays empty and offline path search silently returns nothing. |

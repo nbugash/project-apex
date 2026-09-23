@@ -135,7 +135,9 @@ pub trait WorkspaceProvider: Send + Sync {
     //   precondition:  path is workspace-relative and lexically contained
     //   postcondition: <= page.limit entries, ordered (dir DESC, name ASC);
     //                  next_cursor is Some iff more entries follow
-    //   raises:        NotFound | Refused | UnknownWorkspace | Offline | Transport
+    //   raises:        NotFound | Refused | UnknownWorkspace | WorkspaceGone | Offline | Transport
+    //                  UnknownWorkspace and WorkspaceGone are distinct: the first means
+    //                  re-register, the second means tell the developer and stop projecting.
 
     async fn stat(&self, ws: &WorkspaceId, path: &RelPath) -> Result<FsMeta, ProviderError>;
     //   postcondition: sha256 is Some for a file, None for a directory
@@ -144,7 +146,7 @@ pub trait WorkspaceProvider: Send + Sync {
         -> Result<FileChunk, ProviderError>;
     //   postcondition: chunk.sha256 is the WHOLE file's hash, never the range's;
     //                  bytes.len() <= range.length; a range past EOF yields zero bytes
-    //   raises:        NotFound | Refused | Offline | TooLarge | Transport
+    //   raises:        NotFound | Refused | WorkspaceGone | Offline | TooLarge | Transport
 
     async fn write_file(&self, ws: &WorkspaceId, path: &RelPath, content: &[u8],
                         base: &Sha256) -> Result<Sha256, ProviderError>;
@@ -387,7 +389,7 @@ data-model.md and is not repeated here.
 | Path escapes via a symlink | Refuse after canonicalisation | `-32002`, **identical** to the lexical case and to a non-existent target (FR-007) |
 | Path inside the root, absent | Ordinary not-found | `-32003` → `ProviderError::NotFound` |
 | Unknown `workspaceId` | Refuse | `-32001` → `UnknownWorkspace`; the client re-registers, which is also the engine-restart path |
-| Registered root no longer exists on the engine | Report the **workspace** as gone, distinctly from a missing path inside it | `-32001` → `WorkspaceGone`; the projection stops being presented as a live view (FR-038, SC-015) |
+| Registered root no longer exists on the engine | Report the **workspace** as gone | `-32009` → `WorkspaceGone`. **Not `-32001`**: that means re-register, and re-registering a deleted root fails on `workspace/register`'s not-a-directory refusal, surfacing a registration error for a deletion. The projection stops being presented as a live view (FR-038, SC-015) |
 | A cached file's name vanishes from a re-listing | Its content is dropped; the entry is removed from that listing and re-cached on next open | Nothing — a refetch, not an error. The file remains listed (FR-022a, FR-022b) |
 | `length` above the bulk threshold | Refuse with invalid-params rather than truncate | `-32602`; the client routes to `BulkTransfer` instead |
 | Confirmation exceeds 2 s | End the wait, serve cached bytes | `Presentation::Unverified` in the interface (FR-021c, SC-004b) |

@@ -91,7 +91,7 @@ in research.md; larger ones are read but not cached.
 | Principle | Status | Notes |
 |---|---|---|
 | **I. Design Fidelity** | Applies | Two new surfaces: a verification indicator (FR-021b) and a maintenance state (FR-018a). Both are built from design system tokens and pass the adherence lint. Neither introduces a new visual language — the status bar already has a state vocabulary from F001 and F002, and these extend `presentation.ts` rather than inventing a parallel one. |
-| **II. One Source of Truth** | **Applies — three amendments owed** | Every normative value here is quoted from §1.4, §4.1, §4.6, §4.7, §4.8, §5.1-5.6, §6.1-6.2, §10.1 or a recorded decision. **Three** things this feature needs are *absent* from the source of truth rather than contradicted by it. `workspace/readDirectory` has no pagination (FR-024 says so explicitly). §5.2's external-content FTS5 table declares no synchronisation triggers, so as written it returns nothing, silently, forever. And **there is no method by which the engine ever learns what a `workspaceId` means** — §15.4 step 3 says to register a workspace and §4.4 reserves `-32001` for one that is not registered, but §4.8 defines no `workspace/register`, which makes every other workspace method unusable. All three MUST land in `project-apex-predator.md` before the code that depends on them. Recorded as implementation obligations so `/speckit-tasks` carries them. |
+| **II. One Source of Truth** | **Applies — four amendments owed** | Every normative value here is quoted from §1.4, §4.1, §4.6, §4.7, §4.8, §5.1-5.6, §6.1-6.2, §10.1 or a recorded decision. **Three** things this feature needs are *absent* from the source of truth rather than contradicted by it. `workspace/readDirectory` has no pagination (FR-024 says so explicitly). §5.2's external-content FTS5 table declares no synchronisation triggers, so as written it returns nothing, silently, forever. And **there is no method by which the engine ever learns what a `workspaceId` means** — §15.4 step 3 says to register a workspace and §4.4 reserves `-32001` for one that is not registered, but §4.8 defines no `workspace/register`, which makes every other workspace method unusable. A **fourth** was found by the second analysis pass: §4.4 has no code for a workspace whose root has been deleted, and the nearest existing code, `-32001`, means "not registered", whose client response is to re-register — which would surface a registration error for a deletion. All four MUST land in `project-apex-predator.md` before the code that depends on them. Recorded as implementation obligations so `/speckit-tasks` carries them. |
 | **III. Decisions Recorded** | Pass | Phase 0 records eleven decisions before any implementation. Three bind later features and are marked for promotion to Appendix A: the bulk-read threshold, the cache eligibility cap and the confirmation limit. |
 | **IV. Open Items Block** | **Pass** | Verified mechanically, not by eye: `awk '/^# Appendix A/{exit} /\[OPEN: [A-Z][A-Za-z0-9-]*\]/{print NR": "$0}' project-apex-predator.md` returns nothing. All fifteen open items were resolved on 2026-09-23. A plain `grep -n 'OPEN: '` returns nineteen matches, every one of them in Appendix A's own resolution notes, which is why the gate is anchored. |
 | **V. Interaction Budget Verified** | **Applies, centrally** | This feature owns two of the six rows in §1.4's table. SC-004c measures both at p99 with the value printed (A-NFR). Rule 2 of §1.5 and rule 2 of §4.6 — no bulk payload on the control channel — is the reason the bulk threshold exists at all rather than being a size heuristic. |
@@ -99,7 +99,7 @@ in research.md; larger ones are read but not cached.
 | **VII. Every Feature Ships With Tests** | Applies | All three levels have surface. Unit: containment, validity, cursors, retention. Integration: the schema against a real file, the engine against a real tree. End to end: every acceptance scenario in the spec. No level is omitted, so no justification is owed. |
 | **VIII. Ports and Adapters** | **Applies to both binaries** | Client ports introduced: `WorkspaceCache`, `BulkTransfer`, `Clock`. Client port consumed: `RequestTransport` (F001), `ConnectionStatusSource` (F001). The `WorkspaceProvider` of §6.1 is both — an outbound port with a remote adapter, and the interface the application's caching layer implements. Engine ports introduced: `FileSystem`, `WorkspaceRoots`. Engine adapters: `StdFileSystem`, and the JSON-RPC dispatch becomes an inbound adapter rather than a `match` in `main`. |
 
-**Gate result: PASS with three recorded obligations.** None is a violation to justify — all three are
+**Gate result: PASS with four recorded obligations.** None is a violation to justify — all four are
 gaps in the system specification that this plan closes by amending it, which is what Principle II
 prescribes. Complexity Tracking below is empty.
 
@@ -136,7 +136,12 @@ one `CREATE TABLE` while creating it later costs a migration, a migration test a
 schema version for every installation in existence. Recorded under "What the first schema version
 contains".
 
-No new violations. The third amendment obligation was found by the Phase 1 reconciliation pass and is recorded above rather than in the pre-check, because the pre-check could not have seen it. Gate still **PASS**.
+No new violations. The third amendment obligation was found by the Phase 1 reconciliation pass and
+the fourth by the second `/speckit-analyze` pass; both are recorded above rather than in the
+pre-check, because the pre-check could not have seen either. Two gaps of this kind surfacing after
+the gate is itself worth noting: the pre-check reads the specification for contradictions, and every
+one of these four was an **absence** instead — which a reading does not catch and an attempt to
+design against does. Gate still **PASS**.
 
 ## Project Structure
 

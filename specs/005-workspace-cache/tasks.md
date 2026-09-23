@@ -33,7 +33,7 @@ Cargo workspace with three crates plus a webview layer, per plan.md's Structure 
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-**Purpose**: Close the three gaps in the system specification, promote the three decisions that
+**Purpose**: Close the four gaps in the system specification, promote the three decisions that
 bind later features, and add the dependencies. Principle II requires the first before dependent
 work starts; Principle III requires the second before the code implementing it.
 
@@ -43,6 +43,7 @@ work starts; Principle III requires the second before the code implementing it.
 - [ ] T004 [P] Add decision `A-BULKSIZE` to Appendix A of `project-apex-predator.md` dated 2026-09-23: the bulk threshold is 512 KiB of raw payload, with the base64 4:3 arithmetic that rules out 768 KiB, the reconciliation of FR-023 with FR-025, and the reversal condition. Reference A-BULK rather than restating it
 - [ ] T005 [P] Add decision `A-CACHECAP` to Appendix A of `project-apex-predator.md` dated 2026-09-23: content above 8 MiB is read but never cached. **State the consequence plainly — a file above the cap is never available offline** — and the rejected alternatives (no cap, a total-size LRU budget which contradicts §5.5 and A-WORKSPACE, a cap derived from free disk)
 - [ ] T006 [P] Add decision `A-DEADLINE` to Appendix A of `project-apex-predator.md` dated 2026-09-23: a request on the interaction path states its own timeout derived from the §1.4 budget rather than taking the transport default. The confirmation limit of 2 seconds is its first instance, with the reasoning that a limit near 250 ms would expire in normal operation and train developers to ignore the marker
+- [ ] T096 Add error code `-32009` — "Workspace root no longer exists" — to the §4.4 table in `project-apex-predator.md`, and state that it is distinct from `-32001` because the two demand **opposite client responses**: `-32001` means re-register, `-32009` means tell the developer and stop presenting the projection. Overloading `-32001` would make a deleted workspace trigger a re-registration that then fails on `workspace/register`'s not-a-directory refusal, surfacing a registration error for a deletion (FR-038). Adding an error code does not increment `protocolVersion` — an older engine never sends it
 - [ ] T007 Add the new dependencies: `rusqlite` with features `["bundled", "fts5"]`, `zstd`, `sha2` and `async-trait` to `client/core/Cargo.toml`; `sha2` alone to `engine/Cargo.toml`. **Do not add tokio to the engine** — research.md, "The engine stays synchronous". Verify `cargo build --workspace` succeeds and record the engine binary's size before and after, since it is transferred on every first connect
 - [ ] T008 [P] Confirm the screenshot segment resolves to `F003` from the branch `feature/F003-workspace-cache` by running `npm run e2e` against F002's existing specs and checking captures land in `reports/screenshots/${OS}/F003/`. F002 made `featureSegment()` branch-derived and `capturedFiles()` recursive; this verifies both still hold rather than assuming they do
 
@@ -61,18 +62,18 @@ this phase owns the mechanism.
 ### Shared wire types
 
 - [ ] T009 Define the workspace wire types in `protocol/src/wire.rs` per [data-model.md](./data-model.md) and [contracts/workspace-methods.md](./contracts/workspace-methods.md): `RegisterParams`/`RegisterResult`, `ReadDirectoryParams` (with `cursor`, `limit`)/`ReadDirectoryResult` (with `nextCursor`), `StatParams`/`StatResult`, `ReadFileParams`/`ReadFileResult`, and `FsEntryWire`. Serde-only, no logic — this crate links into both binaries
-- [ ] T010 [P] Add the §4.4 application error codes as named constants in `protocol/src/wire.rs`: `WORKSPACE_NOT_REGISTERED` (-32001), `PATH_REFUSED` (-32002), `NOT_FOUND` (-32003), `PAYLOAD_TOO_LARGE` (-32007). Both ends must agree on these and neither may write the integer inline
+- [ ] T010 [P] Add the §4.4 application error codes as named constants in `protocol/src/wire.rs`: `WORKSPACE_NOT_REGISTERED` (-32001), `PATH_REFUSED` (-32002), `NOT_FOUND` (-32003), `PAYLOAD_TOO_LARGE` (-32007), `WORKSPACE_GONE` (-32009). Both ends must agree on these and neither may write the integer inline
 
 ### Client domain
 
 - [ ] T011 [P] Implement `WorkspaceId`, `Workspace`, `Location`, `FileId` and `Sha256` in `client/core/src/domain/workspace.rs` per [data-model.md](./data-model.md). `Sha256` renders lowercase hex on the wire and is constructed from bytes, never from a hand-written string
-- [ ] T012 [P] Implement `RelPath` in `client/core/src/domain/workspace.rs` with lexical validation on construction: no `..` component, not absolute, normalised to a leading `/` with no trailing slash except the root. Include the unit tests for the rejection cases — this is the client half of FR-008, and its own docs must say it is not what makes the system safe
-- [ ] T013 [P] Implement `FsEntry`, `FsMeta`, `ByteRange`, `FileChunk`, `Page` and `DirPage` in `client/core/src/domain/workspace.rs`. `FileChunk.sha256` is documented as the **whole file's** hash, never the range's (FR-021)
+- [ ] T012 Implement `RelPath` in `client/core/src/domain/workspace.rs` with lexical validation on construction: no `..` component, not absolute, normalised to a leading `/` with no trailing slash except the root. Include the unit tests for the rejection cases — this is the client half of FR-008, and its own docs must say it is not what makes the system safe
+- [ ] T013 Implement `FsEntry`, `FsMeta`, `ByteRange`, `FileChunk`, `Page` and `DirPage` in `client/core/src/domain/workspace.rs`. `FileChunk.sha256` is documented as the **whole file's** hash, never the range's (FR-021)
 - [ ] T014 [P] Implement `CacheEntry`, `Validity`, `Presentation`, `MaintenancePhase` and `RetentionWindow` in `client/core/src/domain/cache.rs` per [data-model.md](./data-model.md). `Validity` has exactly one constructor, taking two hashes — there must be no path by which git status can reach it (FR-020, §5.3)
 
 ### Client ports
 
-- [ ] T015 [P] Define the `WorkspaceProvider` port in `client/core/src/application/ports/workspace_provider.rs` with `#[async_trait]` and the full §6.1 method set, plus `ProviderError` with variants `NotFound`, `Refused`, `UnknownWorkspace`, `Offline`, `TooLarge`, `Transport` and `Unsupported { owner }`. Signatures from [design.md](./design.md)
+- [ ] T015 [P] Define the `WorkspaceProvider` port in `client/core/src/application/ports/workspace_provider.rs` with `#[async_trait]` and the full §6.1 method set, plus `ProviderError` with variants `NotFound`, `Refused`, `UnknownWorkspace`, `WorkspaceGone`, `Offline`, `TooLarge`, `Transport` and `Unsupported { owner }`. **`UnknownWorkspace` and `WorkspaceGone` are separate variants, not one with a flag** — they lead to opposite responses (re-register versus tell the developer), and a flag is something a caller can forget to read. Signatures from [design.md](./design.md)
 - [ ] T016 [P] Define the `WorkspaceCache` port in `client/core/src/application/ports/workspace_cache.rs`. **`put_content` and `touch` return `StoreOutcome`, not `Result`** — a `Result` invites `?`, and `?` is how FR-034 gets violated by reflex rather than by decision. Document that on the trait
 - [ ] T017 [P] Define the `BulkTransfer` port in `client/core/src/application/ports/bulk_transfer.rs`, returning bytes with no integrity claim: the caller compares against the hash from `stat`
 - [ ] T018 [P] Define the `Clock` port in `client/core/src/application/ports/clock.rs` and implement `SystemClock` in `client/core/src/adapters/outbound/system_clock.rs`
@@ -89,7 +90,7 @@ this phase owns the mechanism.
 - [ ] T023 Move the method dispatch out of `engine/src/main.rs` into `engine/src/adapters/inbound/rpc.rs`, carrying F002's `auth/handshake`, `session/restart` and `session/shutdown` across **unchanged**, including the `-32000` drain-before-exec behaviour. F002's engine tests must pass without edits — if any needs changing, the move was not behaviour-preserving
 - [ ] T024 Reduce `engine/src/main.rs` to a composition root and the stdio loop: construct `StdFileSystem`, the roots registry and the use cases, and hand them to the dispatch adapter. No business rule remains in `main.rs` (Principle VIII)
 - [ ] T025 Implement the in-memory `WorkspaceRoots` registry in `engine/src/application/use_cases/workspace.rs`, canonicalising each root once at registration, and the `Register` use case with the idempotence and refusal rules from [contracts/workspace-methods.md](./contracts/workspace-methods.md)
-- [ ] T026 Wire `workspace/register` into `engine/src/adapters/inbound/rpc.rs`, returning `-32001` for every workspace method called against an unregistered id
+- [ ] T026 Wire `workspace/register` into `engine/src/adapters/inbound/rpc.rs`, returning `-32001` for every workspace method called against an unregistered id, and `-32009` when the id is registered but its root no longer resolves
 
 ### The projection
 
@@ -172,7 +173,7 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 - [ ] T059 [US2] Implement `CachedWorkspace::stat` in `client/core/src/application/use_cases/cached_workspace.rs` with pass-through when connected
 - [ ] T060 [US2] Add the `Verifying`, `Current` and `Unverified` states to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/VerifyBadge.svelte`. Extend the **existing** state map rather than adding a parallel one — F001 shipped a bug where a test kept its own copy of that map and passed while the component crashed
 
-- [ ] T091 [P] [US2] Write the rename test in `client/core/tests/cache_validity.rs`: cache a file, call `WorkspaceCache::rename` to move it, then look it up under the new path and assert **the same `file_id` and the same content blob**, with zero bytes transferred (FR-022, US2 scenario 7). Then assert the other half: run `put_listing` over a folder where a cached name vanished and a new one appeared, and confirm the old content is gone, the new entry is listed, and nothing errored (FR-022a, FR-022b, US2 scenario 8). **Both halves matter** — the first proves opaque `file_id` works, the second proves nothing pretends it works where it cannot
+- [ ] T091 [US2] Write the rename test in `client/core/tests/cache_validity.rs`: cache a file, call `WorkspaceCache::rename` to move it, then look it up under the new path and assert **the same `file_id` and the same content blob**, with zero bytes transferred (FR-022, US2 scenario 7). Then assert the other half: run `put_listing` over a folder where a cached name vanished and a new one appeared, and confirm the old content is gone, the new entry is listed, and nothing errored (FR-022a, FR-022b, US2 scenario 8). **Both halves matter** — the first proves opaque `file_id` works, the second proves nothing pretends it works where it cannot
 - [ ] T092 [US2] Implement `rename` in `client/core/src/adapters/outbound/sqlite/mod.rs`: update `relative_path`, `parent_path` and `name` for one `file_id` and **never touch `file_contents`** (FR-022, C9). This is the operation A-B5's opaque `file_id` exists for. Its first caller is F006's write path — document that on the function, so nobody wires `put_listing` into it on the assumption that a re-listing knows what moved
 
 **Checkpoint**: Cached files open without transfer, changed files refetch, a wedged engine
@@ -198,8 +199,8 @@ confirm each reads back its own content.
 - [ ] T063 [US3] Complete `RegisterWorkspace` in `client/core/src/application/use_cases/register_workspace.rs` with the attach-versus-create decision keyed on `WorkspaceId` and nothing else. **Nothing may key on the display name** (FR-010, A-WORKSPACE)
 - [ ] T064 [US3] Implement workspace deletion in `client/core/src/application/use_cases/register_workspace.rs` and `forget` in the SQLite adapter, relying on `ON DELETE CASCADE` for content removal (FR-012). Assert in the test that the cascade actually fired, since it depends on the per-connection `foreign_keys` pragma from T027
 - [ ] T065 [US3] Add workspace registration and deletion commands to `client/core/src/adapters/inbound/tauri_commands.rs`
-- [ ] T093 [P] [US3] Write the vanished-root test in `client/core/tests/workspace_registry.rs` and `engine/tests/register.rs`: register a workspace, delete its root on disk, then issue a read. Assert the engine reports **the workspace as gone**, distinctly from a path missing inside it, and that the client stops presenting the projection as a live view (FR-038, SC-015). Asserting only that the read failed would pass for an implementation that reports every deleted root as an ordinary not-found, which is exactly the confusion this requirement exists to prevent
-- [ ] T094 [US3] Implement the distinction in `engine/src/application/use_cases/workspace.rs` and `engine/src/domain/path.rs`: when resolution fails because the **registered root itself** no longer resolves, return `WorkspaceGone` rather than a missing path. The root is canonicalised once at registration, so this is a re-check of the root before the per-request prefix comparison, not a second canonicalisation of every path
+- [ ] T093 [US3] Write the vanished-root test in `client/core/tests/workspace_registry.rs` and `engine/tests/register.rs`: register a workspace, delete its root on disk, then issue a read. Assert the engine reports **the workspace as gone**, distinctly from a path missing inside it, and that the client stops presenting the projection as a live view (FR-038, SC-015). **Assert the specific code** — `-32009`, not `-32001` and not `-32003`. Asserting only that the read failed would pass for an implementation that reports every deleted root as an ordinary not-found; asserting `-32001` would pass for one that sends the client into a re-registration loop. Both are the confusion this requirement exists to prevent
+- [ ] T094 [US3] Implement the distinction in `engine/src/application/use_cases/workspace.rs` and `engine/src/domain/path.rs`: when resolution fails because the **registered root itself** no longer resolves, return `WorkspaceGone` (`-32009`) rather than a missing path (`-32003`) or an unregistered workspace (`-32001`). The root is canonicalised once at registration, so this is a re-check of the root before the per-request prefix comparison, not a second canonicalisation of every path
 - [ ] T095 [US3] Surface it in `client/core/src/application/use_cases/cached_workspace.rs` and `client/ui/lib/workspace/tree.svelte.ts`: a gone workspace is reported to the developer and its projection is no longer presented as current. **This is not the offline path** — offline means possibly stale and still true; gone means the thing being projected does not exist, which is the one case where the cache stops being a stale fact and becomes fiction
 
 **Checkpoint**: Two checkouts of one repository coexist, each with its own projection, and a
@@ -218,8 +219,8 @@ gone while the tree is intact and files are marked uncached.
 ### Tests for User Story 4
 
 - [ ] T066 [P] [US4] Write the retention half of `client/core/tests/cache_maintenance.rs` against a real database file and `FakeClock`: content aged past fourteen days is removed while **every** `files` row survives (SC-008); zero evictions occur while a workspace is open (SC-008a); an evicted file re-opens with no error surfaced (FR-029)
-- [ ] T067 [P] [US4] Write the migration half of `client/core/tests/cache_maintenance.rs`: a v0 database migrates to v1 with content preserved (SC-013); a migration **killed mid-step** — open, begin a step, drop the connection without committing — leaves the old version intact and readable (FR-018c); a deterministically failing migration discards and rebuilds and says so (SC-013b); a `user_version` newer than this build takes the same discard path
-- [ ] T068 [P] [US4] Write the progress assertion in `client/core/tests/cache_maintenance.rs`: **count the reports and measure the gaps between them**, asserting at least one per second for the whole duration (SC-013a). Asserting that *a* progress message was sent passes for an upgrade that then hangs silently — that exact weakness was caught twice during specification
+- [ ] T067 [US4] Write the migration half of `client/core/tests/cache_maintenance.rs`: a v0 database migrates to v1 with content preserved (SC-013); a migration **killed mid-step** — open, begin a step, drop the connection without committing — leaves the old version intact and readable (FR-018c); a deterministically failing migration discards and rebuilds and says so (SC-013b); a `user_version` newer than this build takes the same discard path
+- [ ] T068 [US4] Write the progress assertion in `client/core/tests/cache_maintenance.rs`: **count the reports and measure the gaps between them**, asserting at least one per second for the whole duration (SC-013a). Asserting that *a* progress message was sent passes for an upgrade that then hangs silently — that exact weakness was caught twice during specification
 - [ ] T069 [P] [US4] Write `tests/e2e/cache-maintenance.spec.ts` asserting the migration state is visible during an upgrade (FR-018a)
 
 ### Implementation for User Story 4
@@ -355,10 +356,16 @@ wins" is enforced by T058 having no branch in which a cached hash overrides the 
 | US4 (P2) | Phase 2 | Eviction needs content to evict, which US2 produces, but the tests create rows directly |
 | US5 (P2) | Phase 2 | Needs a populated projection, which its tests build directly |
 
+**T091–T096 are appended IDs** placed in their own phases: T096 in Setup (the fourth system-spec
+amendment), T091–T092 in US2 (rename), T093–T095 in US3 (the vanished root). They came from two
+`/speckit-analyze` passes after numbering was fixed. Renumbering ninety-odd tasks to insert six
+would have invalidated every cross-reference in this file; F002 set the precedent with its T076.
+
 ### Within a story
 
 Tests before implementation where the constitution names fail-first — **T019 before T020** (path
-containment) and **T048 before T052–T058** (cache validity). Then: engine use case → protocol
+containment), **T048 before T052–T058** (cache validity) and **T091 before T092** (also cache
+validity — whether content survives a move is exactly that). Then: engine use case → protocol
 wiring → client adapter → application rules → interface.
 
 ### Parallel opportunities
@@ -403,7 +410,7 @@ MVP → **US2** (files open from cache, verified) → **US3** (two checkouts coe
 cache survives months and upgrades) → **US5** (offline). Each adds value without breaking what came
 before.
 
-Phase 2 is unusually large for this feature — 28 of 95 tasks — because it carries the engine's
+Phase 2 is unusually large for this feature — 28 of 96 tasks — because it carries the engine's
 restructure and the schema. That is front-loaded cost with no user-visible result, and it is worth
 knowing before starting rather than discovering at task fifteen.
 
@@ -414,7 +421,10 @@ knowing before starting rather than discovering at task fifteen.
 - **T091–T095 are appended IDs placed in their own phase**, not at the end. They came from
   `/speckit-analyze` after numbering was fixed, and renumbering ninety tasks to insert five would
   have invalidated every reference in this file. F002 did the same with its T076
-- `[P]` means different files and no dependency on an incomplete task
+- `[P]` means different files and no dependency on an incomplete task. **Checked mechanically**: no
+  two `[P]` tasks name the same file. Five groups violated this before the second analysis pass —
+  T011–T013, T066–T068 and three pairs introduced by the first remediation — and the markers, not
+  the tasks, were wrong
 - Commit after each task or logical group
 - **Two tests must fail before their implementation exists**: T019 (path containment) and T048
   (cache validity). Both are named in Principle VII as cases where a wrong answer is expensive

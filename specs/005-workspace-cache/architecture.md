@@ -157,7 +157,7 @@ publisher, and its ordering is stated in contracts/cache.md.
 | Concern | Approach |
 |---------|----------|
 | Authentication / authorization | N/A for this feature — the SSH connection is authenticated once by F001 and every invocation attaches to that master (A-BULK). There is no per-request authorization model: under A-EC2 the instance is single-tenant and the developer's own. What this feature *does* enforce is containment, which is a trust boundary rather than an authorization one: the engine canonicalises and asserts descent independently of the client (FR-005, Principle VI), and refuses identically whether or not the escaped target exists (FR-007) |
-| Error handling | Typed, never stringly. Four kinds a caller must distinguish: not-found (`-32003`), refused (`-32002`), unknown workspace (`-32001`) and unsupported (`-32601`, naming the feature that will implement it). Two failures are *swallowed by design* and both are recorded rather than incidental: a caching write that fails never fails the read that prompted it (FR-034), and a migration that fails discards and rebuilds rather than refusing to launch (FR-018b). Everything else propagates |
+| Error handling | Typed, never stringly. **Five** kinds a caller must distinguish: not-found (`-32003`), refused (`-32002`), unknown workspace (`-32001`, meaning *re-register*), workspace gone (`-32009`, meaning *tell the developer and stop projecting*) and unsupported (`-32601`, naming the feature that will implement it). The last two are separate codes rather than one with a flag because they demand opposite responses, and a flag is something a caller can forget to read. Two failures are *swallowed by design* and both are recorded rather than incidental: a caching write that fails never fails the read that prompted it (FR-034), and a migration that fails discards and rebuilds rather than refusing to launch (FR-018b). Everything else propagates |
 | Observability | Three signals, each tied to a criterion rather than added for completeness. A **request count** per provider call, which is what makes SC-002 measurable at all. The **two published states** (`Presentation`, `MaintenancePhase`), which are user-facing and therefore asserted end to end. And the **performance gate's measured values**, printed rather than compared (A-NFR), covering both §1.4 sidebar rows and the SC-010 compression ratio. Logging reuses F001's redacting logger; nothing here logs a path's contents |
 | Configuration | The database path comes from the platform application-data directory, alongside F001's `session.json` — A-STATE keeps the two files separate for lifetime reasons, and this feature does not merge them. Four constants are decisions rather than settings, and none is user-configurable: the retention window (14 days, §5.5), the bulk threshold (512 KiB), the cache eligibility cap (8 MiB) and the confirmation limit (2 s). The last three are recorded in research.md and marked for promotion to Appendix A. Tests inject a `Clock` rather than a configured window, so retention is exercisable without waiting a fortnight |
 
@@ -179,6 +179,8 @@ publisher, and its ordering is stated in contracts/cache.md.
 | `sha2` on both ends; the build script's hand-rolled digest stays, with a test that they agree | research.md, "Hashing, and the second implementation that already exists" |
 | The engine stays synchronous | research.md, "The engine stays synchronous" |
 | Two-stage path check: lexical, then canonical | research.md, "Path containment, and not leaking existence" |
+| An observed rename drops cached content; a known one keeps it | research.md, "What happens to cached content when a rename is only observed" |
+| `-32009` for a deleted root, distinct from `-32001` | research.md, "Reporting a workspace whose root has been deleted" |
 
 ## Phase 1 Reconciliation
 
@@ -191,5 +193,17 @@ found three disagreements. None was absorbed silently.
 | **`contracts/workspace-methods.md` returned `-32002` for an unknown `workspaceId`.** §4.4 assigns `-32001` to exactly that condition and `-32002` to a path escape. Two distinct failures were being reported as one, which would have made a client unable to tell "you never registered this workspace" from "that path is outside the root" — and the second is a security signal | **Contract revised** to `-32001` for an unknown workspace and `-32003` for a path that is inside the root and absent, both citing §4.4. The architecture's Error handling row states all four codes so the set is visible in one place |
 | **`contracts/provider.md` describes `CachedWorkspace` as holding four ports; the first Component Architecture sketch drew it as an adapter decorating the remote provider.** The two placements have different consequences under Principle VIII: an adapter may not hold business rules, and every rule this feature has lives in that object | **Architecture adjusted** to match the contract, which is the correct shape. `CachedWorkspace` sits in the application subgraph with its four port dependencies drawn, and plan.md's post-design re-evaluation records why a type that both implements and consumes a port is not a layering violation |
 
-Nothing else disagreed. The entity set in `data-model.md`, the guarantees in all three contracts and
-the component table above describe the same system.
+Nothing else disagreed at that point. The entity set in `data-model.md`, the guarantees in all three
+contracts and the component table above described the same system.
+
+### Post-analysis reconciliation (2026-09-23, second pass)
+
+Two `/speckit-analyze` runs after the above found more, and this section records them rather than
+being rewritten — the history of what disagreed is the useful part.
+
+| Conflict | Action taken |
+|---|---|
+| **FR-022 was unsatisfiable.** "Cached content MUST survive a rename" cannot hold in a feature whose only way of learning about remote change is re-listing a folder, which carries no identity linking a vanished name to a new one. A task cited the requirement while implementing `put_listing`, which structurally cannot deliver it | Spec narrowed to FR-022 plus the limits FR-022a and FR-022b; `WorkspaceCache::rename` given an implementing task and a test; `contracts/cache.md` gained guarantee C9 stating that `put_listing` cannot recognise a rename and does not pretend to |
+| **The "workspace deleted remotely while open" edge case had no requirement and no task**, so an FR-keyed coverage matrix could not have caught it | FR-038, SC-015, an acceptance scenario and tasks T093–T095 added |
+| **The first remediation routed a deleted root through `-32001`**, which §4.4 already assigns to "not found *or not registered*" — whose documented client response is to re-register, producing a registration error for a deletion | New code `-32009`, recorded in research.md and owed to §4.4 as a fourth amendment. The Error handling row above now lists five kinds |
+| **`WorkspaceGone` was named in the error table but absent from `ProviderError`'s variants** | Added as its own variant, not a flag on `UnknownWorkspace` |

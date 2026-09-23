@@ -91,9 +91,17 @@ cargo test -p apex-shell --test cache_validity
 | US2.2 | Changed hash: fresh content fetched, cache replaced |
 | US2.5 | File marked `MODIFIED` in git, content unchanged: **served from cache** |
 | US2.6 | File larger than one message: arrives in ranges, first range returned before the last |
+| US2.7 | A rename the projection is **told about**: same `file_id`, same blob, zero bytes transferred |
+| US2.8 | A rename only **observed** in a re-listing: content dropped, file still listed, no error |
 
 US2.5 is the one worth watching run. It is the scenario that fails if anyone ever wires git status
 into validity, and §5.3 says that mistake was already made once in this project's history.
+
+US2.7 and US2.8 are a pair and only mean something together. The first proves the opaque `file_id`
+does what A-B5 bought it for; the second proves nothing *claims* it works where it cannot. A
+re-listing sees one name gone and another present with nothing linking them, so the content is
+refetched and the file stays in the tree. An implementation that quietly dropped the file, or one
+that pretended to match renames by hashing every entry, fails one of the two.
 
 ---
 
@@ -135,15 +143,24 @@ feature is where it lands.
 
 ---
 
-## 6. Workspace identity — US3, SC-007
+## 6. Workspace identity and disappearance — US3, SC-007, SC-015
 
 ```bash
 cargo test -p apex-shell --test workspace_registry
+cargo test -p apex-engine --test register
 ```
 
 Two workspaces with the same display name, both populated, each reading back its own content
 (SC-007). Re-opening attaches rather than duplicating (US3.2). Deleting removes content and tree
-(US3.3).
+(US3.3). The projection survives closing and reopening the cache (FR-017) — the only assertion that
+a persisted store is actually persisted.
+
+Then the case that is easy to get almost right (US3.4, FR-038, SC-015): register a workspace, delete
+its root on disk, and issue a read. The engine must answer **`-32009`** — not `-32001`, and not
+`-32003`. The test asserts the specific code, because each wrong answer fails differently and both
+look like success from a distance. `-32003` reports a deleted workspace as a missing file. `-32001`
+means "re-register", which sends the client into a registration that then fails because the root is
+no longer a directory — surfacing a registration error for a deletion.
 
 ---
 
