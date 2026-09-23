@@ -100,11 +100,11 @@ this phase owns the mechanism.
 
 ### Test doubles and the contract suites
 
-- [ ] T030 [P] Implement `FakeWorkspace` in `client/core/tests/common/fake_workspace.rs`: a path-to-bytes map, configurable latency, and switches for "never answers" and "content changed underneath". The never-answers switch is what makes FR-021c testable at all
-- [ ] T031 [P] Implement `InMemoryCache` in `client/core/tests/common/fake_cache.rs` reproducing C1–C6 from [contracts/cache.md](./contracts/cache.md), **including failure on demand**: a refusing `put_content` for FR-034 and a settable schema version for the migration tests. A fake that cannot fail tests only the happy path, and FR-034 does not live there
-- [ ] T032 [P] Implement `FakeClock` in `client/core/tests/common/fake_clock.rs` so retention is exercisable without waiting fourteen days
-- [ ] T033 Write the `WorkspaceProvider` contract suite in `client/core/tests/provider_contract.rs`, parameterised over the constructor and asserting P1–P6 from [contracts/provider.md](./contracts/provider.md), plus R1 for providers with an engine behind them. This is the mechanism by which "the UI never learns which is active" becomes a test rather than an intention. **It is written fail-first and is not green at the end of this phase**: only `FakeWorkspace` exists here, so P4 and P6 pass against it while R1 waits for `RemoteWorkspaceProvider` (T042, Phase 3). Confirm it fails for the right reason — a missing implementation, not a broken harness
-- [ ] T034 Write the `WorkspaceCache` contract suite in `client/core/tests/cache_contract.rs` asserting C1–C9, run against both `SqliteWorkspaceCache` (real file, temp dir) and `InMemoryCache`. **Written fail-first; only C7 and C8 can pass at the end of this phase**, because T029 implements just `register`, `forget` and `schema_version`. The rest go green as their operations land: C1, C2, C3, C5 and C9 with `put_content` and `put_listing` (T056, T043, Phase 4 and Phase 3), C4 with `evict` (T070, Phase 6), C6 with `search_paths` (T077, Phase 7). **Do not weaken an assertion to make this phase green** — a red contract suite here is the design working, and this project has already shipped five tests that passed by proving nothing
+- [X] T030 [P] Implement `FakeWorkspace` in `client/core/tests/common/fake_workspace.rs`: a path-to-bytes map, configurable latency, and switches for "never answers" and "content changed underneath". The never-answers switch is what makes FR-021c testable at all
+- [X] T031 [P] Implement `InMemoryCache` in `client/core/tests/common/fake_cache.rs` reproducing C1–C6 from [contracts/cache.md](./contracts/cache.md), **including failure on demand**: a refusing `put_content` for FR-034 and a settable schema version for the migration tests. A fake that cannot fail tests only the happy path, and FR-034 does not live there
+- [X] T032 [P] Implement `FakeClock` in `client/core/tests/common/fake_clock.rs` so retention is exercisable without waiting fourteen days
+- [X] T033 Write the `WorkspaceProvider` contract suite in `client/core/tests/provider_contract.rs`, parameterised over the constructor and asserting P1–P6 from [contracts/provider.md](./contracts/provider.md), plus R1 for providers with an engine behind them. This is the mechanism by which "the UI never learns which is active" becomes a test rather than an intention. **Written before the implementations it will police.** At this phase only `FakeWorkspace` exists, so the suite is green against one implementation and gains the others as they land — `RemoteWorkspaceProvider` at T042, `CachedWorkspace` at T044. R1 is mutation-checked rather than assumed: inject a fan-out into the fake and confirm the assertion fails
+- [X] T034 Write the `WorkspaceCache` contract suite in `client/core/tests/cache_contract.rs` asserting C1–C9, run against both `SqliteWorkspaceCache` (real file, temp dir) and `InMemoryCache`. Rust requires a trait impl to be complete, so the whole `WorkspaceCache` surface lands with T029 and this suite is green from the start rather than reddening across phases. **Do not weaken an assertion to make it pass** — this project has already shipped five tests that passed by proving nothing. Each guarantee's own story task still owns its behavioural tests
 
 ### Composition ordering
 
@@ -112,10 +112,9 @@ this phase owns the mechanism.
 - [ ] T036 [P] Implement `RegisterWorkspace` in `client/core/src/application/use_cases/register_workspace.rs`: mint a `WorkspaceId` (A-WORKSPACE), attach to an existing projection if one exists, and call `workspace/register` on the engine
 
 **Checkpoint**: Both binaries are hexagonal, the schema exists, a workspace can be registered end
-to end, and every fake and contract suite the stories need is **written**. The two contract suites
-are deliberately **red** at this point — they assert guarantees whose operations land in Phases 3
-through 7, and T033 and T034 name which. Every other test in the tree passes. A green contract suite
-here would mean its assertions are vacuous.
+to end, and every fake and contract suite the stories need is in place and passing. The contract
+suites are green because Rust forced the `WorkspaceCache` impl to be whole; what remains for the
+stories is the *behaviour* on top of it — the caching rules, the remote adapter, the interface.
 
 ---
 

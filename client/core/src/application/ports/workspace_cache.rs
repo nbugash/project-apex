@@ -99,6 +99,15 @@ pub trait WorkspaceCache: Send + Sync {
     // ---- content ----
     fn lookup(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<Option<CacheEntry>>;
 
+    /// The identity of a **listed** file, cached or not.
+    ///
+    /// `put_content` takes a `FileId`, and `lookup` only yields one for a file that already has
+    /// content — so without this there is no way to cache a file for the first time. The gap was
+    /// found by writing the contract suite: the port declared an operation nothing could reach,
+    /// which is the same shape as F001's `withdraw`, unreachable because nothing returned the id
+    /// it required.
+    fn file_id(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<Option<FileId>>;
+
     /// Hash first, compress second (C1, §5.6), so the stored digest is over decompressed bytes
     /// and compares directly with the engine's.
     fn put_content(&self, file_id: &FileId, bytes: &[u8], hash: &Sha256, now: i64) -> StoreOutcome;

@@ -284,6 +284,21 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn file_id(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<Option<FileId>> {
+        self.with(|c| {
+            let r = c.query_row(
+                "SELECT file_id FROM files WHERE workspace_id = ?1 AND relative_path = ?2",
+                rusqlite::params![&ws.0, path.as_str()],
+                |r| r.get::<_, String>(0),
+            );
+            match r {
+                Ok(id) => Ok(Some(FileId(id))),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(e),
+            }
+        })
+    }
+
     fn put_content(&self, file_id: &FileId, bytes: &[u8], hash: &Sha256, now: i64) -> StoreOutcome {
         if bytes.len() as u64 > CACHE_MAX_BYTES {
             return StoreOutcome::NotEligible {

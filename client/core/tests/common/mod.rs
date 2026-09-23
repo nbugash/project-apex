@@ -14,6 +14,10 @@
 //! it. Integration tests are separate crates, and `tests/common/` is how Rust shares code
 //! between them.
 
+pub mod fake_cache;
+pub mod fake_clock;
+pub mod fake_workspace;
+
 use apex_shell::application::ports::spawner::{
     ProcessSpawner, SpawnError, SpawnSpec, SpawnedChild,
 };
