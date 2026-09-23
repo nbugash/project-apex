@@ -108,6 +108,12 @@ an intention to do it.
   - [ ] Background prefetch of recent-commit and manifest files
   - [ ] Local persistence of offline edits against their base revision
   - [ ] Reconnection fast-forward where the remote has not moved
+- [ ] **F019 offline-merge** (depends: F012)
+  - Spec: not yet specified
+  - [ ] Three-way merge of base, local and remote per file
+  - [ ] Conflict interface for hunks that genuinely collide
+  - [ ] Reconciliation ordering across many changed files on reconnect
+  - [ ] Merge outcome reporting and audit trail
 - [ ] **F013 global-search** [P] (depends: F000, F003)
   - Spec: not yet specified
   - [ ] Command palette and fuzzy path search UI
