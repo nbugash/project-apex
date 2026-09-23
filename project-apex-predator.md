@@ -2191,6 +2191,71 @@ rather than this entry.
 
 ---
 
+## A-BULK — Bulk data travels beside the protocol channel (2026-09-23)
+
+**Decision.** Anything larger than a protocol message moves over its own `ssh` invocation
+multiplexed on the existing control master, not through the JSON-RPC channel. §4.1 caps a frame
+at 1 MiB, and the channel is for control traffic.
+
+**Rationale.** F002's engine deployment is the first case and will not be the last: F003's file
+reads, F017's artifacts and any future transfer face the same choice. Chunking a large payload
+into 1 MiB frames would serialise it ahead of every interactive request on a single pipe, which
+is the head-of-line problem A-B6 already solved by keeping bulk off the channel.
+
+A second invocation costs nothing measurable. Measured against a real `sshd`: seven invocations
+over one control master authenticate **once**, while three that bypass it authenticate three
+more times. The master is what A-B1 bought, and this is what spends it.
+
+One constraint the deploying side must respect: an invocation that would *create* the master
+must not, because a master with `ControlPersist` backgrounds itself while holding the stdout
+pipe it inherited — so reading that command's output waits forever for an EOF that cannot
+arrive. Bulk invocations attach with `ControlMaster=no` and let the transport own the master.
+
+**Rejected — chunk it through the protocol channel.** Head-of-line blocking, and it needs a
+reassembly protocol §4 does not define.
+
+**Rejected — a second authenticated connection.** Pays an authentication per transfer for
+nothing, and doubles what a bastion sees.
+
+### Reversal conditions
+
+A transport that cannot multiplex, or a payload small enough that framing it is simpler than
+invoking a second command.
+
+---
+
+## A-PROTOVER — The protocol version increments on breaking changes only (2026-09-23)
+
+**Decision.** `protocolVersion` (§4.8) increments when something is removed, renamed, retyped,
+or made required. Adding a method, an optional parameter or a result field does not increment
+it. Both ends MUST ignore what they do not recognise.
+
+**Rationale.** Without this rule, adding `session/onRestart` in F002 would have forced a
+redeployment across every host in the estate for a notification an older client would simply
+have dropped. A version that increments on additions is a version that makes every addition
+expensive, and the predictable result is that people stop adding and start overloading what is
+already there.
+
+The rule is only safe because of the ignore requirement, which is stated as a requirement rather
+than left as an implementation habit — it is the half that is easy to omit and impossible to
+notice missing until an older client meets a newer engine.
+
+This binds every feature that adds a method, which is most of them.
+
+**Rejected — increment on every change.** Correct and useless: it turns an additive change into
+an estate-wide migration.
+
+**Rejected — semantic versioning with major and minor.** More expressive, and A-BOOT deliberately
+made compatibility a single integer *compared* rather than negotiated. Two numbers invite a
+compatibility matrix, which is the thing nobody maintains correctly.
+
+### Reversal conditions
+
+A change that is breaking for some methods and not others, which would mean the protocol has
+grown independent parts and needs versioning per part rather than as a whole.
+
+---
+
 ---
 
 # Appendix B — Open Items
@@ -2217,7 +2282,7 @@ closed.
 
 | Id | Question | Resolved by |
 |---|---|---|
-| **H-BOOT** | Daemon deployment, version negotiation, mismatch policy | **A-BOOT** — client pushes over SSH, client is the authority, refuse a newer engine |
+| **H-BOOT** | Daemon deployment, version negotiation, mismatch policy | **A-BOOT** — client pushes over SSH, client is the authority, refuse a newer engine; see also **A-BULK** and **A-PROTOVER**, promoted from F002 |
 | **DAP** | Debugging protocol, breakpoint sync and persistence, variable model | **A-DAP** — out of scope for v1, scoped out rather than answered |
 | **LSP** | cgroup limits, multi-root workspaces, capability passthrough | **A-LSP** — memory-limited per language per workspace, single root, passthrough |
 | **IGNORE** | Indexing and watch exclusion set, per-workspace configuration | **A-IGNORE** — `.gitignore` plus a built-in set, one set shared by both |

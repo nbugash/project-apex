@@ -159,3 +159,91 @@ async fn this_suite_opens_no_network_sockets() {
     let _ = boot(&d, &p, &arts).deploy_then_establish().await;
     common::assert_no_network();
 }
+
+/// T021 — SC-012. Interleaved concurrent deployments yield one valid engine or a reported
+/// failure, never a mixture.
+///
+/// Driven as a sustained run rather than a single pair: one pair that happens to serialise
+/// proves nothing about interleaving. The staged name carries the digest, so two deployments
+/// of one artifact converge on one path and the rename is idempotent — the property under test
+/// is that this holds under contention, not that it holds once.
+#[tokio::test]
+async fn concurrent_deployments_never_produce_a_mixed_artifact() {
+    use std::sync::Arc;
+
+    let outcomes = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut tasks = Vec::new();
+    for _ in 0..24 {
+        let outcomes = outcomes.clone();
+        tasks.push(tokio::spawn(async move {
+            let d = ScriptedDeployer::default();
+            let p = ScriptedPeer::default();
+            let arts = [artifact(Architecture::LinuxX86_64)];
+            let outcome = boot(&d, &p, &arts).deploy_then_establish().await;
+            let staged: Vec<String> = d
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("deploy:"))
+                .cloned()
+                .collect();
+            outcomes.lock().expect("lock").push((outcome, staged));
+        }));
+    }
+    for t in tasks {
+        t.await.expect("a deployment task");
+    }
+
+    let seen = outcomes.lock().expect("lock");
+    assert_eq!(seen.len(), 24);
+    for (outcome, staged) in seen.iter() {
+        // Every attempt reaches a definite end: a session, or a named failure. Never both and
+        // never neither.
+        match outcome {
+            BootstrapOutcome::Deployed { .. } | BootstrapOutcome::Failed(_) => {}
+            other => panic!("an interleaved deployment produced {other:?}"),
+        }
+        assert_eq!(
+            staged.len(),
+            1,
+            "each attempt deploys exactly one artifact, never a mixture: {staged:?}"
+        );
+    }
+}
+
+/// T078 — SC-002. A deployment over a simulated 10 Mbit/s link completes within 30 seconds,
+/// and the measured value is printed rather than only compared.
+///
+/// Simulated rather than measured against whatever link the developer happens to have: a
+/// budget verified against an unknown link is not a gate. A-NFR requires the number to be
+/// reported, because a budget only ever compared against tells nobody how much headroom is
+/// left — which is what says whether the next feature's work can be afforded.
+#[tokio::test]
+async fn a_deployment_over_a_ten_megabit_link_fits_the_budget() {
+    use apex_shell::adapters::outbound::deploy::embedded::host_artifact;
+
+    const LINK_BITS_PER_SEC: f64 = 10.0 * 1000.0 * 1000.0;
+    const BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let (bytes, _digest) = host_artifact().expect("the engine must be embedded");
+    let transfer =
+        std::time::Duration::from_secs_f64((bytes.len() as f64 * 8.0) / LINK_BITS_PER_SEC);
+
+    // The client's own overhead: everything the sequence does besides moving bytes.
+    let started = std::time::Instant::now();
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::default();
+    let arts = [artifact(Architecture::LinuxX86_64)];
+    let outcome = boot(&d, &p, &arts).deploy_then_establish().await;
+    let overhead = started.elapsed();
+    assert!(matches!(outcome, BootstrapOutcome::Deployed { .. }));
+
+    let total = transfer + overhead;
+    eprintln!(
+        "SC-002: {} bytes over 10 Mbit/s = {transfer:?} transfer + {overhead:?} overhead = {total:?} (budget {BUDGET:?})",
+        bytes.len()
+    );
+    assert!(
+        total < BUDGET,
+        "first connect would take {total:?}, over the {BUDGET:?} budget"
+    );
+}

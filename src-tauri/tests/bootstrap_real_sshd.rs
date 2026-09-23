@@ -232,20 +232,45 @@ fn an_artifact_is_streamed_verified_and_promoted_on_a_real_host() {
         "the staged file must not survive promotion: {staged}"
     );
 
-    // Executable, and actually runnable — the property verification alone cannot establish.
-    let run = Command::new("ssh")
+    // Executable, and actually **serving** — the property verification alone cannot establish.
+    //
+    // Asserted by speaking to it rather than by looking for a banner. The engine prints
+    // nothing on startup and blocks reading stdin, so an earlier version of this test, written
+    // against a placeholder that printed its name, saw empty output and concluded the binary
+    // had not run. Feeding it a handshake proves the thing that matters: the deployed artifact
+    // answers the protocol.
+    let body = r#"{"jsonrpc":"2.0","id":"1","method":"auth/handshake","params":{"client_version":"0.1.0","protocol_version":1,"capabilities":[]}}"#;
+    let framed = format!("Content-Length: {}\r\n\r\n{body}", body.len());
+
+    let mut run = Command::new("ssh")
         .args([
             "-F",
             &sshd.config.display().to_string(),
             &format!("{}@{}", sshd.target.user, sshd.target.host),
-            &format!("{final_path} 2>&1"),
+            &final_path,
         ])
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .expect("run the deployed engine");
-    let said = String::from_utf8_lossy(&run.stdout);
+    run.stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(framed.as_bytes())
+        .expect("write a handshake");
+    let spoke = run
+        .wait_with_output()
+        .expect("the engine to answer and exit");
+    let said = String::from_utf8_lossy(&spoke.stdout);
+
     assert!(
-        said.contains("ide-engine"),
-        "the deployed engine did not run: {said}"
+        said.starts_with("Content-Length: "),
+        "the deployed engine did not answer the protocol: {said:?}"
+    );
+    assert!(
+        said.contains("\"protocol_version\":1"),
+        "the deployed engine answered, but not with a handshake: {said}"
     );
 }
 

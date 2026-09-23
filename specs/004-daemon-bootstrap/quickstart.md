@@ -158,3 +158,59 @@ decision (research.md). Continuous integration builds both, and the architecture
 what a local build exercises instead.
 
 Both are stated so nobody reads a green suite as proof of something it never tested.
+
+---
+
+## Validation results
+
+Run on 2026-09-23, Ubuntu, OpenSSH_9.6p1, Rust 1.75 target. Every scenario executed, not
+inspected.
+
+| Scenario | Command | Result |
+| --- | --- | --- |
+| 1. First connect to a bare host | `--test bootstrap_deploy` | 9 passed |
+| 2. The engine says what it can do | `--test bootstrap_handshake` | 11 passed |
+| 3. A newer engine is refused | `--test bootstrap_handshake` | included above |
+| 4. Update and rollback | `--test bootstrap_restart` | 10 passed |
+| 5. Session continuity | `--test bootstrap_restart` | included above |
+| 6. Concurrency and atomicity | `--test bootstrap_deploy` | included above |
+| 7. Deployment against a real `sshd` | `APEX_REAL_SSHD=1 --test bootstrap_real_sshd` | 4 passed |
+| Workspace suite | `cargo build -p apex-engine && cargo test --workspace` | **274 passed, 0 failed** |
+| Frontend | `npm run test:unit` | 30 passed |
+| End to end | `xvfb-run -a npm run e2e` | 21/21 spec files, 65 screenshots under `linux/F002/` |
+| Lint | `cargo clippy --workspace --all-targets -- -D warnings` | clean |
+| Format | `cargo fmt --all --check` | clean |
+
+**SC-002, measured rather than asserted.** A-NFR requires the number, because a budget only ever
+compared against tells nobody how much headroom is left:
+
+```
+SC-002: 8282040 bytes over 10 Mbit/s = 6.625632s transfer + 47.601µs overhead
+      = 6.625679601s (budget 30s)
+```
+
+4.5x headroom. The client's own overhead is 47 microseconds — the budget is essentially all
+transfer, which is the honest picture: this feature moves a binary, and nothing it does around
+that is measurable beside it.
+
+### What this run corrected
+
+**The opt-in suite asserted on a banner that no longer exists.** It checked the deployed engine
+printed `ide-engine` on startup — true of the placeholder, false of the real engine, which
+prints nothing and blocks reading stdin. The test saw empty output and reported the binary had
+not run. It now sends a handshake frame and asserts a framed reply, which proves the thing that
+actually matters: the deployed artifact answers the protocol. Weakening the assertion would have
+been the easy fix and the wrong one.
+
+### What this feature does not prove
+
+**That work continues while nobody is connected.** The engine's lifetime is its channel's: close
+the connection and the process exits. The specification originally required the opposite, and
+testing it directly showed the architecture could never have delivered it. Scope was narrowed and
+**F020 `detached-engine`** carries the capability.
+
+**That the ARM64 artifact runs.** A development build embeds only the host-native engine by
+decision. CI builds both; a local build exercises the architecture-refusal path instead.
+
+**That the engine serves a workspace.** It answers the handshake and owns session identity. It
+implements no §4.8 workspace method — F003 adds those.

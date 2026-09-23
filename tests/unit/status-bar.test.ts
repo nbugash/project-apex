@@ -36,6 +36,22 @@ describe('connection state presentation (FR-012, SC-007)', () => {
     expect(present({ retrying: { attempt: 1, next_in_secs: 0 } }).label).toContain('now');
   });
 
+  // F002 FR-009. "Installing" with no number is indistinguishable from a stall, which is the
+  // failure the progress requirement exists to prevent.
+  it('a deploying state reports how far it has got', () => {
+    const shown = present({ deploying: { sent: 2 * 1024 * 1024, total: 8 * 1024 * 1024 } });
+    expect(shown.icon).toBe('ph-download-simple');
+    expect(shown.label).toContain('2 MB');
+    expect(shown.label).toContain('8 MB');
+  });
+
+  it('a deployment with an unknown total still says it is working', () => {
+    const shown = present({ deploying: { sent: 0, total: 0 } });
+    expect(shown.label).toContain('Installing');
+    expect(shown.label).not.toContain('NaN');
+    expect(shown.label).not.toContain('undefined');
+  });
+
   // A newer core reporting a state this build has not heard of must degrade, not blank the
   // status bar.
   it('an unrecognised state falls back to unknown', () => {

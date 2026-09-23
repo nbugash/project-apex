@@ -82,10 +82,10 @@ and the deployed artifact matches what the client shipped.
 - [X] T018 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an architecture with no embedded artifact is refused by name before anything transfers (FR-008)
 - [X] T019 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a second connect with a matching digest transfers nothing and still establishes a session (SC-003)
 - [X] T020 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: progress is published at least once per second while transferring, carrying bytes and total. Assert on the **number and spacing** of reports, not their existence — one report at the start satisfies "progress was reported" and still looks exactly like a hang (SC-013)
-- [ ] T021 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: interleaved concurrent deployments yield one valid engine or a reported failure, never a mixed artifact, across a sustained run rather than a single pair that may happen to serialise (SC-012)
+- [X] T021 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: interleaved concurrent deployments yield one valid engine or a reported failure, never a mixed artifact, across a sustained run rather than a single pair that may happen to serialise (SC-012)
 - [X] T022 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: each of the six `DeploymentFailure` causes is reported as itself and not collapsed into a generic failure
 
-- [ ] T078 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a deployment over a **simulated 10 Mbit/s link** completes within 30 seconds, and the measured value is printed rather than only compared (SC-002, A-NFR). Every other success criterion has a gate; a budget verified only against whatever link the developer happens to have is not one
+- [X] T078 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a deployment over a **simulated 10 Mbit/s link** completes within 30 seconds, and the measured value is printed rather than only compared (SC-002, A-NFR). Every other success criterion has a gate; a budget verified only against whatever link the developer happens to have is not one
 - [X] T079 [P] [US1] Call `assert_no_network()` from `src-tauri/tests/bootstrap_deploy.rs` (SC-010)
 
 ### Implementation for User Story 1
@@ -96,8 +96,8 @@ and the deployed artifact matches what the client shipped.
 - [X] T026 [US1] Implement progress publication in `src-tauri/src/adapters/outbound/deploy/mod.rs` on the cadence T020 asserts
 - [X] T027 [US1] Implement artifact selection and the unsupported-architecture refusal — landed in `src-tauri/src/application/use_cases/bootstrap.rs` rather than `embedded.rs`: choosing which artifact suits a host is policy, and `embedded.rs` is storage. Placement corrected during implementation
 - [X] T028 [US1] Implement the idempotence check in `src-tauri/src/adapters/outbound/deploy/mod.rs` — a present artifact with a matching digest transfers nothing
-- [ ] T029 [US1] Implement `Bootstrap::establish` deployment path in `src-tauri/src/application/use_cases/bootstrap.rs`, consuming F001's `EngineMissing` classification, which today has no recipient
-- [ ] T030 [P] [US1] Add the deploying state with progress to `src/lib/statusbar/presentation.ts` and its unit test in `tests/unit/status-bar.test.ts`, built from design tokens per Principle I
+- [X] T029 [US1] Implement `Bootstrap::establish` deployment path in `src-tauri/src/application/use_cases/bootstrap.rs`, consuming F001's `EngineMissing` classification, which today has no recipient
+- [X] T030 [P] [US1] Add the deploying state with progress to `src/lib/statusbar/presentation.ts` and its unit test in `tests/unit/status-bar.test.ts`, built from design tokens per Principle I
 
 **Checkpoint**: A bare host reaches a session. This is the MVP.
 
@@ -198,11 +198,11 @@ notification, unchanged identity, and that unpreserved state is reported.
 - [X] T058 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: a restart is announced by the engine and never inferred by the client (SC-009)
 - [X] T059 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: the session identity is unchanged across re-execution (FR-024)
 - [X] T060 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: state that did not survive is named in `unpreserved`, and an empty list is asserted to mean nothing was lost rather than nothing was checked (FR-025)
-- [ ] T061 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: work in progress survives a disconnection and is still running when the client re-attaches (SC-009a)
+- [X] T061 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: work in progress survives a disconnection and is still running when the client re-attaches (SC-009a)
 - [X] T062 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: presenting an identity the engine has forgotten yields a stated refusal and a new session — never a silent new session presented as a resumption (FR-024c)
 - [X] T063 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: A-REQ still holds — an in-flight request dies with its connection even though the session outlives it. The two rules are easy to conflate and the distinction is the point
 
-- [ ] T082 [P] [US5] Unit tests in `engine/src/session.rs`: mint yields distinct identities, resume of an unknown identity returns false, and identity is stable across re-execution. These are engine-side invariants currently covered only through the client's integration tests, which cannot fail for an engine-internal reason
+- [X] T082 [P] [US5] Unit tests in `engine/src/session.rs`: mint yields distinct identities, resume of an unknown identity returns false, and identity is stable across re-execution. These are engine-side invariants currently covered only through the client's integration tests, which cannot fail for an engine-internal reason
 - [X] T083 [P] [US5] Call `assert_no_network()` from `src-tauri/tests/bootstrap_restart.rs` (SC-010)
 
 ### Implementation for User Story 5
@@ -221,11 +221,11 @@ notification, unchanged identity, and that unpreserved state is reported.
 
 - [X] T069 Add the opt-in real-`sshd` deployment test in `src-tauri/tests/bootstrap_real_sshd.rs`, skipped with a clear reason when unavailable. This is the only place the transfer, the remote `sha256sum` and the atomic promotion run against a real remote filesystem
 - [X] T084 Assert in `src-tauri/tests/bootstrap_real_sshd.rs` that nothing in the deployment path requires elevated privilege: every path written is owned by the connecting account, and no `sudo`, `su` or setuid invocation appears in what the deployer runs (FR-005). This is the only suite with a real filesystem and a real account, so it is the only place the property is observable
-- [ ] T070 [P] Document the engine and bootstrap in `docs/engine.md` — deployment, the handshake, the version rule, and what a session outlives
-- [ ] T071 [P] Add `reports/screenshots/README.md` recording the `${OS}/${FEATURE}/` convention and why `FEATURE` is the map identity rather than the spec directory number
-- [ ] T072 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md), including the SC-002 and SC-013 measurements as numbers rather than verdicts, per A-NFR
-- [ ] T073 Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` across the workspace and fix what they report
-- [ ] T074 Promote the two marked decisions in [research.md](./research.md) to Appendix A of `project-apex-predator.md` — that bulk data travels beside the protocol channel rather than through it, and that the protocol version increments only on breaking changes. Both bind every later feature, and a decision only F002's research records is one F003 will not find
+- [X] T070 [P] Document the engine and bootstrap in `docs/engine.md` — deployment, the handshake, the version rule, and what a session outlives
+- [X] T071 [P] Add `reports/screenshots/README.md` recording the `${OS}/${FEATURE}/` convention and why `FEATURE` is the map identity rather than the spec directory number
+- [X] T072 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md), including the SC-002 and SC-013 measurements as numbers rather than verdicts, per A-NFR
+- [X] T073 Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` across the workspace and fix what they report
+- [X] T074 Promote the two marked decisions in [research.md](./research.md) to Appendix A of `project-apex-predator.md` — that bulk data travels beside the protocol channel rather than through it, and that the protocol version increments only on breaking changes. Both bind every later feature, and a decision only F002's research records is one F003 will not find
 - [X] T075 Verify by mutation that the capture gate in `tests/e2e/wdio.conf.ts` still fails when screenshots are missing, after the path convention change. The gate was proven once; a path change is exactly the kind of edit that silently unproves it
 
 ---

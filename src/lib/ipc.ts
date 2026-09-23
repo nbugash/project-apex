@@ -12,7 +12,8 @@ export type ConnectionState =
   | 'connecting'
   | 'connected'
   | 'disconnected'
-  | { retrying: { attempt: number; next_in_secs: number } };
+  | { retrying: { attempt: number; next_in_secs: number } }
+  | { deploying: { sent: number; total: number } };
 export type LocationType = 'REMOTE' | 'LOCAL';
 
 export interface RegionState {

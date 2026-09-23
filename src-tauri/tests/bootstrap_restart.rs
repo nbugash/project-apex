@@ -91,6 +91,50 @@ async fn a_request_buffered_when_the_engine_restarts_is_refused_rather_than_lost
     t.shutdown();
 }
 
+/// T061 — SC-009a, as narrowed. Work survives **re-execution**, not disconnection.
+///
+/// The original requirement said work continues while no client is connected. Testing it
+/// directly showed the engine exits the instant its stdin closes, so that could never have
+/// been true — an engine spawned over a channel dies with the channel. F020 carries the
+/// detached engine; this asserts the property that does hold, and the one after it pins the
+/// limit so nobody assumes the stronger claim again.
+#[tokio::test]
+async fn work_survives_re_execution_but_the_session_is_bounded_by_its_connection() {
+    let (t, spawner) = connected_engine(None);
+    let peer = TransportHandshake::new(&*t);
+    let before = peer
+        .handshake(request(None))
+        .await
+        .expect("handshake")
+        .session_id;
+
+    // Across re-execution: same session, same connection.
+    assert!(matches!(
+        t.send(Request::interactive("session/restart", "{}")).await,
+        RequestOutcome::Answered(_)
+    ));
+    let after = peer
+        .handshake(request(Some(&before.0)))
+        .await
+        .expect("handshake");
+    assert!(after.resumed, "re-execution preserves the session");
+
+    // Across disconnection: the engine goes with it. This is the limit, asserted so it is a
+    // decision rather than a surprise.
+    t.shutdown();
+    for _ in 0..50 {
+        if spawner.live_children() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        spawner.live_children(),
+        0,
+        "the engine's lifetime is its channel's — F020 is what changes this"
+    );
+}
+
 /// T058 — FR-023. A restart is announced by the engine, never inferred by the client.
 #[tokio::test]
 async fn a_restart_is_announced_by_the_engine() {

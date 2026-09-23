@@ -61,6 +61,20 @@ the remote host keeps running while the developer's laptop is shut, and the clie
 to the session that owns it. What A-REQ forbids is pretending an unanswered request survived —
 not forbidding the engine to continue work it had already started.
 
+**It does not keep working while nobody is connected.** The engine's lifetime is its channel's:
+close the connection and the process exits. So a build does not continue while a laptop is shut,
+and re-attaching after a disconnection starts a new session rather than finding the old one.
+
+This was found by testing rather than by reading. The specification originally required the
+opposite, and the architecture could never have delivered it — an engine spawned over `ssh`
+exits the moment its stdin closes. Making it true needs the engine to detach from the channel
+that started it and a way to re-attach through, which is a feature of its own rather than a
+detail of this one. **F020 `detached-engine`** carries it.
+
+What this feature does deliver is continuity across *re-execution*: the engine replaces its own
+process image, the connection survives because `exec` keeps file descriptors, and the session
+identity travels in the environment.
+
 **It does not update the client.** A-UPDATE gives that to platform package managers. This
 feature only detects the skew and says so.
 
@@ -354,7 +368,9 @@ is worse than none, because it stops anyone asking the question again.
 - **FR-024**: A session's identity MUST survive both re-execution of the engine and loss of the
   connection, so that anything keyed to the session remains addressable across either.
 - **FR-024a**: The session MUST be owned by the engine and live as long as the engine process.
-  Work the engine is performing MUST continue while no client is connected.
+  The engine process lives as long as its channel, so a session ends when the connection ends.
+  Work continuing while **no client is connected** is explicitly **not** in this feature — see
+  "What this feature is not".
 - **FR-024b**: A reconnecting client MUST be able to re-attach to an existing session by
   presenting its identity, without restarting the work that session holds.
 - **FR-024c**: An identity the engine does not recognise MUST be reported as such, and the
@@ -415,8 +431,9 @@ is worse than none, because it stops anyone asking the question again.
   of cases.
 - **SC-013**: A developer can tell a running deployment from a stalled one at any point, because
   progress is reported at least once per second for the duration of the transfer.
-- **SC-009a**: Work in progress on the engine survives a disconnection and is still running when
-  the client re-attaches, for any outage shorter than the instance's idle-stop policy.
+- **SC-009a**: Work in progress survives **re-execution** of the engine and is still running
+  when the client re-attaches over the same connection. Surviving a *disconnection* is a
+  separate feature; see "What this feature is not".
 - **SC-009**: Every restart is reported to the client; the client never learns of one by
   inference.
 - **SC-010**: The full suite for this feature runs with no remote host, no network and no real

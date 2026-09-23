@@ -32,7 +32,22 @@ export interface Presented {
  * indistinguishable from a hang, which is the complaint F000's hidden window taught this
  * project to take seriously.
  */
+/** Bytes as a short human string. Whole units: a progress figure that jitters through decimal
+ *  places draws the eye to the noise rather than the movement. */
+function size(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} kB`;
+  return `${bytes} B`;
+}
+
 export function present(state: ConnectionState): Presented {
+  if (typeof state === 'object' && state !== null && 'deploying' in state) {
+    const { sent, total } = state.deploying;
+    // The count is the point. "Installing" on its own is indistinguishable from a stall, which
+    // is the same reason the transferring state carries bytes at all.
+    const progress = total > 0 ? ` ${size(sent)} of ${size(total)}` : '';
+    return { icon: 'ph-download-simple', label: `Installing engine${progress}` };
+  }
   if (typeof state === 'object' && state !== null && 'retrying' in state) {
     const { attempt, next_in_secs } = state.retrying;
     const when = next_in_secs <= 1 ? 'now' : `in ${next_in_secs}s`;

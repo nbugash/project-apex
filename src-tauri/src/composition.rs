@@ -5,6 +5,7 @@
 //! one-line change in this file.
 
 use crate::adapters::inbound::tauri_commands::Shell;
+use crate::adapters::outbound::deploy::SshStreamDeployer;
 use crate::adapters::outbound::json_session_store::JsonFileSessionStore;
 use crate::adapters::outbound::openssh::{OpenSshSpawner, SshTransport};
 use crate::adapters::outbound::stub_connection::StubConnectionStatusSource;
@@ -22,6 +23,9 @@ use std::sync::Arc;
 pub struct Wiring {
     pub shell: Shell,
     pub stub: Arc<StubConnectionStatusSource>,
+    /// Present when a host is configured. F002 gives F001's `HandToBootstrap` a recipient: the
+    /// transport can already classify a missing engine, and this is what deploys one.
+    pub deployer: Option<Arc<SshStreamDeployer>>,
 }
 
 /// The host to connect to, when one has been named.
@@ -67,6 +71,9 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
     // collects them belongs to a later feature. Connecting unconditionally would mean every
     // launch failing against a host nobody named, which reads as a broken application
     // rather than an unconfigured one.
+    // Built alongside the transport, because a deployer without a connection has nothing to
+    // deploy over — both are absent together when no host is configured.
+    let mut deployer: Option<Arc<SshStreamDeployer>> = None;
     let source: Arc<dyn ConnectionStatusSource> = match remote_target() {
         Some(spec) => {
             crate::logging::info(&format!("connecting to {}@{}", spec.user, spec.host));
@@ -76,6 +83,7 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
             match transport.preflight() {
                 Ok(banner) => {
                     crate::logging::info(&format!("local ssh client: {banner}"));
+                    deployer = Some(Arc::new(SshStreamDeployer::default()));
                     transport
                 }
                 Err(e) => {
@@ -104,5 +112,9 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
         rail,
     };
 
-    Wiring { shell, stub }
+    Wiring {
+        shell,
+        stub,
+        deployer,
+    }
 }

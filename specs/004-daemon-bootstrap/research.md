@@ -64,9 +64,9 @@ redirect, and its progress output is not machine-readable. *`scp`* — in OpenSS
 underneath, so it inherits the same problem with none of the benefit. *A download from a release
 URL* — rejected at system level by A-BOOT, which requires no outbound internet on the host.
 
-**→ Promote to Appendix A.** Every later feature that moves bulk data — F003's file reads,
-F017's artifacts — needs to know that bulk goes beside the protocol channel over the control
-master, not through it.
+**→ Promoted to Appendix A as A-BULK (2026-09-23).** Every later feature that moves bulk data —
+F003's file reads, F017's artifacts — needs to know that bulk goes beside the protocol channel
+over the control master, not through it.
 
 ---
 
@@ -244,8 +244,8 @@ which is stated as a requirement here rather than left as an implementation habi
 *Semantic versioning with major and minor* — more expressive, and A-BOOT deliberately made this
 a single integer compared rather than negotiated; two numbers invite a compatibility matrix.
 
-**→ Promote to Appendix A.** Every feature that adds a method needs to know whether it is
-bumping a number that forces redeployment across the estate.
+**→ Promoted to Appendix A as A-PROTOVER (2026-09-23).** Every feature that adds a method needs
+to know whether it is bumping a number that forces redeployment across the estate.
 
 ---
 
@@ -291,7 +291,17 @@ once per second carrying bytes and total (FR-009); how the interface draws it is
 system applied to a new state, and the shape follows the existing status bar work rather than
 needing its own decision here.
 
-**Whether the engine should daemonise.** It does not need to: the engine's lifetime is the SSH
-channel's, and A-EC2 stops the whole instance when idle. Revisit if a session must outlive the
-channel that created it — which A-OFFLINE's reconnection model may eventually want, but does not
-require today.
+**Whether the engine should daemonise. This deferral was wrong, and is recorded rather than
+quietly corrected.** It read: "It does not need to: the engine's lifetime is the SSH channel's
+… revisit if a session must outlive the channel that created it, which A-OFFLINE's reconnection
+model may eventually want, but does not require today."
+
+FR-024a required it *today*. The specification said work must continue while no client is
+connected, and an engine spawned over `ssh` exits the instant its stdin closes — so the
+requirement was unsatisfiable by the architecture it was written against, and nothing caught it
+until the behaviour was tested directly.
+
+Resolved by narrowing this feature to what it delivers, continuity across re-execution, and
+moving the detached engine to **F020 `detached-engine`**. The lesson worth keeping: a deferral
+that says "not required today" is a claim about the current specification, and it is worth
+checking against the requirements rather than against intuition.
