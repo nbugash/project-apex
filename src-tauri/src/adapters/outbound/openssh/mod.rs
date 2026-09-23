@@ -17,7 +17,7 @@ mod sendq;
 pub mod spawner;
 
 pub use classify::classify;
-pub use spawner::{parse_version, OpenSshSpawner, ASKPASS_MIN_VERSION};
+pub use spawner::{control_options, parse_version, OpenSshSpawner, ASKPASS_MIN_VERSION};
 
 use crate::adapters::outbound::askpass::ipc::AskpassChannel;
 use crate::application::ports::connection::{ConnectionStatusSource, StateSink};

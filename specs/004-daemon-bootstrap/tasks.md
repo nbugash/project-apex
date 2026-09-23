@@ -80,8 +80,8 @@ and the deployed artifact matches what the client shipped.
 - [X] T016 [P] [US1] Failing test in `src-tauri/tests/bootstrap_deploy.rs`: a host reporting no engine triggers a deployment and reaches a session, with no developer action (SC-001)
 - [X] T017 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an artifact whose digest does not match is **never executed**. Assert on execution count being zero, not on the error returned — a deployment that ran the binary and then reported an error also returns an error (SC-004)
 - [X] T018 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an architecture with no embedded artifact is refused by name before anything transfers (FR-008)
-- [ ] T019 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a second connect with a matching digest transfers nothing and still establishes a session (SC-003)
-- [ ] T020 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: progress is published at least once per second while transferring, carrying bytes and total. Assert on the **number and spacing** of reports, not their existence — one report at the start satisfies "progress was reported" and still looks exactly like a hang (SC-013)
+- [X] T019 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a second connect with a matching digest transfers nothing and still establishes a session (SC-003)
+- [X] T020 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: progress is published at least once per second while transferring, carrying bytes and total. Assert on the **number and spacing** of reports, not their existence — one report at the start satisfies "progress was reported" and still looks exactly like a hang (SC-013)
 - [ ] T021 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: interleaved concurrent deployments yield one valid engine or a reported failure, never a mixed artifact, across a sustained run rather than a single pair that may happen to serialise (SC-012)
 - [X] T022 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: each of the six `DeploymentFailure` causes is reported as itself and not collapsed into a generic failure
 
@@ -90,12 +90,12 @@ and the deployed artifact matches what the client shipped.
 
 ### Implementation for User Story 1
 
-- [ ] T023 [US1] Implement `SshStreamDeployer::deploy` in `src-tauri/src/adapters/outbound/deploy/mod.rs`: stream to a digest-qualified staged path over F001's control master, counting bytes as they go
-- [ ] T024 [US1] Implement remote verification in `src-tauri/src/adapters/outbound/deploy/mod.rs` by invoking `sha256sum` on the host and comparing exactly — not by prefix, which is a weaker check that looks identical in a passing test
-- [ ] T025 [US1] Implement atomic promotion in `src-tauri/src/adapters/outbound/deploy/mod.rs`: set the executable bit only after verification, then `rename` within the same directory so the rename cannot silently become a copy across filesystems
-- [ ] T026 [US1] Implement progress publication in `src-tauri/src/adapters/outbound/deploy/mod.rs` on the cadence T020 asserts
+- [X] T023 [US1] Implement `SshStreamDeployer::deploy` in `src-tauri/src/adapters/outbound/deploy/mod.rs`: stream to a digest-qualified staged path over F001's control master, counting bytes as they go
+- [X] T024 [US1] Implement remote verification in `src-tauri/src/adapters/outbound/deploy/mod.rs` by invoking `sha256sum` on the host and comparing exactly — not by prefix, which is a weaker check that looks identical in a passing test
+- [X] T025 [US1] Implement atomic promotion in `src-tauri/src/adapters/outbound/deploy/mod.rs`: set the executable bit only after verification, then `rename` within the same directory so the rename cannot silently become a copy across filesystems
+- [X] T026 [US1] Implement progress publication in `src-tauri/src/adapters/outbound/deploy/mod.rs` on the cadence T020 asserts
 - [X] T027 [US1] Implement artifact selection and the unsupported-architecture refusal — landed in `src-tauri/src/application/use_cases/bootstrap.rs` rather than `embedded.rs`: choosing which artifact suits a host is policy, and `embedded.rs` is storage. Placement corrected during implementation
-- [ ] T028 [US1] Implement the idempotence check in `src-tauri/src/adapters/outbound/deploy/mod.rs` — a present artifact with a matching digest transfers nothing
+- [X] T028 [US1] Implement the idempotence check in `src-tauri/src/adapters/outbound/deploy/mod.rs` — a present artifact with a matching digest transfers nothing
 - [ ] T029 [US1] Implement `Bootstrap::establish` deployment path in `src-tauri/src/application/use_cases/bootstrap.rs`, consuming F001's `EngineMissing` classification, which today has no recipient
 - [ ] T030 [P] [US1] Add the deploying state with progress to `src/lib/statusbar/presentation.ts` and its unit test in `tests/unit/status-bar.test.ts`, built from design tokens per Principle I
 

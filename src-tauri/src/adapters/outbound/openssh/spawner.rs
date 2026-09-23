@@ -46,6 +46,37 @@ impl OpenSshSpawner {
     }
 }
 
+/// The options that decide **which connection** an invocation uses, and how it fails.
+///
+/// Shared with the deployer rather than duplicated. A deployer that named a different
+/// `ControlPath` would open a master of its own and authenticate a second time — silently
+/// defeating the reuse A-B1 chose this design for, and in a way nothing would notice, because
+/// everything would still work and merely cost twice as much.
+///
+/// Every flag here is §3.1's; none is this module's idea.
+pub fn control_options() -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    let mut opt = |k: &str| {
+        v.push("-o".into());
+        v.push(k.into());
+    };
+    // A master connection later invocations attach to without re-authenticating; what makes
+    // preview forwarding and bulk transfer cheap.
+    opt("ControlMaster=auto");
+    // The hashed form: the expanded one overflows macOS's socket path limit.
+    opt("ControlPath=~/.ssh/apex-%C");
+    opt("ControlPersist=1h");
+    // Tuned for frequent small interactive packets.
+    opt("IPQoS=throughput");
+    // Surface a dropped network within ~45 s. Without these the pipe hangs indefinitely and
+    // the reconnection loop has nothing to react to — the single most important pair of flags
+    // in this list, and the one no integration test can check, because the mock has no socket.
+    opt("ServerAliveInterval=15");
+    opt("ServerAliveCountMax=3");
+    opt("StrictHostKeyChecking=accept-new");
+    v
+}
+
 /// Parse `OpenSSH_9.6p1, OpenSSL ...` into a comparable pair.
 pub fn parse_version(banner: &str) -> Option<(u32, u32)> {
     let at = banner.find("OpenSSH_")? + "OpenSSH_".len();
@@ -90,30 +121,12 @@ impl ProcessSpawner for OpenSshSpawner {
 
     /// The normative invocation. Every flag here is §3.1's; none is this module's idea.
     fn invocation(&self, spec: &SpawnSpec) -> Vec<String> {
-        let mut v: Vec<String> = Vec::new();
-        let mut opt = |k: &str| {
-            v.push("-o".into());
-            v.push(k.into());
-        };
-        // A master connection later invocations attach to without re-authenticating; what
-        // makes preview forwarding and bulk transfer cheap.
-        opt("ControlMaster=auto");
-        // The hashed form: the expanded one overflows macOS's socket path limit.
-        opt("ControlPath=~/.ssh/apex-%C");
-        opt("ControlPersist=1h");
-        // Tuned for frequent small interactive packets.
-        opt("IPQoS=throughput");
-        // Surface a dropped network within ~45 s. Without these the pipe hangs indefinitely
-        // and the reconnection loop has nothing to react to — the single most important
-        // pair of flags in this list, and the one no integration test can check, because
-        // the mock has no socket.
-        opt("ServerAliveInterval=15");
-        opt("ServerAliveCountMax=3");
-        opt("StrictHostKeyChecking=accept-new");
+        let mut v = control_options();
         if !spec.assisted {
             // Phase one. Prevents ssh blocking on a tty prompt no GUI user can answer, and
             // disables SSH_ASKPASS — which is why connecting is two phases (§3.3).
-            opt("BatchMode=yes");
+            v.push("-o".into());
+            v.push("BatchMode=yes".into());
         }
         v.push(format!("{}@{}", spec.user, spec.host));
         v.push(self.remote_engine.clone());
