@@ -181,3 +181,139 @@ mod tests {
         assert_eq!(parse_region("document_area"), Ok(RegionId::DocumentArea));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Workspace (F003).
+//
+// Every argument arriving here is untrusted regardless of what the interface layer did with it
+// (Principle VI). `RelPath::parse` rejects rather than coerces, and the engine validates again
+// on its own side — this check protects against bugs in our own interface, never against a
+// stale or hostile caller.
+
+use crate::application::ports::workspace_provider::{ProviderError, WorkspaceProvider};
+use crate::domain::workspace::{PageRequest, RelPath, WorkspaceId};
+use serde::Serialize;
+
+/// One directory entry, as the interface sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct EntryDto {
+    pub name: String,
+    /// `"file"` or `"directory"`, matching the wire vocabulary so one word means one thing
+    /// everywhere.
+    #[serde(rename = "kind")]
+    pub kind: String,
+    pub size: u64,
+    pub modified: i64,
+}
+
+/// What the interface is told when a workspace request fails.
+///
+/// The variants a caller must distinguish, not a message it has to parse. `Gone` is separate
+/// from `Offline` because they lead to opposite responses: an outage is temporary and the
+/// projection is still true, while a deleted workspace means the thing being projected does not
+/// exist (FR-038).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "detail")]
+pub enum WorkspaceFailure {
+    NotFound,
+    Refused,
+    UnknownWorkspace,
+    Gone,
+    Offline,
+    Unsupported(String),
+    Transport(String),
+}
+
+impl From<ProviderError> for WorkspaceFailure {
+    fn from(e: ProviderError) -> Self {
+        match e {
+            ProviderError::NotFound => Self::NotFound,
+            ProviderError::Refused => Self::Refused,
+            ProviderError::UnknownWorkspace => Self::UnknownWorkspace,
+            ProviderError::WorkspaceGone => Self::Gone,
+            ProviderError::Offline => Self::Offline,
+            ProviderError::TooLarge { total_size } => {
+                Self::Transport(format!("{total_size} bytes exceeds the inline read limit"))
+            }
+            ProviderError::Transport(why) => Self::Transport(why),
+            ProviderError::Unsupported { owner } => Self::Unsupported(owner.to_string()),
+        }
+    }
+}
+
+/// The workspace surface the interface reaches.
+///
+/// Held separately from `Shell` because it exists only once a workspace has been opened, and a
+/// field that is always `None` before then would put an unwrap in every command.
+pub struct WorkspaceAccess {
+    pub provider: Arc<dyn WorkspaceProvider>,
+}
+
+#[tauri::command]
+pub async fn workspace_read_directory(
+    workspace_id: String,
+    relative_path: String,
+    access: State<'_, WorkspaceAccess>,
+) -> Result<Vec<EntryDto>, WorkspaceFailure> {
+    // Untrusted input: a path that does not parse is refused here rather than being repaired
+    // into something that does.
+    let path = RelPath::parse(&relative_path).map_err(|_| WorkspaceFailure::Refused)?;
+    let page = access
+        .provider
+        .read_directory(&WorkspaceId(workspace_id), &path, PageRequest::default())
+        .await?;
+    Ok(page
+        .items
+        .into_iter()
+        .map(|e| EntryDto {
+            name: e.name,
+            kind: match e.kind {
+                apex_protocol::wire::EntryKind::Directory => "directory".into(),
+                apex_protocol::wire::EntryKind::File => "file".into(),
+            },
+            size: e.size,
+            modified: e.modified,
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    #[test]
+    fn a_path_that_does_not_parse_is_refused_rather_than_repaired() {
+        // The interface could send anything; `..` must not be normalised into something valid.
+        for raw in ["../etc/passwd", "/a/../../b"] {
+            assert!(RelPath::parse(raw).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_gone_workspace_is_distinguishable_from_an_outage() {
+        let gone: WorkspaceFailure = ProviderError::WorkspaceGone.into();
+        let offline: WorkspaceFailure = ProviderError::Offline.into();
+        let a = serde_json::to_string(&gone).unwrap();
+        let b = serde_json::to_string(&offline).unwrap();
+        assert_ne!(
+            a, b,
+            "an outage is temporary and the projection is still true; a deleted workspace means \
+             the thing being projected does not exist, and the interface must be able to say so"
+        );
+        assert!(a.contains("gone"), "{a}");
+    }
+
+    #[test]
+    fn an_unsupported_method_names_the_feature_that_owns_it() {
+        use crate::application::ports::workspace_provider::Owner;
+        let f: WorkspaceFailure = ProviderError::Unsupported {
+            owner: Owner::F006Editor,
+        }
+        .into();
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(
+            json.contains("F006"),
+            "a log must read as a schedule rather than a bug: {json}"
+        );
+    }
+}

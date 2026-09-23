@@ -67,6 +67,23 @@ impl SqliteWorkspaceCache {
         f(&guard).map_err(store)
     }
 
+    /// Total size of every stored content blob, compressed.
+    ///
+    /// SC-010 requires the compression ratio to be **measured and printed** rather than only
+    /// compared, so the store has to be able to report it. Exposed as a number rather than by
+    /// handing out a connection, which would put `rusqlite` in this adapter's public surface and
+    /// let a caller reach around the port (Principle VIII).
+    pub fn stored_content_bytes(&self) -> CacheResult<u64> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT coalesce(sum(length(content_blob)), 0) FROM file_contents",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+        })
+        .map(|v| v as u64)
+    }
+
     pub(crate) fn register_inner(&self, ws: &Workspace, now: i64) -> CacheResult<Attachment> {
         let (location_type, base_path, ssh_host) = match &ws.location {
             Location::Remote { host, base } => ("REMOTE", base.clone(), Some(host.clone())),

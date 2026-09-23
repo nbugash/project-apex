@@ -141,7 +141,7 @@ listings requested equals the number of folders actually expanded, not the numbe
 - [X] T044 [US1] Implement `CachedWorkspace::read_directory` in `client/core/src/application/use_cases/cached_workspace.rs`: consult the projection first, issue exactly one shallow request on a miss, persist, return (FR-014, FR-015, FR-016, §10.1)
 - [X] T045 [US1] Add the workspace tree commands to `client/core/src/adapters/inbound/tauri_commands.rs` and the tree store in `client/ui/lib/workspace/tree.svelte.ts`
 - [X] T046 [US1] Implement `client/ui/lib/workspace/FileTree.svelte` using design system tokens and Phosphor icons only. **Make it keyboard-operable**: focusable, showing the design system's 2px accent `:focus-visible` ring and never the browser default, with Enter or Space expanding and collapsing a folder (FR-040, US1.5). Arrow-key traversal and type-ahead are out of scope and land with F006 (FR-040a) — do not build them here. No raw hex, no raw pixel values, no hard-coded font family — `npm run lint:ds` must pass (Principle I)
-- [ ] T047 [US1] Add the two §1.4 sidebar measurements to `tests/perf/` : cached expand p99 under 1 ms, uncached under 250 ms, over at least 100 samples, measured at the interface/transport boundary with harness delay excluded, **printing the measured values** (A-NFR, SC-004c)
+- [X] T047 [US1] Add the two §1.4 sidebar measurements to `tests/perf/` : cached expand p99 under 1 ms, uncached under 250 ms, over at least 100 samples, measured at the interface/transport boundary with harness delay excluded, **printing the measured values** (A-NFR, SC-004c)
 
 **Checkpoint**: A developer can open a large repository and browse it, and the cost is provably
 proportional to what they opened.
@@ -263,7 +263,7 @@ come from the projection with no request attempted.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T081 Implement the SC-010 compression gate in `tests/perf/`: cached content occupies at most half the disk of what it represents, measured over **this repository** rather than generated text, with the achieved ratio printed (A-NFR). Generated text compresses far better than code and would make the budget meaningless
+- [X] T081 Implement the SC-010 compression gate in `tests/perf/`: cached content occupies at most half the disk of what it represents, measured over **this repository** rather than generated text, with the achieved ratio printed (A-NFR). Generated text compresses far better than code and would make the budget meaningless
 - [ ] T082 [P] Add the opt-in real-`sshd` test in `client/core/tests/workspace_real_sshd.rs`, gated on `APEX_REAL_SSHD`, proving a bulk read attaches to the existing control master and does not become one. Excluded from the default suite because SC-014 forbids requiring a host
 - [ ] T083 [P] Add the digest agreement test asserting `client/core/build.rs`'s hand-rolled SHA-256 and `sha2` produce the same hash for the same bytes, so the two implementations cannot drift apart silently
 - [ ] T084 [P] Add unit tests for the cursor logic in `engine/src/application/use_cases/workspace.rs`: a cursor past the last entry returns empty with no `nextCursor`; a cursor for a name that no longer exists resumes at the next name rather than failing

@@ -30,6 +30,7 @@ pub fn run() {
             cmd::rail_select,
             cmd::tool_window_resize,
             cmd::rail_destinations,
+            cmd::workspace_read_directory,
             #[cfg(debug_assertions)]
             cmd::stub_set_connection,
         ])
@@ -81,6 +82,7 @@ pub fn run() {
             });
 
             app.manage(wiring.shell);
+            app.manage(wiring.workspace);
             Ok(())
         })
         .build(tauri::generate_context!())
