@@ -94,7 +94,7 @@ this phase owns the mechanism.
 ### The projection
 
 - [ ] T027 Implement the v1 schema in `client/core/src/adapters/outbound/sqlite/schema.rs`: the **whole** of §5.2 including `git_status`, plus the three FTS triggers from T003. Set `journal_mode = WAL`, `synchronous = NORMAL` and `foreign_keys = ON` **on every connection** — `foreign_keys` is per-connection in SQLite and defaults off, and a connection that forgets it silently breaks the cascade that gives FR-012
-- [ ] T028 Implement the migration ladder in `client/core/src/adapters/outbound/sqlite/migrate.rs`: read `PRAGMA user_version`; each step in one transaction that also bumps the version; on failure or on a version newer than this build, delete the database file **and its `-wal` and `-shm` companions** and recreate. Deleting only the main file leaves a WAL SQLite will replay into the fresh one
+- [ ] T028 Implement the migration ladder — the `migrate_to` operation of the `WorkspaceCache` port — in `client/core/src/adapters/outbound/sqlite/migrate.rs`: read `PRAGMA user_version`; each step in one transaction that also bumps the version; on failure or on a version newer than this build, delete the database file **and its `-wal` and `-shm` companions** and recreate. Deleting only the main file leaves a WAL SQLite will replay into the fresh one
 - [ ] T029 Implement `SqliteWorkspaceCache` in `client/core/src/adapters/outbound/sqlite/mod.rs`: one connection behind a mutex, every operation crossing `tokio::task::spawn_blocking`, per research.md. Implement only `register`, `forget` and `schema_version` here; the read and write operations land in their own stories
 
 ### Test doubles and the contract suites
@@ -134,7 +134,7 @@ listings requested equals the number of folders actually expanded, not the numbe
 - [ ] T040 [US1] Implement the `ReadDirectory` use case in `engine/src/application/use_cases/workspace.rs`: resolve through `ResolvedPath`, list immediate children only, sort `(type DESC, name ASC)`, page at `limit` (default and max 1000), and return `nextCursor` exactly when more follow
 - [ ] T041 [US1] Wire `workspace/readDirectory` into `engine/src/adapters/inbound/rpc.rs`, mapping refusals to `-32002`, missing paths to `-32003` and unknown workspaces to `-32001`
 - [ ] T042 [US1] Implement `RemoteWorkspaceProvider::read_directory` in `client/core/src/adapters/outbound/remote_workspace.rs`. **One provider call issues at most one protocol request** (R1) — no fan-out, no retry, no prefetch, which is what makes SC-002 measure what it claims to
-- [ ] T043 [US1] Implement `list_children` and `put_listing` in `client/core/src/adapters/outbound/sqlite/mod.rs`. `put_listing` replaces a parent's children atomically and **preserves `file_id` for entries that survive**, so their cached content survives with them (FR-022)
+- [ ] T043 [US1] Implement `list_children` and `put_listing` in `client/core/src/adapters/outbound/sqlite/mod.rs`. `put_listing` replaces a parent's children atomically and preserves `file_id` for entries that remain **under the same name**, so their cached content survives with them. **It must not claim to handle renames** — a re-listing sees one name gone and another present, with no identity linking them, so the vanished entry's content cascades away and the file is re-cached on next open (FR-022a). The entry stays listed throughout (FR-022b). See [contracts/cache.md](./contracts/cache.md) C9
 - [ ] T044 [US1] Implement `CachedWorkspace::read_directory` in `client/core/src/application/use_cases/cached_workspace.rs`: consult the projection first, issue exactly one shallow request on a miss, persist, return (FR-014, FR-015, FR-016, §10.1)
 - [ ] T045 [US1] Add the workspace tree commands to `client/core/src/adapters/inbound/tauri_commands.rs` and the tree store in `client/ui/lib/workspace/tree.svelte.ts`
 - [ ] T046 [US1] Implement `client/ui/lib/workspace/FileTree.svelte` using design system tokens and Phosphor icons only. No raw hex, no raw pixel values, no hard-coded font family — `npm run lint:ds` must pass (Principle I)
@@ -157,7 +157,7 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 
 - [ ] T048 [P] [US2] Write `client/core/tests/cache_validity.rs` **before** the implementation, covering US2 scenarios 1, 2 and 5: a matching hash transfers zero content bytes; a changed hash refetches and replaces; **a file marked `MODIFIED` in git with unchanged content is still served from the cache**. Confirm they fail first
 - [ ] T049 [P] [US2] Write `client/core/tests/cache_verification.rs`: `Verifying` is published before the stat is issued and stays published until it resolves; no bytes reach the caller before confirmation across every ordering the fake can produce (SC-004a); a fake engine that never answers ends the wait at the limit and yields `Unverified` (SC-004b). Use `FakeClock` — **a test that really sleeps for two seconds is a test nobody runs on every commit**
-- [ ] T050 [P] [US2] Write `engine/tests/read_file.rs` against a real tree: ranged reads, a range past EOF returning zero bytes with the correct `totalSize`, a `length` above 512 KiB refused with `-32602` rather than truncated, and binary content surviving byte-for-byte
+- [ ] T050 [P] [US2] Write `engine/tests/read_file.rs` against a real tree: ranged reads, a range past EOF returning zero bytes with the correct `totalSize`, a `length` above 512 KiB refused with `-32602` rather than truncated, and binary content surviving byte-for-byte. **Add the stat-then-read race**: take a `stat`, rewrite the file on disk, then read it, and assert the returned `sha256` differs from the one `stat` gave — so a caller assembling ranges can detect that the file moved underneath it. Without this assertion FR-021's internal-consistency claim is unverifiable, and an implementation that reported a cached hash beside fresh bytes would pass every other test in this file
 - [ ] T051 [P] [US2] Write `tests/e2e/cache-verification.spec.ts` asserting the verification indicator is visible while a confirmation is outstanding (FR-021b)
 
 ### Implementation for User Story 2
@@ -172,8 +172,12 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 - [ ] T059 [US2] Implement `CachedWorkspace::stat` in `client/core/src/application/use_cases/cached_workspace.rs` with pass-through when connected
 - [ ] T060 [US2] Add the `Verifying`, `Current` and `Unverified` states to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/VerifyBadge.svelte`. Extend the **existing** state map rather than adding a parallel one — F001 shipped a bug where a test kept its own copy of that map and passed while the component crashed
 
-**Checkpoint**: Cached files open without transfer, changed files refetch, and a wedged engine
-produces a stated outcome rather than a frozen window.
+- [ ] T091 [P] [US2] Write the rename test in `client/core/tests/cache_validity.rs`: cache a file, call `WorkspaceCache::rename` to move it, then look it up under the new path and assert **the same `file_id` and the same content blob**, with zero bytes transferred (FR-022, US2 scenario 7). Then assert the other half: run `put_listing` over a folder where a cached name vanished and a new one appeared, and confirm the old content is gone, the new entry is listed, and nothing errored (FR-022a, FR-022b, US2 scenario 8). **Both halves matter** — the first proves opaque `file_id` works, the second proves nothing pretends it works where it cannot
+- [ ] T092 [US2] Implement `rename` in `client/core/src/adapters/outbound/sqlite/mod.rs`: update `relative_path`, `parent_path` and `name` for one `file_id` and **never touch `file_contents`** (FR-022, C9). This is the operation A-B5's opaque `file_id` exists for. Its first caller is F006's write path — document that on the function, so nobody wires `put_listing` into it on the assumption that a re-listing knows what moved
+
+**Checkpoint**: Cached files open without transfer, changed files refetch, a wedged engine
+produces a stated outcome rather than a frozen window, and a known rename keeps its content while
+an observed one honestly does not.
 
 ---
 
@@ -194,8 +198,12 @@ confirm each reads back its own content.
 - [ ] T063 [US3] Complete `RegisterWorkspace` in `client/core/src/application/use_cases/register_workspace.rs` with the attach-versus-create decision keyed on `WorkspaceId` and nothing else. **Nothing may key on the display name** (FR-010, A-WORKSPACE)
 - [ ] T064 [US3] Implement workspace deletion in `client/core/src/application/use_cases/register_workspace.rs` and `forget` in the SQLite adapter, relying on `ON DELETE CASCADE` for content removal (FR-012). Assert in the test that the cascade actually fired, since it depends on the per-connection `foreign_keys` pragma from T027
 - [ ] T065 [US3] Add workspace registration and deletion commands to `client/core/src/adapters/inbound/tauri_commands.rs`
+- [ ] T093 [P] [US3] Write the vanished-root test in `client/core/tests/workspace_registry.rs` and `engine/tests/register.rs`: register a workspace, delete its root on disk, then issue a read. Assert the engine reports **the workspace as gone**, distinctly from a path missing inside it, and that the client stops presenting the projection as a live view (FR-038, SC-015). Asserting only that the read failed would pass for an implementation that reports every deleted root as an ordinary not-found, which is exactly the confusion this requirement exists to prevent
+- [ ] T094 [US3] Implement the distinction in `engine/src/application/use_cases/workspace.rs` and `engine/src/domain/path.rs`: when resolution fails because the **registered root itself** no longer resolves, return `WorkspaceGone` rather than a missing path. The root is canonicalised once at registration, so this is a re-check of the root before the per-request prefix comparison, not a second canonicalisation of every path
+- [ ] T095 [US3] Surface it in `client/core/src/application/use_cases/cached_workspace.rs` and `client/ui/lib/workspace/tree.svelte.ts`: a gone workspace is reported to the developer and its projection is no longer presented as current. **This is not the offline path** — offline means possibly stale and still true; gone means the thing being projected does not exist, which is the one case where the cache stops being a stale fact and becomes fiction
 
-**Checkpoint**: Two checkouts of one repository coexist, each with its own projection.
+**Checkpoint**: Two checkouts of one repository coexist, each with its own projection, and a
+workspace that has been deleted underneath the client says so.
 
 ---
 
@@ -274,12 +282,12 @@ task. This table exists so coverage is checkable rather than asserted — it is 
 
 | Requirement | Tasks | Requirement | Tasks |
 |---|---|---|---|
-| FR-001 | T015, T033 | FR-022 | T043 |
+| FR-001 | T015, T033 | FR-022 | T091, T092 |
 | FR-002 | T015, T040, T052 | FR-023 | T050, T052, T054 |
 | FR-003 | T013, T053 | FR-024 | T002, T038, T040 |
 | FR-004 | T015, T086 | FR-025 | T054, T055 |
-| FR-005 | T019, T020 | FR-025a | T047 |
-| FR-006 | T019, T020 | FR-025b | T085 |
+| FR-005 | T019, T020 | FR-036 | T047 |
+| FR-006 | T019, T020 | FR-037 | T085 |
 | FR-007 | T019, T020 | FR-026 | T066, T070, T071 |
 | FR-008 | T012, T019 | FR-026a | T066, T071, T074 |
 | FR-009 | T011, T063 | FR-026b | T085 |
@@ -301,11 +309,14 @@ task. This table exists so coverage is checkable rather than asserted — it is 
 | FR-021a | T049, T058 | | |
 | FR-021b | T049, T051, T058, T060 | | |
 | FR-021c | T049, T058, T060 | | |
+| FR-022a | T043, T091 | | |
+| FR-022b | T043, T091 | | |
+| FR-038 | T093, T094, T095 | | |
 
 | Criterion | Tasks | Criterion | Tasks |
 |---|---|---|---|
 | SC-001 | T037 | SC-008 | T066 |
-| SC-002 | T037, T047 | SC-008a | T066 |
+| SC-002 | T037 | SC-008a | T066 |
 | SC-003 | T048 | SC-009 | T066 |
 | SC-004 | T048 | SC-010 | T081 |
 | SC-004a | T049 | SC-011 | T075 |
@@ -314,9 +325,10 @@ task. This table exists so coverage is checkable rather than asserted — it is 
 | SC-005 | T048 | SC-013a | T068 |
 | SC-006 | T019 | SC-013b | T067 |
 | SC-007 | T061 | SC-014 | T082, T089 |
+| SC-015 | T093 | | |
 
 Three requirements are satisfied by a **record** rather than by code, and their tasks write that
-record: FR-025b (the cache does not make opening faster while online) and FR-026b (a session that
+record: FR-037 (the cache does not make opening faster while online) and FR-026b (a session that
 never restarts never evicts) are accepted limits that T085 documents, and FR-013's "the engine
 wins" is enforced by T058 having no branch in which a cached hash overrides the engine's.
 
@@ -391,7 +403,7 @@ MVP → **US2** (files open from cache, verified) → **US3** (two checkouts coe
 cache survives months and upgrades) → **US5** (offline). Each adds value without breaking what came
 before.
 
-Phase 2 is unusually large for this feature — 28 of 90 tasks — because it carries the engine's
+Phase 2 is unusually large for this feature — 28 of 95 tasks — because it carries the engine's
 restructure and the schema. That is front-loaded cost with no user-visible result, and it is worth
 knowing before starting rather than discovering at task fifteen.
 
@@ -399,6 +411,9 @@ knowing before starting rather than discovering at task fifteen.
 
 ## Notes
 
+- **T091–T095 are appended IDs placed in their own phase**, not at the end. They came from
+  `/speckit-analyze` after numbering was fixed, and renumbering ninety tasks to insert five would
+  have invalidated every reference in this file. F002 did the same with its T076
 - `[P]` means different files and no dependency on an incomplete task
 - Commit after each task or logical group
 - **Two tests must fail before their implementation exists**: T019 (path containment) and T048

@@ -23,8 +23,9 @@ this document states a number it is quoting one.
 - **§5.1** — the cache is a projection, never an authority. Where it disagrees with the engine,
   the engine wins.
 - **§5.2 / A-B5** — the canonical schema, including the three corrections the review required:
-  an opaque `file_id` so renames preserve cached content, `last_accessed_at` so eviction is
-  expressible at all, and an FTS table so offline path search does not degrade to a full scan.
+  an opaque `file_id` so a rename **the projection is told about** preserves cached content,
+  `last_accessed_at` so eviction is expressible at all, and an FTS table so offline path search does
+  not degrade to a full scan. The qualifier is load-bearing and is why FR-022a exists.
 - **§5.3** — a blob is valid when its hash equals the engine's. **Nothing else invalidates it**,
   and git status explicitly does not.
 - **§5.5, §5.6** — fourteen days unopened, Zstd level 3, hash computed over decompressed content.
@@ -52,6 +53,12 @@ invalidation questions a read-only projection does not. The trait is declared wh
 
 **It does not watch.** `watch` is declared for the same reason and implemented by F004, which
 owns file events and the client-side invalidation they drive.
+
+**It does not recognise a rename it did not perform.** The projection can move a file it is told
+about, keeping its content, and that operation ships here. But this feature learns of remote changes
+only by re-listing a folder, which shows a name gone and a name added with nothing linking them. So
+a rename made elsewhere costs a refetch. FR-022a records the limit; F006's write path is the first
+caller with an identity to pass.
 
 **It does not search content.** Offline *path* search is in scope, because the FTS table exists
 for it. Content search runs on the engine and belongs to F013.
@@ -141,10 +148,15 @@ content is served — then reopen an unchanged file and confirm nothing was tran
    and treating it as one would discard exactly the files being worked on.
 6. **Given** a file larger than a single message may carry, **When** it is opened, **Then** it
    arrives in ranges and the developer sees the beginning without waiting for the end.
+7. **Given** a cached file that the projection is told has moved, **When** its path is updated,
+   **Then** its content is still served from the cache and nothing is transferred.
+8. **Given** a cached file renamed on the engine and noticed only when its folder is re-listed,
+   **When** it is opened under its new name, **Then** it is fetched again and remains listed
+   throughout — the content is lost, the file is not.
 
 ---
 
-### User Story 3 - Address a workspace unambiguously (Priority: P1)
+### User Story 3 - Address a workspace unambiguously, and know when it is gone (Priority: P1)
 
 A developer opens two checkouts of the same repository. Each is a distinct workspace, neither
 shadows the other, and closing one does not disturb the other's cache.
@@ -154,7 +166,8 @@ keyed by anything else collapses two checkouts into one — which is the ordinar
 reviewing a branch beside their own work, not an edge case.
 
 **Independent Test**: Register two workspaces whose display names collide, populate both, and
-confirm each reads back its own content.
+confirm each reads back its own content. Then remove one root on the engine and confirm the client
+says so rather than continuing to browse it.
 
 **Acceptance Scenarios**:
 
@@ -164,6 +177,9 @@ confirm each reads back its own content.
    the existing cache rather than building a second one.
 3. **Given** a workspace being deleted, **When** the developer confirms, **Then** its cached
    content and its tree are both removed.
+4. **Given** a workspace whose root has been deleted on the engine while it is open, **When** the
+   developer next acts on it, **Then** they are told the workspace is gone rather than being shown
+   its projection as though it were current.
 
 ---
 
@@ -236,8 +252,10 @@ come from the projection with no request attempted.
   children must not stall the interface or arrive as one unbounded message.
 - **Binary content.** Images, PDFs and build artifacts are legal file content. Nothing may assume
   text, and nothing may corrupt bytes by guessing an encoding.
-- **A rename.** Cached content must survive a file moving, because the content is unchanged and
-  refetching it would be wasted work.
+- **A rename.** A rename the client performed must keep the cached content, because the content is
+  unchanged and refetching it would be wasted work. A rename merely *observed* when a folder is
+  re-listed cannot be recognised as one — only a vanished name and a new one — so its content is
+  dropped and refetched, and the file stays listed either way (FR-022a, FR-022b).
 - **Two workspaces pointing at the same directory.** Legal, and each keeps its own projection.
 - **The cache schema changing between releases.** An older cache migrates in place, visibly.
 - **A migration interrupted halfway** — the machine sleeps, the process is killed, the disk
@@ -323,7 +341,17 @@ come from the projection with no request attempted.
   that the content could not be verified, and offer the cached copy marked as unverified. An
   unbounded wait is not an option, because the engine being wedged is exactly when the cache is
   most useful.
-- **FR-022**: Cached content MUST survive a rename, because the content did not change.
+- **FR-022**: Cached content MUST survive a rename **performed through the provider**: the
+  projection MUST identify a file by an opaque identity rather than by its path, and MUST expose an
+  operation that moves a file's path while leaving its content untouched.
+- **FR-022a**: A rename **discovered by re-listing a folder** loses that file's cached content, and
+  the next open refetches it. This is an accepted limit, not a defect. Within this feature a
+  re-listing sees only that one name vanished and another appeared; nothing links the two without
+  hashing every entry, which costs more than the refetch it would save. The requirement that makes
+  FR-022 pay — a rename the client itself performed — arrives with the write path in F006, which is
+  the first feature with a caller for the operation FR-022 requires.
+- **FR-022b**: Losing cached content to a rename MUST NOT lose the file. The tree entry MUST remain
+  listed and navigable, exactly as after an eviction.
 
 **Size**
 
@@ -338,8 +366,11 @@ come from the projection with no request attempted.
   does not currently describe. Recorded here as a consequence rather than discovered during
   implementation, the way `session/onRestart` was in F002.
 - **FR-025**: Content that would not fit in a single protocol message MUST travel beside the
-  channel rather than through it, per A-BULK. The threshold is the frame cap in §4.1, so the rule
-  is decidable from the content's size rather than from a judgement about what counts as bulk.
+  channel rather than through it, per A-BULK. The threshold is **derived from** the frame cap in
+  §4.1 and stated as a byte count in the plan, so the rule is decidable from the content's size
+  rather than from a judgement about what counts as bulk. It cannot **equal** the cap: content is
+  carried encoded, and the encoding expands it, so a raw threshold set at the cap produces a
+  message that exceeds it.
 
 **Retention**
 
@@ -361,11 +392,11 @@ come from the projection with no request attempted.
 
 **Latency**
 
-- **FR-025a**: Expanding a folder whose contents are already cached MUST complete within 1 ms,
+- **FR-036**: Expanding a folder whose contents are already cached MUST complete within 1 ms,
   and one that requires a fetch within 250 ms, per §1.4. Principle V makes the interaction budget
   a measured question rather than an argued one, and A-NFR fixes how: p99 at the boundary
   between the interface and the transport, with any harness delay excluded.
-- **FR-025b**: Opening a cached file while connected costs a confirmation round trip by
+- **FR-037**: Opening a cached file while connected costs a confirmation round trip by
   FR-021a, so the cache MUST NOT be claimed to make opening faster while online. Its online value
   is transfer avoided; its offline value is availability. Stating this prevents a later
   measurement being read as a regression against a promise nobody made.
@@ -385,6 +416,11 @@ come from the projection with no request attempted.
   optimisation.
 - **FR-035**: Every behaviour here MUST be verifiable with no remote host and no network,
   consistent with the standard F001 established and A-TEST made binding.
+- **FR-038**: A workspace whose root no longer exists on the engine MUST be reported as gone, and
+  its projection MUST stop being presented as a live view. The developer MUST be able to tell the
+  difference between a folder that has not been fetched yet and a workspace that is not there any
+  more — browsing a projection of something deleted is the one case where the cache silently
+  becomes fiction rather than a stale fact.
 
 ### Key Entities
 
@@ -442,6 +478,8 @@ come from the projection with no request attempted.
 - **SC-013b**: A failed migration leaves zero readable half-transformed projections across every
   exercised failure mode, and the developer is told the cache was rebuilt.
 - **SC-014**: The full suite for this feature runs with no remote host and no network.
+- **SC-015**: A workspace deleted on the engine while open is reported as gone in 100% of exercised
+  cases, with zero instances of its projection continuing to be presented as current.
 
 ## Assumptions
 

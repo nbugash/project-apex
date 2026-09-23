@@ -120,6 +120,20 @@ It lives beside the tests, not in `src/`, so it cannot be wired into a real comp
 
 ---
 
+## A seam F013 must reconcile deliberately
+
+This feature refuses `search()` on the provider while delivering offline path search through a
+separate `SearchPaths` use case. That is consistent with FR-002, which scopes the provider to
+listing, metadata and ranged reading — search is not among the three, and FR-001's "one interface"
+governs *content*, which search results are not.
+
+But it means that when F013 implements `search()`, there will be two search entry points: one on the
+provider for content and online paths, one beside it for offline paths. F013 should decide which
+absorbs which rather than discovering the duplication at its second call site. Recorded here because
+the choice is cheap now and expensive later.
+
+---
+
 ## The contract test
 
 One suite runs against **every** implementation, parameterised over the constructor. It asserts P1

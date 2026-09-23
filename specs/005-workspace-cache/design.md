@@ -192,6 +192,12 @@ pub trait WorkspaceCache: Send + Sync {
 }
 
 pub enum StoreOutcome { Stored, NotEligible { size: u64 }, Failed(CacheError) }
+
+//   rename(file_id, to):
+//     precondition:  the caller KNOWS this is a move — it has an identity, not two names
+//     postcondition: path columns updated; file_contents untouched, so content survives (FR-022)
+//     note:          put_listing cannot call this. A re-listing has no identity to pass.
+//                    F006's write path is the first caller. See contracts/cache.md C9.
 ```
 
 `put_content` and `touch` returning `StoreOutcome` rather than `Result` is the single most
@@ -381,6 +387,8 @@ data-model.md and is not repeated here.
 | Path escapes via a symlink | Refuse after canonicalisation | `-32002`, **identical** to the lexical case and to a non-existent target (FR-007) |
 | Path inside the root, absent | Ordinary not-found | `-32003` → `ProviderError::NotFound` |
 | Unknown `workspaceId` | Refuse | `-32001` → `UnknownWorkspace`; the client re-registers, which is also the engine-restart path |
+| Registered root no longer exists on the engine | Report the **workspace** as gone, distinctly from a missing path inside it | `-32001` → `WorkspaceGone`; the projection stops being presented as a live view (FR-038, SC-015) |
+| A cached file's name vanishes from a re-listing | Its content is dropped; the entry is removed from that listing and re-cached on next open | Nothing — a refetch, not an error. The file remains listed (FR-022a, FR-022b) |
 | `length` above the bulk threshold | Refuse with invalid-params rather than truncate | `-32602`; the client routes to `BulkTransfer` instead |
 | Confirmation exceeds 2 s | End the wait, serve cached bytes | `Presentation::Unverified` in the interface (FR-021c, SC-004b) |
 | Disconnected, content cached | Serve | `Presentation::PossiblyStale` (FR-032) |
@@ -400,7 +408,7 @@ Field-level definitions are in [data-model.md](./data-model.md) and are not copi
 |-----------------------------------------------|-------------|-------|
 | `Workspace` | `SqliteWorkspaceCache` → `workspaces` | One row. `ON DELETE CASCADE` gives FR-012 |
 | Tree node / `FsEntry` | `SqliteWorkspaceCache` → `files` | `UNIQUE(workspace_id, relative_path)`; `file_id` opaque so renames keep content |
-| `CacheEntry` | `SqliteWorkspaceCache` → `files` ⋈ `file_contents` | 1:0..1. Zstd level 3; hash over decompressed bytes |
+| `CacheEntry` | `SqliteWorkspaceCache` → `files` ⋈ `file_contents` | 1:0..1. Zstd level 3; hash over decompressed bytes. `rename` moves the `files` row and leaves `file_contents` alone — see [contracts/cache.md](./contracts/cache.md) C9 for what that does **not** cover |
 | Path search index | `SqliteWorkspaceCache` → `files_fts` | Trigger-maintained only. No type writes it |
 | Git status | `files`-adjacent `git_status` | Created at v1, **owned by F011**. Nothing here reads or writes it, and nothing may: §5.3 |
 | `Validity` | none — derived | Storing it would create a second truth about freshness |

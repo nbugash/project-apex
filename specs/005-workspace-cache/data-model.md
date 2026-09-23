@@ -81,7 +81,7 @@ The application-layer view of one cached file. Not a table.
 | Field | Type | Rule |
 |---|---|---|
 | `file_id` | `FileId` | Opaque UUID, **not** derived from the path (A-B5) |
-| `path` | `RelPath` | Mutable — a rename updates it in place (FR-022) |
+| `path` | `RelPath` | Mutable — a **known** rename updates it in place, leaving content untouched (FR-022). A rename merely observed in a re-listing is not known; see below |
 | `hash` | `Sha256` | Of the decompressed content |
 | `bytes` | `Vec<u8>` | Decompressed |
 | `last_accessed_at` | `Timestamp` | Updated on every hit (FR-028) |
@@ -196,6 +196,17 @@ the blob. With an opaque UUID, a rename is an `UPDATE` of `relative_path`, `pare
 `name`, and `file_contents` is untouched — which is FR-022 satisfied by the schema rather than by
 code remembering to copy a blob.
 
+**What that does not buy.** Opaque identity preserves content across a rename the projection is
+*told about*. It does nothing for a rename discovered by re-listing a folder, because a re-listing
+carries no identity at all — only a set of names, one gone and one new. Linking them would mean
+hashing every entry in the folder, which costs more than refetching the one file. So the vanished
+entry is removed, its content cascades away, and the file is re-cached on next open (FR-022a). The
+entry stays listed throughout (FR-022b).
+
+This matters because A-B5's correction reads like "renames are handled", and it is easy to write a
+`put_listing` that claims so. `WorkspaceCache::rename` is where opaque identity actually pays, and
+F006's write path is the first caller that can invoke it.
+
 ### Why `last_accessed_at` exists
 
 A-B5's second correction. §5.5 evicts on time since last *read*; the original schema stored only
@@ -220,6 +231,7 @@ requirement it enforces.
 | 7 | A projection is never read at a `user_version` the code was not built for | Maintenance runs before any provider is constructed | FR-018c |
 | 8 | Nothing above the eligibility cap has a `file_contents` row | Write path checks size before compressing | Spec edge case; research.md |
 | 9 | `last_accessed_at` is not null for any row with `is_cached = 1` | Set in the same statement that sets `is_cached` | FR-028, FR-026 |
+| 10 | A file never disappears from the tree because its content went away — whether by eviction or by an unrecognised rename | Content removal clears `is_cached` and deletes from `file_contents` only | FR-027, FR-022b |
 
 Invariant 3 deserves its own note: it is the one that makes `is_cached` meaningful as a *listing*
 column. §5.4's sidebar query reads `is_cached` without joining `file_contents`, so a divergence
@@ -237,9 +249,14 @@ The engine persists nothing. It holds one registry, in memory:
 | `WorkspaceRoots` | `WorkspaceId → canonical AbsPath` | The engine process |
 
 Canonicalised once at registration, so the per-request check is a resolve and a prefix comparison
-rather than a second `canonicalize` of the root. A root that has been replaced under the engine —
-the workspace deleted remotely while open — surfaces when the resolve fails, which is the edge case
-the spec names.
+rather than a second `canonicalize` of the root.
+
+A root **deleted on the engine while registered** needs its own answer (FR-038). The registry holds
+a canonical path that no longer resolves, so the next request against it fails — and failing as an
+ordinary not-found would let the client keep browsing a projection of something that is gone, which
+is the one case where the cache stops being a stale fact and becomes fiction. The engine therefore
+distinguishes the two: a missing **root** is reported as the workspace being gone, not as a missing
+path inside it.
 
 That the registry is in memory carries F002's consequence unchanged: it does not survive a crash,
 and a client that reconnects to a new engine re-registers. `session/onRestart`'s `unpreserved` list

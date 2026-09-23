@@ -57,7 +57,7 @@ three scenarios were added.
 ### Decisions taken during clarification that a reviewer should weigh
 
 **Opening a cached file waits for the engine.** Chosen over rendering immediately and
-reconciling. The consequence is recorded explicitly in FR-025b: while online the cache saves
+reconciling. The consequence is recorded explicitly in FR-037: while online the cache saves
 transfer, not open latency. Nobody should later read a measurement of that as a regression
 against a promise this specification never made.
 

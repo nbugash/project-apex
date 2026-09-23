@@ -188,8 +188,28 @@ client/core/src/
 │       │   ├── schema.rs                # NEW — v1 DDL, the §5.2 canonical schema
 │       │   └── migrate.rs               # NEW — user_version ladder, discard-and-rebuild
 │       ├── remote_workspace.rs          # NEW — WorkspaceProvider over RequestTransport
-│       └── bulk/mod.rs                  # NEW — ssh invocation, ControlMaster=no
+│       ├── bulk/mod.rs                  # NEW — ssh invocation, ControlMaster=no
+│       └── system_clock.rs              # NEW — the Clock port's real implementation
 └── composition.rs                       # EXTENDED — maintenance runs before any open
+
+client/core/tests/                       # NEW — the Rust suites, per quickstart.md
+├── common/{fake_workspace,fake_cache,fake_clock}.rs
+├── provider_contract.rs                 # every provider implementation runs this suite
+├── cache_contract.rs                    # run against both SQLite and the in-memory fake
+├── workspace_tree.rs                    # US1
+├── cache_validity.rs                    # US2 — fail-first
+├── cache_verification.rs                # US2 — the verifying window
+├── workspace_registry.rs                # US3
+├── cache_maintenance.rs                 # US4 — retention and migration
+├── cache_offline.rs                     # US5
+├── fts_sync.rs                          # US5 — the trigger gap
+└── workspace_real_sshd.rs               # opt-in, real sshd
+
+engine/tests/                            # NEW
+├── path_containment.rs                  # fail-first, against a real tree
+├── read_directory.rs
+├── read_file.rs
+└── register.rs
 
 engine/src/
 ├── main.rs                              # REDUCED — composition root and stdio loop only

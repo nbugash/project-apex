@@ -18,11 +18,11 @@ The port is a **capability, not a technology** (Principle VIII): it is `Workspac
 | `register(workspace)` | Idempotent. Registering an existing id attaches to its projection and updates `last_opened_at` (FR-011). Never creates a second projection |
 | `forget(workspace_id)` | Removes tree and content together, by cascade (FR-012) |
 | `list_children(workspace_id, parent)` | One indexed query, no join. Returns rows in `(is_directory DESC, name ASC)` — the same order the protocol promises |
-| `put_listing(workspace_id, parent, entries)` | Replaces the children of `parent` atomically. Entries that vanished are removed; `file_id` is preserved for entries that remain, so their content survives |
+| `put_listing(workspace_id, parent, entries)` | Replaces the children of `parent` atomically. `file_id` is preserved for entries that remain **under the same name**, so their content survives. An entry whose name is gone is removed and its content cascades away — see C9 |
 | `lookup(workspace_id, path)` | The §5.4 open query: metadata and blob in one statement |
 | `put_content(file_id, bytes, hash)` | Hashes first, compresses second (§5.6). Sets `is_cached` and `last_accessed_at` in the same transaction (invariants 3 and 9) |
 | `touch(file_id, now)` | Records an access (FR-028) |
-| `rename(file_id, new_path)` | Updates path columns only. Never touches `file_contents` (FR-022) |
+| `rename(file_id, new_path)` | Updates `relative_path`, `parent_path` and `name` only. Never touches `file_contents`, so content survives the move (FR-022). **This feature implements and tests it; its first caller is F006's write path** |
 | `search_paths(workspace_id, fragment, limit)` | `files_fts`, never `LIKE` (§5.2, §5.4) |
 | `evict(before)` | Deletes from `file_contents` only; clears `is_cached`. Never removes a `files` row (FR-027, §5.5) |
 | `schema_version()` / `migrate_to(v)` | `PRAGMA user_version`; see the maintenance contract below |
@@ -41,6 +41,13 @@ The port is a **capability, not a technology** (Principle VIII): it is `Workspac
 | C6 | **Path search needs no network.** `search_paths` never consults a provider | FR-031, SC-011 |
 | C7 | **Foreign keys are on for every connection.** Per-connection in SQLite, default off. A connection without it silently breaks C4's cascade | §5.2 |
 | C8 | **The FTS index is maintained by trigger.** No caller updates it, and no caller may | data-model.md amendment |
+| C9 | **`put_listing` cannot recognise a rename**, and does not pretend to. A re-listing sees one name gone and another present; linking them would require hashing every entry, which costs more than the refetch it saves. The vanished entry's content is dropped, the new entry is cached on next open, and **the file is listed throughout** | FR-022a, FR-022b |
+
+C9 is the one that was nearly wrong. The opaque `file_id` (A-B5) exists so that a rename preserves
+content, and it was tempting to write `put_listing` as though it delivered that. It cannot: identity
+is preserved across a *known* move, and a re-listing does not know. The `rename` operation is where
+`file_id` pays, and F006 is the first feature with a caller for it. Stating the limit here is what
+stops a later reader assuming the cache handles renames it has never been told about.
 
 C3 is the one with teeth. The natural signature returns `Result`, and the natural caller uses `?`.
 That would turn a full disk into a failed file open, which FR-034 forbids. The contract test
