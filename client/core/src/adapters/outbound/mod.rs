@@ -1,7 +1,9 @@
 pub mod askpass;
+pub mod bulk;
 pub mod deploy;
 pub mod handshake;
 pub mod json_session_store;
 pub mod openssh;
+pub mod remote_workspace;
 pub mod sqlite;
 pub mod stub_connection;
