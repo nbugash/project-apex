@@ -12,7 +12,6 @@
 //! reconcile.
 
 mod classify;
-mod framing;
 mod registry;
 mod sendq;
 pub mod spawner;
@@ -32,7 +31,9 @@ use crate::domain::request::{
     Priority, RequestId, RequestOutcome, Secret, ERR_INTERNAL, ERR_PAYLOAD_TOO_LARGE,
 };
 use bytes::BytesMut;
-use framing::{FrameCodec, FrameError};
+// The codec moved to `apex-protocol` in F002 so the engine obeys the same definition. The
+// application layer still cannot see it: everything above this adapter sees `RequestTransport`.
+use apex_protocol::framing::{FrameCodec, FrameError};
 use registry::Registry;
 use sendq::SendQueue;
 use std::io::{Read, Write};

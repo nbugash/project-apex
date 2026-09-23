@@ -1,0 +1,15 @@
+[package]
+name = "apex-protocol"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+# The wire format, and nothing else. No tokio, no tauri, no transport: this crate is linked
+# into a headless remote daemon as well as a desktop application, and anything added here is
+# added to both.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+bytes = "1"
+# The codec validates that a frame body is JSON before delivering it — a malformed body is
+# discarded at the boundary rather than surfacing as a parse failure somewhere upstream.
+serde_json = "1"

@@ -9,8 +9,11 @@
 //! frame into every subsequent frame being garbage, which presents as the engine having gone
 //! insane rather than as one malformed message.
 
-use crate::domain::request::MAX_FRAME_BYTES;
 use bytes::{Buf, BytesMut};
+
+/// §4.1's frame cap. It lives beside the codec because it *is* part of the format: a reader
+/// that enforces a different cap from the writer is a reader that refuses valid frames.
+pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 const HEADER: &str = "Content-Length: ";
 const SEPARATOR: &[u8] = b"\r\n\r\n";

@@ -56,6 +56,34 @@ async function waitForNothingServing(url: string, timeoutMs = 10_000): Promise<v
  *  onComplete run in the launcher, so nothing in memory survives the trip. This is the same
  *  boundary that made an environment variable set in onPrepare invisible to the specs. */
 const SHOTS = 'reports/screenshots';
+
+/** Which feature's screenshots this run produces.
+ *
+ *  The feature map identity (`F002`), not the spec directory number — the two diverge, since
+ *  F001's directory is `003-ssh-transport-core`, and naming F001's screenshots "003" would be
+ *  actively misleading. The map guarantees identities are never renumbered or reused; the
+ *  directory sequence guarantees nothing of the kind.
+ *
+ *  Derived from the branch so a run on a feature branch files its own screenshots with nothing
+ *  to tag and no spec file to move. `APEX_FEATURE` overrides for a run from anywhere else. */
+function featureSegment(): string {
+  const override = process.env.APEX_FEATURE?.trim();
+  if (override) return override;
+  try {
+    const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf8',
+    }).stdout?.trim();
+    const found = branch?.match(/\bF\d{3}\b/)?.[0];
+    if (found) return found;
+  } catch {
+    // fall through to the explicit default below
+  }
+  // Not on a feature branch. Named rather than blank, so the screenshots are still filed
+  // somewhere findable and the directory says why they are not under a feature.
+  return 'unassigned';
+}
+
+const FEATURE = featureSegment();
 const BLANK_LOG = join(SHOTS, '.blank-captures.log');
 /** One line per test that started, written by `beforeTest`.
  *
@@ -66,15 +94,19 @@ const BLANK_LOG = join(SHOTS, '.blank-captures.log');
  *  broken, which is the only circumstance this comparison exists for. */
 const STARTED_LOG = join(SHOTS, '.tests-started.log');
 
-/** Every PNG under `reports/screenshots`, one directory deep (`linux/`, `darwin/`). */
-function capturedFiles(): string[] {
-  if (!existsSync(SHOTS)) return [];
+/** Every PNG under `reports/screenshots`, at any depth.
+ *
+ *  Recursive rather than a fixed depth. The previous version read exactly one level, and
+ *  `${OS}/${FEATURE}/` added a second — which would have counted zero files and failed every
+ *  run, or, if someone had loosened the comparison to make the failure stop, passed while
+ *  counting nothing. A depth-independent walk cannot be broken by the next path change. */
+function capturedFiles(dir: string = SHOTS): string[] {
+  if (!existsSync(dir)) return [];
   const found: string[] = [];
-  for (const entry of readdirSync(SHOTS, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    for (const file of readdirSync(join(SHOTS, entry.name))) {
-      if (file.endsWith('.png')) found.push(join(entry.name, file));
-    }
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...capturedFiles(path));
+    else if (entry.name.endsWith('.png')) found.push(path);
   }
   return found;
 }
@@ -239,7 +271,9 @@ export const config: WebdriverIO.Config = {
       );
       process.exit(1);
     }
-    console.log(`e2e — ${captured} screenshot(s) for ${started} test(s).`);
+    console.log(
+      `e2e — ${captured} screenshot(s) for ${started} test(s), filed under ${SHOTS}/<os>/${FEATURE}/.`,
+    );
   },
 
   /**
@@ -264,7 +298,7 @@ export const config: WebdriverIO.Config = {
       .replace(/^-|-$/g, '')
       .slice(0, 80);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const dir = join('reports/screenshots', os);
+    const dir = join(SHOTS, os, FEATURE);
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `${stub}-${timestamp}.png`);
 

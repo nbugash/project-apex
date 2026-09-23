@@ -77,6 +77,14 @@ orchestrates builds, into a conventional path. `src-tauri/build.rs` reads that p
 with `APEX_ENGINE_BIN` — embeds the bytes and computes the digest. If the artifact is absent,
 the build fails with a message naming the step that was skipped.
 
+**Refined during implementation.** "The build fails" turned out to be the wrong moment. `build.rs`
+runs before Cargo has built the engine member, so failing there breaks every unrelated
+`cargo test` on a fresh clone — including F001's suite, which has nothing to do with the engine.
+The failure moved to a **named test** instead: the artifact is embedded when present, and
+`the_engine_artifact_is_embedded` fails with the command to run when it is not. The property is
+the same — a missing artifact is loud, never silent — and it no longer takes unrelated work down
+with it.
+
 **Rationale**: Cargo has no stable way to depend on another crate's *binary* artifact. Artifact
 dependencies (`bindeps`) are nightly-only, and MSRV here is 1.75 stable. The obvious workaround —
 having `build.rs` shell out to `cargo build -p engine` — invokes Cargo recursively while the

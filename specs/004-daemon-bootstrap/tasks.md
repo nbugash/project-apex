@@ -34,12 +34,12 @@ directory is `003-ssh-transport-core`), and the map identity is the immutable on
 
 **Purpose**: Turn one crate into a workspace and give the screenshots somewhere to go.
 
-- [ ] T001 Create the workspace root `Cargo.toml` listing `protocol`, `engine` and `src-tauri`, and verify `cargo test` at the root still runs F001's whole suite unchanged
-- [ ] T002 Create the `protocol` crate skeleton in `protocol/Cargo.toml` and `protocol/src/lib.rs` with no dependencies beyond `serde`
-- [ ] T003 Create the `engine` crate skeleton in `engine/Cargo.toml` and `engine/src/main.rs`, producing a binary that starts and exits cleanly
-- [ ] T004 [P] Derive the screenshot feature segment from the git branch in `tests/e2e/wdio.conf.ts` — `feature/F002-daemon-bootstrap` yields `F002` — with an `APEX_FEATURE` override and an explicit fallback when not on a feature branch. A run on a feature branch must file its own screenshots without anyone tagging anything
-- [ ] T005 [P] Update `capturedFiles()` in `tests/e2e/wdio.conf.ts` for the extra directory level. It currently reads exactly one level deep; with `${OS}/${FEATURE}/` it would count zero files and the capture gate would fail every run — or worse, pass while counting nothing if the comparison were loosened to fix it
-- [ ] T006 [P] Update the screenshot path convention in `tests/e2e/wdio.conf.ts` `afterTest` to `reports/screenshots/${OS}/${FEATURE}/`, and confirm the gate still fails when captures are missing by re-running the mutation check that proved it works
+- [X] T001 Create the workspace root `Cargo.toml` listing `protocol`, `engine` and `src-tauri`, and verify `cargo test` at the root still runs F001's whole suite unchanged
+- [X] T002 Create the `protocol` crate skeleton in `protocol/Cargo.toml` and `protocol/src/lib.rs` with no dependencies beyond `serde`
+- [X] T003 Create the `engine` crate skeleton in `engine/Cargo.toml` and `engine/src/main.rs`, producing a binary that starts and exits cleanly
+- [X] T004 [P] Derive the screenshot feature segment from the git branch in `tests/e2e/wdio.conf.ts` — `feature/F002-daemon-bootstrap` yields `F002` — with an `APEX_FEATURE` override and an explicit fallback when not on a feature branch. A run on a feature branch must file its own screenshots without anyone tagging anything
+- [X] T005 [P] Update `capturedFiles()` in `tests/e2e/wdio.conf.ts` for the extra directory level. It currently reads exactly one level deep; with `${OS}/${FEATURE}/` it would count zero files and the capture gate would fail every run — or worse, pass while counting nothing if the comparison were loosened to fix it
+- [X] T006 [P] Update the screenshot path convention in `tests/e2e/wdio.conf.ts` `afterTest` to `reports/screenshots/${OS}/${FEATURE}/`, and confirm the gate still fails when captures are missing by re-running the mutation check that proved it works
 
 **Checkpoint**: Workspace builds, F001's suite passes unchanged, screenshots land under the new
 convention and the gate still bites.
@@ -50,14 +50,14 @@ convention and the gate still bites.
 
 **⚠️ CRITICAL**: No user story work begins until this phase is complete.
 
-- [ ] T007 Move `FrameCodec` and its tests from `src-tauri/src/adapters/outbound/openssh/framing.rs` into `protocol/src/framing.rs` unchanged, and re-export it from the openssh adapter so F001's tests pass without edits
-- [ ] T008 Define the wire types in `protocol/src/wire.rs` per [data-model.md](./data-model.md): `HandshakeRequest`, `HandshakeResponse`, `RestartNotice`, `SessionId`, `CapabilitySet`, and the `PROTOCOL_VERSION` constant
+- [X] T007 Move `FrameCodec` and its tests from `src-tauri/src/adapters/outbound/openssh/framing.rs` into `protocol/src/framing.rs` unchanged, and re-export it from the openssh adapter so F001's tests pass without edits
+- [X] T008 Define the wire types in `protocol/src/wire.rs` per [data-model.md](./data-model.md): `HandshakeRequest`, `HandshakeResponse`, `RestartNotice`, `SessionId`, `CapabilitySet`, and the `PROTOCOL_VERSION` constant
 - [ ] T009 [P] Implement `EngineArtifact`, `Architecture` and `Digest` in `src-tauri/src/domain/artifact.rs` per [data-model.md](./data-model.md), including the rule that a digest is derived from bytes and never hand-written
 - [ ] T010 [P] Implement `DeploymentState` and `DeploymentFailure` in `src-tauri/src/domain/artifact.rs` with the six named failure causes
 - [ ] T011 [P] Define the `ArtifactDeployer` port in `src-tauri/src/application/ports/deployer.rs` with `deploy`, `retire_previous` and `observe`, matching the signatures in [design.md](./design.md)
 - [ ] T012 [P] Define the `HandshakePeer` port in `src-tauri/src/application/ports/handshake.rs`
-- [ ] T076 Sequence the engine build before the client build in the existing script layer (`package.json` and the CI workflow), producing the engine at a conventional path. Cargo cannot depend on another crate's binary artifact on stable, and a build script that invokes Cargo recursively races the outer invocation's lock — see research.md, "How the client gets an engine binary to embed"
-- [ ] T013 Extend `src-tauri/build.rs` to read the engine artifact from that path (overridable with `APEX_ENGINE_BIN`), embed its bytes and compute its SHA-256 at build time, so the constant and the bytes cannot disagree. A **missing** artifact must fail the build naming the skipped step — embedding an empty slice produces a client that ships, deploys zero bytes and fails verification against a host that did nothing wrong
+- [X] T076 Sequence the engine build before the client build in the existing script layer (`package.json` and the CI workflow), producing the engine at a conventional path. Cargo cannot depend on another crate's binary artifact on stable, and a build script that invokes Cargo recursively races the outer invocation's lock — see research.md, "How the client gets an engine binary to embed"
+- [X] T013 Extend `src-tauri/build.rs` to read the engine artifact from that path (overridable with `APEX_ENGINE_BIN`), embed its bytes and compute its SHA-256 at build time, so the constant and the bytes cannot disagree. A **missing** artifact must fail the build naming the skipped step — embedding an empty slice produces a client that ships, deploys zero bytes and fails verification against a host that did nothing wrong
 - [ ] T014 Add `session/onRestart` to the Session group in §4.8 of `project-apex-predator.md`, with its params and its notification kind. **This is a system specification edit, not a note in a plan** — Principle II makes §4.8 the source of truth for method signatures, and a method described only in `design.md` would make this feature a second source
 - [ ] T077 [P] Add an `assert_no_network()` helper to `src-tauri/tests/common/mod.rs` that walks this process's own descriptors against the kernel's TCP tables, and prove it works by opening a loopback socket and confirming the helper sees it. F001's equivalent lives in one test binary and checks only that process — each integration test file is a separate binary, so `bootstrap_*.rs` are entirely unchecked without this (FR-026, SC-010)
 - [ ] T015 [P] Implement `ScriptedDeployer` in `src-tauri/tests/common/mod.rs` — chosen failures, recorded calls, no bytes moved. This is the seam that makes every deployment failure path testable without a host
@@ -226,7 +226,7 @@ notification, unchanged identity, and that unpreserved state is reported.
 - [ ] T072 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md), including the SC-002 and SC-013 measurements as numbers rather than verdicts, per A-NFR
 - [ ] T073 Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` across the workspace and fix what they report
 - [ ] T074 Promote the two marked decisions in [research.md](./research.md) to Appendix A of `project-apex-predator.md` — that bulk data travels beside the protocol channel rather than through it, and that the protocol version increments only on breaking changes. Both bind every later feature, and a decision only F002's research records is one F003 will not find
-- [ ] T075 Verify by mutation that the capture gate in `tests/e2e/wdio.conf.ts` still fails when screenshots are missing, after the path convention change. The gate was proven once; a path change is exactly the kind of edit that silently unproves it
+- [X] T075 Verify by mutation that the capture gate in `tests/e2e/wdio.conf.ts` still fails when screenshots are missing, after the path convention change. The gate was proven once; a path change is exactly the kind of edit that silently unproves it
 
 ---
 

@@ -6,7 +6,7 @@
   "scripts": {
     "ds:sync": "node scripts/ds-sync.mjs",
     "dev": "vite",
-    "build": "npm run ds:sync && vite build",
+    "build": "npm run build:engine && npm run ds:sync && vite build",
     "tauri": "tauri",
     "test:unit": "vitest run",
     "lint": "eslint .",
@@ -19,7 +19,9 @@
     "format:check": "prettier --check .",
     "gate:fidelity": "node tools/gate-fidelity/compare.mjs",
     "gate:fidelity:update": "node tools/gate-fidelity/update.mjs",
-    "gate:fidelity:test": "node --test tools/gate-fidelity/gate.test.mjs"
+    "gate:fidelity:test": "node --test tools/gate-fidelity/gate.test.mjs",
+    "build:engine": "cargo build -p apex-engine",
+    "build:engine:release": "cargo build -p apex-engine --release"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

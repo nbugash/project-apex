@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// §4.1. A frame beyond this is a protocol error; payloads this large belong on SFTP.
-pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// Re-exported from `apex-protocol`, which owns it: the cap is part of the wire format, and
+/// the engine enforces the same number from the same definition.
+pub use apex_protocol::framing::MAX_FRAME_BYTES;
 
 /// §4.4. The application code range is -32000..=-32099.
 pub const ERR_PAYLOAD_TOO_LARGE: i32 = -32007;
