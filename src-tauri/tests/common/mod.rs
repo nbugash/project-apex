@@ -419,3 +419,177 @@ pub fn log_file() -> std::path::PathBuf {
     })
     .clone()
 }
+
+// ---------------------------------------------------------------------------
+// F002: deployment doubles and the suite-level network assertion.
+
+use apex_shell::application::ports::deployer::{ArtifactDeployer, Target};
+use apex_shell::domain::artifact::{DeploymentFailure, DeploymentState, EngineArtifact};
+
+/// Produces chosen deployment outcomes without moving a byte.
+///
+/// The seam that makes every failure path reachable. Provoking a full disk, an unwritable
+/// directory and an unsupported architecture from a real host on demand would need three hosts,
+/// or one repeatedly broken on purpose, over a network the suite is required not to need.
+pub struct ScriptedDeployer {
+    pub architecture: Result<String, DeploymentFailure>,
+    pub outcome: Result<(), DeploymentFailure>,
+    /// Published as the deployment runs, so a test can assert on progress cadence.
+    pub progress: Vec<(u64, u64)>,
+    pub calls: Recorded<String>,
+    state: tokio::sync::watch::Sender<DeploymentState>,
+    keep: tokio::sync::watch::Receiver<DeploymentState>,
+}
+
+impl Default for ScriptedDeployer {
+    fn default() -> Self {
+        let (state, keep) = tokio::sync::watch::channel(DeploymentState::Preparing);
+        Self {
+            architecture: Ok("x86_64".into()),
+            outcome: Ok(()),
+            progress: Vec::new(),
+            calls: Arc::new(Mutex::new(Vec::new())),
+            state,
+            keep,
+        }
+    }
+}
+
+impl ScriptedDeployer {
+    pub fn failing(failure: DeploymentFailure) -> Self {
+        Self {
+            outcome: Err(failure),
+            ..Default::default()
+        }
+    }
+
+    pub fn on_architecture(machine: &str) -> Self {
+        Self {
+            architecture: Ok(machine.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Every call made, in order — so a test can assert that `retire_previous` was not reached.
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().expect("calls lock").clone()
+    }
+}
+
+impl ArtifactDeployer for ScriptedDeployer {
+    fn remote_architecture(&self, _t: &Target) -> Result<String, DeploymentFailure> {
+        self.calls
+            .lock()
+            .expect("calls lock")
+            .push("remote_architecture".into());
+        self.architecture.clone()
+    }
+
+    fn deploy(&self, a: &EngineArtifact, _t: &Target) -> Result<(), DeploymentFailure> {
+        self.calls
+            .lock()
+            .expect("calls lock")
+            .push(format!("deploy:{}", a.version));
+        for (sent, total) in &self.progress {
+            let _ = self.state.send(DeploymentState::Transferring {
+                sent: *sent,
+                total: *total,
+            });
+        }
+        match &self.outcome {
+            Ok(()) => {
+                let _ = self.state.send(DeploymentState::Complete);
+                Ok(())
+            }
+            Err(f) => {
+                let _ = self.state.send(DeploymentState::Failed(f.clone()));
+                Err(f.clone())
+            }
+        }
+    }
+
+    fn retire_previous(&self, version: &str, _t: &Target) -> Result<(), DeploymentFailure> {
+        self.calls
+            .lock()
+            .expect("calls lock")
+            .push(format!("retire:{version}"));
+        Ok(())
+    }
+
+    fn observe(&self) -> tokio::sync::watch::Receiver<DeploymentState> {
+        self.keep.clone()
+    }
+}
+
+pub fn target() -> Target {
+    Target {
+        host: "mock.invalid".into(),
+        user: "dev".into(),
+    }
+}
+
+/// Fail the calling test if this process holds any TCP socket.
+///
+/// One helper called from every integration binary, because each test file compiles to its own
+/// process: F001's equivalent lives in a single binary and proves nothing about the others, so
+/// SC-010 read as satisfied while three of them were entirely unchecked.
+///
+/// It proves itself before trusting its own silence. A detector that cannot see a socket reports
+/// "none open" exactly as convincingly as one that finds none, and this suite has already
+/// produced a check that passed for that reason.
+pub fn assert_no_network() {
+    #[cfg(target_os = "linux")]
+    {
+        {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback socket");
+            assert!(
+                !open_tcp_sockets().is_empty(),
+                "the detector cannot see a socket that is demonstrably open, so its silence \
+                 means nothing"
+            );
+            drop(listener);
+        }
+        let open = open_tcp_sockets();
+        assert!(
+            open.is_empty(),
+            "this suite must need no network; found TCP socket inodes {open:?}"
+        );
+    }
+}
+
+/// Inodes of TCP sockets held by this process.
+#[cfg(target_os = "linux")]
+fn open_tcp_sockets() -> Vec<u64> {
+    let mut tcp = std::collections::HashSet::new();
+    for table in ["/proc/self/net/tcp", "/proc/self/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else {
+            continue;
+        };
+        for line in text.lines().skip(1) {
+            if let Some(inode) = line.split_whitespace().nth(9) {
+                if let Ok(n) = inode.parse::<u64>() {
+                    tcp.insert(n);
+                }
+            }
+        }
+    }
+    let mut ours = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc/self/fd") else {
+        return ours;
+    };
+    for entry in entries.flatten() {
+        let Ok(link) = std::fs::read_link(entry.path()) else {
+            continue;
+        };
+        // Unix sockets land here too, which is why the inode is checked against the TCP
+        // tables rather than assumed.
+        if let Some(rest) = link.to_string_lossy().strip_prefix("socket:[") {
+            if let Ok(inode) = rest.trim_end_matches(']').parse::<u64>() {
+                if tcp.contains(&inode) {
+                    ours.push(inode);
+                }
+            }
+        }
+    }
+    ours
+}

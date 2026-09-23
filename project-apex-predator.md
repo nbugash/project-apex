@@ -419,13 +419,31 @@ the workspace.
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `auth/handshake` | request | `clientVersion`, `capabilities` | `engineVersion`, `protocolVersion`, `capabilities` |
+| `auth/handshake` | request | `clientVersion`, `protocolVersion`, `capabilities`, `resumeSession?` | `engineVersion`, `protocolVersion`, `capabilities`, `sessionId`, `resumed` |
 | `session/shutdown` | request | — | — |
+| `session/onRestart` | notification | `sessionId`, `unpreserved[]` | — |
 | `log/onMessage` | notification | `level`, `message`, `source` | — |
 
-`protocolVersion` is an integer that increments on any breaking change to this section. On
-mismatch the client is the authority: it redeploys an older engine, and refuses a newer one
+`protocolVersion` is an integer that increments on a **breaking** change to this section only.
+Adding a method, adding an optional parameter or adding a field to a result does not increment
+it; removing or renaming anything, changing a type, or making an optional parameter required
+does. Both ends MUST ignore what they do not recognise, which is what makes that rule safe — and
+without it, adding `session/onRestart` would have forced a redeployment across every host for a
+notification an older client would simply have ignored.
+
+On mismatch the client is the authority: it redeploys an older engine, and refuses a newer one
 rather than guessing at a protocol it does not know (§3.8, Appendix A, A-BOOT).
+
+`auth/handshake` carries `resumeSession` when a client is re-attaching after a disconnection,
+and the response's `resumed` says whether that was honoured. A false `resumed` means a **new**
+session was created, and the client MUST surface that rather than treat it as success — a client
+that silently continues shows a developer work that is not happening.
+
+`session/onRestart` is sent by the engine after it re-executes itself. The session identity is
+unchanged, which is what distinguishes a restart from a new session, and `unpreserved` names
+everything that did not survive. An empty list is a positive assertion that nothing was lost, not
+an absence of information. A crashed engine sends nothing; its session is gone, and the client
+discovers that when a resumption is refused.
 
 ### Workspace
 

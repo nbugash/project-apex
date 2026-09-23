@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod connection;
 pub mod failure;
 pub mod geometry;
