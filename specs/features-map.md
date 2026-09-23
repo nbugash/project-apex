@@ -30,13 +30,13 @@ an intention to do it.
   - [X] Request correlation registry with timeouts and cancellation
   - [X] Failure classification from exit codes and locale-pinned stderr
   - [X] Mock SSH daemon harness simulating 250ms RTT and 5% packet loss
-- [ ] **F002 daemon-bootstrap** (depends: F001)
+- [X] **F002 daemon-bootstrap** (depends: F001)
   - Spec: specs/004-daemon-bootstrap
-  - [ ] Engine binary deployment and integrity verification on first connect
-  - [ ] auth/handshake request and response with capability exchange
-  - [ ] Protocol version negotiation and mismatch policy
-  - [ ] In-place binary replacement and re-execution
-  - [ ] Recovery of active task and LSP session state after restart
+  - [X] Engine binary deployment and integrity verification on first connect
+  - [X] auth/handshake request and response with capability exchange
+  - [X] Protocol version negotiation and mismatch policy
+  - [X] In-place binary replacement and re-execution
+  - [X] Session continuity contract across engine re-execution (task recovery is F010, language servers F007, surviving a disconnection F020)
 - [ ] **F003 workspace-cache** (depends: F002)
   - Spec: not yet specified
   - [ ] WorkspaceProvider trait with local and remote implementations
