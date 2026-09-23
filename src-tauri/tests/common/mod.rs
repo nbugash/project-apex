@@ -593,3 +593,90 @@ fn open_tcp_sockets() -> Vec<u64> {
     }
     ours
 }
+
+use apex_protocol::wire::{
+    CapabilitySet, HandshakeRequest, HandshakeResponse, SessionId, PROTOCOL_VERSION,
+};
+use apex_shell::application::ports::handshake::{HandshakeError, HandshakePeer};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// An engine that answers the handshake however a test needs.
+pub struct ScriptedPeer {
+    pub protocol_version: u32,
+    pub capabilities: CapabilitySet,
+    pub error: Option<HandshakeError>,
+    pub resumed: bool,
+    asked: AtomicUsize,
+    pub requests: Recorded<HandshakeRequest>,
+}
+
+impl Default for ScriptedPeer {
+    fn default() -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: CapabilitySet::of(&["session/shutdown"]),
+            error: None,
+            resumed: false,
+            asked: AtomicUsize::new(0),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl ScriptedPeer {
+    pub fn speaking(protocol_version: u32) -> Self {
+        Self {
+            protocol_version,
+            ..Default::default()
+        }
+    }
+
+    pub fn failing(error: HandshakeError) -> Self {
+        Self {
+            error: Some(error),
+            ..Default::default()
+        }
+    }
+
+    /// How many handshakes were attempted — the measurement that says whether anything was
+    /// exchanged with an engine the client should have refused.
+    pub fn asked(&self) -> usize {
+        self.asked.load(Ordering::SeqCst)
+    }
+}
+
+impl HandshakePeer for ScriptedPeer {
+    async fn handshake(
+        &self,
+        request: HandshakeRequest,
+    ) -> Result<HandshakeResponse, HandshakeError> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        self.requests.lock().expect("requests lock").push(request);
+        if let Some(e) = &self.error {
+            return Err(match e {
+                HandshakeError::TimedOut => HandshakeError::TimedOut,
+                HandshakeError::ConnectionLost => HandshakeError::ConnectionLost,
+                HandshakeError::Malformed(m) => HandshakeError::Malformed(m.clone()),
+            });
+        }
+        Ok(HandshakeResponse {
+            engine_version: "0.1.0".into(),
+            protocol_version: self.protocol_version,
+            capabilities: self.capabilities.clone(),
+            session_id: SessionId("session-1".into()),
+            resumed: self.resumed,
+        })
+    }
+}
+
+/// An artifact that moves no bytes but has a real digest, for policy tests.
+pub fn artifact(arch: apex_shell::domain::artifact::Architecture) -> EngineArtifact {
+    use apex_shell::domain::artifact::Digest;
+    EngineArtifact {
+        version: "0.1.0".into(),
+        protocol_version: PROTOCOL_VERSION,
+        architecture: arch,
+        digest: Digest::parse(&"a".repeat(64)).expect("valid digest"),
+        bytes: b"",
+    }
+}

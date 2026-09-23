@@ -77,16 +77,16 @@ and the deployed artifact matches what the client shipped.
 
 ### Tests for User Story 1
 
-- [ ] T016 [P] [US1] Failing test in `src-tauri/tests/bootstrap_deploy.rs`: a host reporting no engine triggers a deployment and reaches a session, with no developer action (SC-001)
-- [ ] T017 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an artifact whose digest does not match is **never executed**. Assert on execution count being zero, not on the error returned — a deployment that ran the binary and then reported an error also returns an error (SC-004)
-- [ ] T018 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an architecture with no embedded artifact is refused by name before anything transfers (FR-008)
+- [X] T016 [P] [US1] Failing test in `src-tauri/tests/bootstrap_deploy.rs`: a host reporting no engine triggers a deployment and reaches a session, with no developer action (SC-001)
+- [X] T017 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an artifact whose digest does not match is **never executed**. Assert on execution count being zero, not on the error returned — a deployment that ran the binary and then reported an error also returns an error (SC-004)
+- [X] T018 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an architecture with no embedded artifact is refused by name before anything transfers (FR-008)
 - [ ] T019 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a second connect with a matching digest transfers nothing and still establishes a session (SC-003)
 - [ ] T020 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: progress is published at least once per second while transferring, carrying bytes and total. Assert on the **number and spacing** of reports, not their existence — one report at the start satisfies "progress was reported" and still looks exactly like a hang (SC-013)
 - [ ] T021 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: interleaved concurrent deployments yield one valid engine or a reported failure, never a mixed artifact, across a sustained run rather than a single pair that may happen to serialise (SC-012)
-- [ ] T022 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: each of the six `DeploymentFailure` causes is reported as itself and not collapsed into a generic failure
+- [X] T022 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: each of the six `DeploymentFailure` causes is reported as itself and not collapsed into a generic failure
 
 - [ ] T078 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a deployment over a **simulated 10 Mbit/s link** completes within 30 seconds, and the measured value is printed rather than only compared (SC-002, A-NFR). Every other success criterion has a gate; a budget verified only against whatever link the developer happens to have is not one
-- [ ] T079 [P] [US1] Call `assert_no_network()` from `src-tauri/tests/bootstrap_deploy.rs` (SC-010)
+- [X] T079 [P] [US1] Call `assert_no_network()` from `src-tauri/tests/bootstrap_deploy.rs` (SC-010)
 
 ### Implementation for User Story 1
 
@@ -94,7 +94,7 @@ and the deployed artifact matches what the client shipped.
 - [ ] T024 [US1] Implement remote verification in `src-tauri/src/adapters/outbound/deploy/mod.rs` by invoking `sha256sum` on the host and comparing exactly — not by prefix, which is a weaker check that looks identical in a passing test
 - [ ] T025 [US1] Implement atomic promotion in `src-tauri/src/adapters/outbound/deploy/mod.rs`: set the executable bit only after verification, then `rename` within the same directory so the rename cannot silently become a copy across filesystems
 - [ ] T026 [US1] Implement progress publication in `src-tauri/src/adapters/outbound/deploy/mod.rs` on the cadence T020 asserts
-- [ ] T027 [US1] Implement artifact selection and the unsupported-architecture refusal in `src-tauri/src/adapters/outbound/deploy/embedded.rs`
+- [X] T027 [US1] Implement artifact selection and the unsupported-architecture refusal — landed in `src-tauri/src/application/use_cases/bootstrap.rs` rather than `embedded.rs`: choosing which artifact suits a host is policy, and `embedded.rs` is storage. Placement corrected during implementation
 - [ ] T028 [US1] Implement the idempotence check in `src-tauri/src/adapters/outbound/deploy/mod.rs` — a present artifact with a matching digest transfers nothing
 - [ ] T029 [US1] Implement `Bootstrap::establish` deployment path in `src-tauri/src/application/use_cases/bootstrap.rs`, consuming F001's `EngineMissing` classification, which today has no recipient
 - [ ] T030 [P] [US1] Add the deploying state with progress to `src/lib/statusbar/presentation.ts` and its unit test in `tests/unit/status-bar.test.ts`, built from design tokens per Principle I
@@ -127,7 +127,7 @@ offered functionality follows, with no request for an unadvertised capability re
 - [ ] T036 [US2] Implement the `auth/handshake` responder in `engine/src/handshake.rs`, advertising the capability set this engine actually serves
 - [ ] T037 [US2] Implement `TransportHandshake` in `src-tauri/src/adapters/outbound/deploy/mod.rs` over F001's `RequestTransport`
 - [ ] T038 [US2] Record the engine's capabilities for the session's life in `src-tauri/src/application/use_cases/bootstrap.rs`
-- [ ] T039 [US2] Implement the local refusal for unadvertised capabilities in `src-tauri/src/application/use_cases/bootstrap.rs`, so the request never reaches the transport
+- [X] T039 [US2] Implement the local refusal for unadvertised capabilities in `src-tauri/src/application/use_cases/bootstrap.rs`, so the request never reaches the transport
 
 **Checkpoint**: The client knows what it may ask for before it asks.
 
@@ -150,9 +150,9 @@ confirm redeploy, proceed and refuse respectively.
 
 ### Implementation for User Story 3
 
-- [ ] T045 [US3] Implement `VersionVerdict` in `src-tauri/src/application/use_cases/bootstrap.rs` as a comparison, never a negotiation
-- [ ] T046 [US3] Wire each verdict to its response in `src-tauri/src/application/use_cases/bootstrap.rs` per the table in [data-model.md](./data-model.md)
-- [ ] T047 [US3] Implement the `RefusedNewerEngine` outcome in `src-tauri/src/application/use_cases/bootstrap.rs`, carrying both versions so the message can name them
+- [X] T045 [US3] Implement `VersionVerdict` in `src-tauri/src/application/use_cases/bootstrap.rs` as a comparison, never a negotiation
+- [X] T046 [US3] Wire each verdict to its response in `src-tauri/src/application/use_cases/bootstrap.rs` per the table in [data-model.md](./data-model.md)
+- [X] T047 [US3] Implement the `RefusedNewerEngine` outcome in `src-tauri/src/application/use_cases/bootstrap.rs`, carrying both versions so the message can name them
 
 **Checkpoint**: Skew is safe in both directions.
 
