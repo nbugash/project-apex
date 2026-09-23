@@ -111,22 +111,42 @@ that create it are FR-021a/b/c and FR-032.
 | `Unverified` | Confirmation exceeded its limit | FR-021c |
 | `PossiblyStale` | Served while disconnected | FR-032 |
 | `Unavailable` | Disconnected and not cached | FR-033 |
+| `Gone` | The workspace's root no longer exists on the engine | FR-038 |
 
 These are the states the status surface renders. They are not cache states: `Unverified` and
 `PossiblyStale` describe the same bytes with the same hash and differ only in why nobody could
 confirm them.
+
+`Gone` is the only one that is not about *content*. The other five qualify bytes the developer is
+about to see; `Gone` says the thing being projected does not exist, so there is nothing to qualify.
+That is why it is a variant rather than a flag on `Unavailable`: offline-and-uncached is a fact that
+will stop being true when the connection returns, and a deleted workspace is not.
 
 ### `MaintenancePhase`
 
 Published during startup maintenance. New in this feature (FR-018a, FR-026a).
 
 ```
-Idle → Migrating { from: u32, to: u32 } → Evicting → Idle
-                 ↘ Rebuilding → Idle
+Idle → Checking → Migrating { from: u32, to: u32 } → Evicting → Ready
+                ↘ Evicting (version current)        ↗
+                  Migrating → Rebuilding ───────────┘
 ```
 
+Six states, and the names are canonical — [design.md](./design.md)'s state diagram and the task that
+renders them use these and no others.
+
+| State | Meaning | Rendered? |
+|---|---|---|
+| `Idle` | Before maintenance begins | no |
+| `Checking` | Reading `PRAGMA user_version` | no — too brief to be worth a frame |
+| `Migrating { from, to }` | A schema step is running | **yes** (FR-018a) |
+| `Rebuilding` | A migration failed; the projection is being discarded and recreated | **yes** (FR-018b) |
+| `Evicting` | Retention is reclaiming content | **yes** |
+| `Ready` | Maintenance complete. **The precondition for constructing any provider** (FR-018c, M1) | no |
+
 `Migrating` and `Evicting` refresh at least once per second while they run (FR-018a, SC-013a).
-`Rebuilding` is entered only from a failed migration (FR-018b).
+`Rebuilding` is entered only from a failed migration, or from a `user_version` newer than this
+build (FR-018b).
 
 ### `RetentionWindow`
 

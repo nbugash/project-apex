@@ -53,10 +53,32 @@ what anything else says.
 
 ---
 
-## 2. Lazy tree loading — US1, SC-001, SC-002
+## 2. The contract suites — FR-001, and every cache guarantee
+
+```bash
+cargo test -p apex-shell --test provider_contract
+cargo test -p apex-shell --test cache_contract
+```
+
+Run these first, because everything after them assumes the guarantees hold.
+
+`provider_contract` runs one suite against **every** `WorkspaceProvider` implementation, asserting
+P1–P6 from [contracts/provider.md](./contracts/provider.md). It is how "the UI never learns which is
+active" (§6.1, FR-001) becomes a test rather than an intention — and the day it fails against a new
+implementation is the day the abstraction stopped holding. `cache_contract` does the same for
+C1–C9 in [contracts/cache.md](./contracts/cache.md), against both the real SQLite adapter and the
+in-memory fake, so a guarantee cannot be satisfied by one and not the other.
+
+Two of C1–C9 are worth watching: **C3**, which fills the disk and asserts the read still returns
+bytes (FR-034), and **C9**, which asserts that `put_listing` does *not* claim to recognise renames.
+
+---
+
+## 3. Lazy tree loading — US1, SC-001, SC-002
 
 ```bash
 cargo test -p apex-shell --test workspace_tree
+cargo test -p apex-engine --test read_directory
 ```
 
 What it proves:
@@ -79,10 +101,11 @@ cargo test -p apex-shell --test workspace_tree -- --nocapture | head -40
 
 ---
 
-## 3. Cache validity — US2, SC-003, SC-004, SC-005
+## 4. Cache validity — US2, SC-003, SC-004, SC-005
 
 ```bash
 cargo test -p apex-shell --test cache_validity
+cargo test -p apex-engine --test read_file
 ```
 
 | Scenario | Assertion |
@@ -105,7 +128,7 @@ that pretended to match renames by hashing every entry, fails one of the two.
 
 ---
 
-## 4. The verification window — SC-004a, SC-004b
+## 5. The verification window — SC-004a, SC-004b
 
 ```bash
 cargo test -p apex-shell --test cache_verification
@@ -123,7 +146,7 @@ is a test nobody runs on every commit.
 
 ---
 
-## 5. Path containment — SC-006
+## 6. Path containment — SC-006
 
 ```bash
 cargo test -p apex-engine --test path_containment
@@ -143,7 +166,7 @@ feature is where it lands.
 
 ---
 
-## 6. Workspace identity and disappearance — US3, SC-007, SC-015
+## 7. Workspace identity and disappearance — US3, SC-007, SC-015
 
 ```bash
 cargo test -p apex-shell --test workspace_registry
@@ -164,7 +187,7 @@ no longer a directory — surfacing a registration error for a deletion.
 
 ---
 
-## 7. Retention and maintenance — US4, SC-008, SC-008a, SC-013, SC-013a, SC-013b
+## 8. Retention and maintenance — US4, SC-008, SC-008a, SC-013, SC-013a, SC-013b
 
 ```bash
 cargo test -p apex-shell --test cache_maintenance
@@ -192,10 +215,11 @@ measures the gaps between them.
 
 ---
 
-## 8. Offline — US5, SC-011, SC-012
+## 9. Offline — US5, SC-011, SC-012
 
 ```bash
 cargo test -p apex-shell --test cache_offline
+cargo test -p apex-shell --test fts_sync
 ```
 
 The connection source is a fake set to disconnected. Assertions: path search returns results with
@@ -205,9 +229,16 @@ produces a stated reason rather than an empty document.
 "Zero requests attempted" is counted at the transport fake. Asserting only that the search
 *succeeded* would pass for an implementation that tried the network, timed out, and fell back.
 
+`fts_sync` is the one to watch. `files_fts` is an **external-content** FTS5 table, which SQLite does
+not maintain on its own — the index is kept in step by three triggers that this feature had to add
+to §5.2, because the canonical schema declared the table and no triggers. Without them the index is
+created empty and stays empty, so every offline path search returns nothing: quickly, with no error,
+and passing any test that only asserts the search succeeded. This test inserts, renames and deletes a
+`files` row and checks the index after each.
+
 ---
 
-## 9. The performance gates — SC-004c, SC-010
+## 10. The performance gates — SC-004c, SC-010
 
 ```bash
 npm run perf:budget
@@ -230,7 +261,7 @@ generated text, which compresses far better than code and would make the budget 
 
 ---
 
-## 10. End to end — the acceptance scenarios
+## 11. End to end — the acceptance scenarios
 
 ```bash
 npm run e2e
@@ -249,7 +280,7 @@ directory number `005`. The segment is derived from the git branch by `tests/e2e
 
 ---
 
-## 11. The gates that must pass before merge
+## 12. The gates that must pass before merge
 
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
@@ -265,7 +296,7 @@ mistake takes.
 
 ---
 
-## 12. Opt-in: against a real `sshd`
+## 13. Opt-in: against a real `sshd`
 
 ```bash
 APEX_REAL_SSHD=1 cargo test -p apex-shell --test workspace_real_sshd -- --ignored

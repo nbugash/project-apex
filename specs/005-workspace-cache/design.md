@@ -353,6 +353,7 @@ stateDiagram-v2
         [*] --> Current: cache miss, fetched
         [*] --> PossiblyStale: disconnected, cache hit
         [*] --> Unavailable: disconnected, cache miss
+        [*] --> Gone: workspace root deleted on the engine
         Verifying --> Current: hash matches
         Verifying --> Current: hash differs, refetched
         Verifying --> Unverified: 2s limit elapsed
@@ -360,13 +361,15 @@ stateDiagram-v2
         Unverified --> [*]
         PossiblyStale --> [*]
         Unavailable --> [*]
+        Gone --> [*]
     }
 ```
 
 ```mermaid
 stateDiagram-v2
     state "Cache maintenance (per launch)" as M {
-        [*] --> Checking
+        [*] --> Idle
+        Idle --> Checking: launch
         Checking --> Evicting: version current
         Checking --> Migrating: version older
         Migrating --> Evicting: every step committed
@@ -377,7 +380,9 @@ stateDiagram-v2
     }
 ```
 
-`Ready` is the precondition for constructing any provider (FR-018c). The workspace lifecycle
+`Ready` is the precondition for constructing any provider (FR-018c). The six state names are
+canonical and defined in [data-model.md](./data-model.md); `Migrating`, `Rebuilding` and `Evicting`
+are the three the interface renders. The workspace lifecycle
 itself — `Unregistered → Registered → Attached → Detached`, and `Registered → Deleted` — is in
 data-model.md and is not repeated here.
 

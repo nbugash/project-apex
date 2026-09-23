@@ -103,8 +103,8 @@ this phase owns the mechanism.
 - [ ] T030 [P] Implement `FakeWorkspace` in `client/core/tests/common/fake_workspace.rs`: a path-to-bytes map, configurable latency, and switches for "never answers" and "content changed underneath". The never-answers switch is what makes FR-021c testable at all
 - [ ] T031 [P] Implement `InMemoryCache` in `client/core/tests/common/fake_cache.rs` reproducing C1–C6 from [contracts/cache.md](./contracts/cache.md), **including failure on demand**: a refusing `put_content` for FR-034 and a settable schema version for the migration tests. A fake that cannot fail tests only the happy path, and FR-034 does not live there
 - [ ] T032 [P] Implement `FakeClock` in `client/core/tests/common/fake_clock.rs` so retention is exercisable without waiting fourteen days
-- [ ] T033 Write the `WorkspaceProvider` contract suite in `client/core/tests/provider_contract.rs`, parameterised over the constructor and asserting P1–P6 from [contracts/provider.md](./contracts/provider.md), plus R1 for providers with an engine behind them. This is the mechanism by which "the UI never learns which is active" becomes a test rather than an intention
-- [ ] T034 Write the `WorkspaceCache` contract suite in `client/core/tests/cache_contract.rs` asserting C1–C8, run against both `SqliteWorkspaceCache` (real file, temp dir) and `InMemoryCache`
+- [ ] T033 Write the `WorkspaceProvider` contract suite in `client/core/tests/provider_contract.rs`, parameterised over the constructor and asserting P1–P6 from [contracts/provider.md](./contracts/provider.md), plus R1 for providers with an engine behind them. This is the mechanism by which "the UI never learns which is active" becomes a test rather than an intention. **It is written fail-first and is not green at the end of this phase**: only `FakeWorkspace` exists here, so P4 and P6 pass against it while R1 waits for `RemoteWorkspaceProvider` (T042, Phase 3). Confirm it fails for the right reason — a missing implementation, not a broken harness
+- [ ] T034 Write the `WorkspaceCache` contract suite in `client/core/tests/cache_contract.rs` asserting C1–C9, run against both `SqliteWorkspaceCache` (real file, temp dir) and `InMemoryCache`. **Written fail-first; only C7 and C8 can pass at the end of this phase**, because T029 implements just `register`, `forget` and `schema_version`. The rest go green as their operations land: C1, C2, C3, C5 and C9 with `put_content` and `put_listing` (T056, T043, Phase 4 and Phase 3), C4 with `evict` (T070, Phase 6), C6 with `search_paths` (T077, Phase 7). **Do not weaken an assertion to make this phase green** — a red contract suite here is the design working, and this project has already shipped five tests that passed by proving nothing
 
 ### Composition ordering
 
@@ -112,7 +112,10 @@ this phase owns the mechanism.
 - [ ] T036 [P] Implement `RegisterWorkspace` in `client/core/src/application/use_cases/register_workspace.rs`: mint a `WorkspaceId` (A-WORKSPACE), attach to an existing projection if one exists, and call `workspace/register` on the engine
 
 **Checkpoint**: Both binaries are hexagonal, the schema exists, a workspace can be registered end
-to end, and every fake and contract suite the stories need is in place.
+to end, and every fake and contract suite the stories need is **written**. The two contract suites
+are deliberately **red** at this point — they assert guarantees whose operations land in Phases 3
+through 7, and T033 and T034 name which. Every other test in the tree passes. A green contract suite
+here would mean its assertions are vacuous.
 
 ---
 
@@ -157,7 +160,7 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 ### Tests for User Story 2 (cache validity is fail-first per Principle VII)
 
 - [ ] T048 [P] [US2] Write `client/core/tests/cache_validity.rs` **before** the implementation, covering US2 scenarios 1, 2 and 5: a matching hash transfers zero content bytes; a changed hash refetches and replaces; **a file marked `MODIFIED` in git with unchanged content is still served from the cache**. Confirm they fail first
-- [ ] T049 [P] [US2] Write `client/core/tests/cache_verification.rs`: `Verifying` is published before the stat is issued and stays published until it resolves; no bytes reach the caller before confirmation across every ordering the fake can produce (SC-004a); a fake engine that never answers ends the wait at the limit and yields `Unverified` (SC-004b). Use `FakeClock` — **a test that really sleeps for two seconds is a test nobody runs on every commit**
+- [ ] T049 [P] [US2] Write `client/core/tests/cache_verification.rs`: `Verifying` is published before the stat is issued and stays published until it resolves (US2.3); no bytes reach the caller before confirmation across every ordering the fake can produce (SC-004a); a fake engine that never answers ends the wait at the limit and yields `Unverified` (US2.4, SC-004b). Use `FakeClock` — **a test that really sleeps for two seconds is a test nobody runs on every commit**
 - [ ] T050 [P] [US2] Write `engine/tests/read_file.rs` against a real tree: ranged reads, a range past EOF returning zero bytes with the correct `totalSize`, a `length` above 512 KiB refused with `-32602` rather than truncated, and binary content surviving byte-for-byte. **Add the stat-then-read race**: take a `stat`, rewrite the file on disk, then read it, and assert the returned `sha256` differs from the one `stat` gave — so a caller assembling ranges can detect that the file moved underneath it. Without this assertion FR-021's internal-consistency claim is unverifiable, and an implementation that reported a cached hash beside fresh bytes would pass every other test in this file
 - [ ] T051 [P] [US2] Write `tests/e2e/cache-verification.spec.ts` asserting the verification indicator is visible while a confirmation is outstanding (FR-021b)
 
@@ -191,7 +194,7 @@ confirm each reads back its own content.
 
 ### Tests for User Story 3
 
-- [ ] T061 [P] [US3] Write `client/core/tests/workspace_registry.rs` against a real database file: two workspaces with identical display names each read back their own content with zero cross-reads (FR-010, SC-007); re-opening attaches rather than duplicating (FR-011, US3.2); deleting removes content **and** tree (FR-012, US3.3); and **the projection survives a restart** — close the cache, reopen it from the same path, and confirm the tree and content are still there (FR-017). The last is the only assertion that a persisted store is actually persisted, and nothing else in the suite would fail if it were opened in memory
+- [ ] T061 [P] [US3] Write `client/core/tests/workspace_registry.rs` against a real database file: two workspaces with identical display names each read back their own content with zero cross-reads (US3.1, FR-010, SC-007); re-opening attaches rather than duplicating (FR-011, US3.2); deleting removes content **and** tree (FR-012, US3.3); and **the projection survives a restart** — close the cache, reopen it from the same path, and confirm the tree and content are still there (FR-017). The last is the only assertion that a persisted store is actually persisted, and nothing else in the suite would fail if it were opened in memory
 - [ ] T062 [P] [US3] Write `engine/tests/register.rs`: re-registering the same id against the same path is idempotent; against a different path is an error; a path that is not a directory or is unreadable is refused at registration, naming the workspace rather than a file inside it
 
 ### Implementation for User Story 3
@@ -201,7 +204,7 @@ confirm each reads back its own content.
 - [ ] T065 [US3] Add workspace registration and deletion commands to `client/core/src/adapters/inbound/tauri_commands.rs`
 - [ ] T093 [US3] Write the vanished-root test in `client/core/tests/workspace_registry.rs` and `engine/tests/register.rs`: register a workspace, delete its root on disk, then issue a read. Assert the engine reports **the workspace as gone**, distinctly from a path missing inside it, and that the client stops presenting the projection as a live view (FR-038, SC-015). **Assert the specific code** — `-32009`, not `-32001` and not `-32003`. Asserting only that the read failed would pass for an implementation that reports every deleted root as an ordinary not-found; asserting `-32001` would pass for one that sends the client into a re-registration loop. Both are the confusion this requirement exists to prevent
 - [ ] T094 [US3] Implement the distinction in `engine/src/application/use_cases/workspace.rs` and `engine/src/domain/path.rs`: when resolution fails because the **registered root itself** no longer resolves, return `WorkspaceGone` (`-32009`) rather than a missing path (`-32003`) or an unregistered workspace (`-32001`). The root is canonicalised once at registration, so this is a re-check of the root before the per-request prefix comparison, not a second canonicalisation of every path
-- [ ] T095 [US3] Surface it in `client/core/src/application/use_cases/cached_workspace.rs` and `client/ui/lib/workspace/tree.svelte.ts`: a gone workspace is reported to the developer and its projection is no longer presented as current. **This is not the offline path** — offline means possibly stale and still true; gone means the thing being projected does not exist, which is the one case where the cache stops being a stale fact and becomes fiction
+- [ ] T095 [US3] Surface it: add the `Gone` state to `client/ui/lib/statusbar/presentation.ts` alongside the other five, map `ProviderError::WorkspaceGone` to it in `client/core/src/application/use_cases/cached_workspace.rs`, and render it in `client/ui/lib/workspace/tree.svelte.ts` so the projection is no longer presented as current. **`Gone` is a variant, not a flag on `Unavailable`** — offline-and-uncached stops being true when the connection returns, and a deleted workspace does not. **This is not the offline path** — offline means possibly stale and still true; gone means the thing being projected does not exist, which is the one case where the cache stops being a stale fact and becomes fiction
 
 **Checkpoint**: Two checkouts of one repository coexist, each with its own projection, and a
 workspace that has been deleted underneath the client says so.
@@ -218,8 +221,8 @@ gone while the tree is intact and files are marked uncached.
 
 ### Tests for User Story 4
 
-- [ ] T066 [P] [US4] Write the retention half of `client/core/tests/cache_maintenance.rs` against a real database file and `FakeClock`: content aged past fourteen days is removed while **every** `files` row survives (SC-008); zero evictions occur while a workspace is open (SC-008a); an evicted file re-opens with no error surfaced (FR-029)
-- [ ] T067 [US4] Write the migration half of `client/core/tests/cache_maintenance.rs`: a v0 database migrates to v1 with content preserved (SC-013); a migration **killed mid-step** — open, begin a step, drop the connection without committing — leaves the old version intact and readable (FR-018c); a deterministically failing migration discards and rebuilds and says so (SC-013b); a `user_version` newer than this build takes the same discard path
+- [ ] T066 [P] [US4] Write the retention half of `client/core/tests/cache_maintenance.rs` against a real database file and `FakeClock`: content aged past fourteen days is removed while **every** `files` row survives (US4.1, US4.2, SC-008); every cache hit records its access so retention measures use rather than age (US4.4, FR-028); zero evictions occur while a workspace is open (US4.5, SC-008a); an evicted file re-opens with no error surfaced (US4.3, FR-029)
+- [ ] T067 [US4] Write the migration half of `client/core/tests/cache_maintenance.rs`: a v0 database migrates to v1 with content preserved (US4.6, SC-013); a migration **killed mid-step** — open, begin a step, drop the connection without committing — leaves the old version intact and readable (FR-018c); a deterministically failing migration discards and rebuilds and says so (US4.7, SC-013b); a `user_version` newer than this build takes the same discard path
 - [ ] T068 [US4] Write the progress assertion in `client/core/tests/cache_maintenance.rs`: **count the reports and measure the gaps between them**, asserting at least one per second for the whole duration (SC-013a). Asserting that *a* progress message was sent passes for an upgrade that then hangs silently — that exact weakness was caught twice during specification
 - [ ] T069 [P] [US4] Write `tests/e2e/cache-maintenance.spec.ts` asserting the migration state is visible during an upgrade (FR-018a)
 
@@ -228,7 +231,7 @@ gone while the tree is intact and files are marked uncached.
 - [ ] T070 [US4] Implement `evict` in `client/core/src/adapters/outbound/sqlite/mod.rs`: delete from `file_contents` only, clear `is_cached`, and **never** remove a `files` row (FR-027, §5.5, C4)
 - [ ] T071 [US4] Implement `MaintainCache` in `client/core/src/application/use_cases/maintain_cache.rs`: migrate, then evict, once, publishing `MaintenancePhase` at least once per second throughout. `run()` **never returns an error** — a failure becomes a rebuild and is reported (FR-018b)
 - [ ] T072 [US4] Complete the migration ladder in `client/core/src/adapters/outbound/sqlite/migrate.rs` with the discard-and-rebuild path and the developer-facing message that cached content was rebuilt
-- [ ] T073 [US4] Add the `Maintaining` and `Rebuilding` states to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/MaintenanceBanner.svelte`
+- [ ] T073 [US4] Add the three rendered maintenance states — `Migrating`, `Rebuilding` and `Evicting` — to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/MaintenanceBanner.svelte`. Use the names [data-model.md](./data-model.md) defines and no others; `Idle`, `Checking` and `Ready` are not rendered. **Do not collapse them into one "maintaining" state** — FR-018a requires a state saying a *migration* is running and SC-013a asserts on migration reports specifically, so a merged state makes that criterion unmeasurable
 - [ ] T074 [US4] Verify in `client/core/src/composition.rs` that maintenance completes before any provider is constructed, and that the guard added in T035 actually prevents the wrong order rather than documenting it
 
 **Checkpoint**: A months-old installation across several releases still works, and an upgrade shows
@@ -245,7 +248,7 @@ come from the projection with no request attempted.
 
 ### Tests for User Story 5
 
-- [ ] T075 [P] [US5] Write `client/core/tests/cache_offline.rs` with the connection source set to disconnected: path search returns results with **zero requests attempted, counted at the transport fake** (SC-011) — asserting only that the search succeeded would pass for an implementation that tried the network, timed out and fell back; a cached file is served marked possibly stale (FR-032); an uncached file produces a stated reason rather than an empty document (SC-012)
+- [ ] T075 [P] [US5] Write `client/core/tests/cache_offline.rs` with the connection source set to disconnected: path search returns results with **zero requests attempted, counted at the transport fake** (US5.1, SC-011) — asserting only that the search succeeded would pass for an implementation that tried the network, timed out and fell back; a cached file is served marked possibly stale (US5.2, FR-032); an uncached file produces a stated reason rather than an empty document (US5.3, SC-012)
 - [ ] T076 [P] [US5] Write `client/core/tests/fts_sync.rs` asserting the trigger-maintained index stays in step: insert, rename and delete a `files` row and confirm `files_fts` matches after each. **This is the test that would have caught the gap in §5.2** — without the triggers it returns nothing, fast, with no error
 
 ### Implementation for User Story 5
@@ -371,11 +374,16 @@ wiring → client adapter → application rules → interface.
 ### Parallel opportunities
 
 - T004, T005, T006 — three independent Appendix A entries
-- T009–T018 — wire types, domain types and ports, all different files
+- T010, T011, T014–T018 — wire constants, domain types and ports, all different files.
+  **T012 and T013 are excluded**: they extend `domain/workspace.rs` alongside T011 and run after it
 - T021, T022 — engine ports and adapters, once T020 exists
 - T030, T031, T032 — the three fakes
-- Every `### Tests for User Story N` block is fully parallel within itself
+- T037, T038, T039 (US1) · T049, T050, T051 (US2) · T061, T062 (US3) · T075, T076 (US5)
 - Once Phase 2 completes, all five stories can proceed in parallel
+
+Tests within a story are **not** universally parallel, and the exceptions are the point: T091
+shares `cache_validity.rs` with T048, T093 shares two files with T061 and T062, and T067 and T068
+share `cache_maintenance.rs` with T066. Each runs after the task it shares a file with.
 
 ---
 
@@ -397,7 +405,7 @@ Task: "Define Clock in client/core/src/application/ports/clock.rs"
 
 ### MVP — User Story 1 only
 
-1. Phase 1 (T001–T008): the specification is whole and the dependencies are in
+1. Phase 1 (T001–T008 **and T096**): the specification is whole and the dependencies are in. T096 is an appended ID that lives inside this phase, not after it — a range written as T001–T008 would skip the §4.4 error code that T094 and T095 depend on
 2. Phase 2 (T009–T036): both binaries hexagonal, schema exists, registration works
 3. Phase 3 (T037–T047): lazy tree loading
 4. **STOP and VALIDATE**: expand ten folders of a hundred-thousand-file tree and confirm ten
@@ -418,9 +426,6 @@ knowing before starting rather than discovering at task fifteen.
 
 ## Notes
 
-- **T091–T095 are appended IDs placed in their own phase**, not at the end. They came from
-  `/speckit-analyze` after numbering was fixed, and renumbering ninety tasks to insert five would
-  have invalidated every reference in this file. F002 did the same with its T076
 - `[P]` means different files and no dependency on an incomplete task. **Checked mechanically**: no
   two `[P]` tasks name the same file. Five groups violated this before the second analysis pass —
   T011–T013, T066–T068 and three pairs introduced by the first remediation — and the markers, not

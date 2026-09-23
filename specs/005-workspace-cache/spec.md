@@ -32,7 +32,24 @@ this document states a number it is quoting one.
 - **§6.1, §6.2** — the provider trait, and that a provider must not join untrusted input to a
   base path without asserting containment.
 - **§10.1** — opening a workspace fetches only the root listing.
+- **§1.4 / A-NFR** — the latency targets this feature owns, and how they are measured: p99, at the
+  boundary between the interface and the transport, over at least 100 samples, with harness delay
+  excluded and the measured value printed rather than only compared.
+- **§4.1** — the 1 MiB frame cap, which is why a directory listing must be paged and why content
+  above a derived threshold travels beside the channel.
+- **§4.4** — the application error codes. This feature adds one, `-32009`, for a workspace whose
+  root no longer exists; the plan records why it is not `-32001`.
+- **§4.8** — the method catalogue. This feature implements its read methods and amends it twice:
+  `workspace/register`, which the catalogue presumed in two places and defined nowhere, and
+  pagination on `workspace/readDirectory`.
 - **A-BULK** — bulk data travels beside the protocol channel, not through it.
+- **A-WORKSPACE** — how a `workspaceId` is minted, that display names may collide, and that
+  deletion removes both the remote directory and the local cache.
+- **A-TEST / A-E2E** — the test levels every feature carries, and that end-to-end runs on Linux.
+- **A-EC2** — the instance is single-tenant and the developer's own, which is why no disk quota is
+  imposed on top of the retention window.
+- **A-OFFLINE** — offline editing, which supersedes the read-only lock and belongs to F012. This
+  feature stays read-only and does not implement it.
 - **Constitution Principle VI** — the engine validates paths independently of the client. F002's
   plan recorded this obligation as landing here, because F002 had no workspace method to apply
   it to.
@@ -45,6 +62,12 @@ and it consumes this feature's provider.
 **It does not write.** The trait in §6.1 declares `write_file`, `create_file`,
 `create_directory`, `rename` and `delete`, and this feature implements **none** of them. It
 delivers the read path — `read_directory`, `stat`, `read_file` — end to end on both sides.
+
+One word does double duty and is worth separating now. `rename` names two different things: the
+**provider** method above, which nothing here implements, and an operation on the **local
+projection**, which moves a cached file's path while keeping its content and which this feature does
+implement and test (FR-022). The second exists so the first has something to call when F006 arrives.
+Nothing in this feature invokes it, because nothing here performs a rename.
 
 This is a scope boundary rather than an omission, and it is deliberate: writing brings
 `baseSha256` conflict handling, which is F006's subject, and a cache that can be written to has
@@ -207,7 +230,7 @@ gone while the tree is intact and files are marked uncached.
 4. **Given** any cache hit, **When** it is served, **Then** that file's last access is recorded,
    so the retention window measures use rather than age.
 5. **Given** a running session, **When** the developer is working, **Then** no eviction runs —
-   reclaim happens at startup, before any workspace opens, so it never competes with a read.
+   eviction happens at startup, before any workspace opens, so it never competes with a read.
 6. **Given** a cache written by an earlier release, **When** the application starts, **Then** it
    is migrated with its content preserved and the developer can see the migration running.
 7. **Given** a migration that fails partway, **When** the application recovers, **Then** the
@@ -379,11 +402,11 @@ come from the projection with no request attempted.
 - **FR-026**: Content unopened for fourteen days MUST be removed.
 - **FR-026a**: Eviction MUST run once at startup, before any workspace is opened, and MUST NOT
   run while a workspace is in use. Deleting competes with reading on the same store, and the one
-  thing §1.4 protects is a sidebar that answers in under a millisecond — a reclaim holding a
+  thing §1.4 protects is a sidebar that answers in under a millisecond — an eviction holding a
   write lock is precisely what breaks that.
 - **FR-026b**: A session that is never restarted therefore never evicts, and disk may grow for
-  its duration. This is an accepted limit rather than an oversight: the alternative triggers all
-  reclaim while somebody is working.
+  its duration. This is an accepted limit rather than an oversight: the alternative runs eviction
+  while somebody is working.
 - **FR-027**: Eviction MUST remove content only. The tree MUST remain navigable and the file
   MUST remain listed. FR-022b requires the same of the other way content is lost.
 - **FR-028**: Every cache hit MUST record that access, so retention measures use rather than age.
