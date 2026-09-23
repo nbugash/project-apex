@@ -65,6 +65,19 @@ for it. Content search runs on the engine and belongs to F013.
 - Q: Does this feature implement the whole `WorkspaceProvider` trait? → A: No. It implements the
   read path on both sides; write, rename, delete and watch are declared and refuse, landing with
   F006 and F004. Recorded in "What this feature is not".
+- Q: When a cached file is opened, does the editor wait for the engine to confirm the content is
+  current, or show it immediately and reconcile? → A: Wait for confirmation — a stale byte is
+  never shown while connected — **and** the interface must show that verification is in progress,
+  so the wait is visible rather than a frozen window. Consequence: while online the cache saves
+  transfer, not open latency.
+- Q: What happens to a cache written by an older version of the application? → A: Migrate it in
+  place, preserving cached content across upgrades, **and** show the developer that a migration
+  is running. A migration that fails discards the projection and rebuilds rather than leaving a
+  half-transformed one readable — that failure path was not part of the question and is chosen
+  here, because refusing to launch over a cache the specification calls reproducible is not a
+  defensible outcome.
+- Q: When does eviction run? → A: Once at startup, before any workspace opens, so deleting can
+  never compete with a read. Known limit accepted: a session that never restarts never evicts.
 - Q: The engine implements no workspace method today. Does this feature add them? → A: Yes, on
   both ends — the same shape as F002, which had to build the engine before it could hand shake
   with one. The read methods of §4.8 are implemented here, with the path containment Principle VI
@@ -117,10 +130,16 @@ content is served — then reopen an unchanged file and confirm nothing was tran
    served from the cache and no content is transferred.
 2. **Given** a cached file whose hash no longer matches, **When** it is opened, **Then** the
    current content is fetched and the cache is updated.
-3. **Given** a file the developer has just edited and saved, making it modified in git, **When**
+3. **Given** any cached file being opened while connected, **When** its hash is being confirmed,
+   **Then** the developer can see that verification is in progress rather than facing a window
+   that appears frozen.
+4. **Given** an engine that does not answer the confirmation within its limit, **When** the limit
+   elapses, **Then** the developer is told the content could not be verified and is offered the
+   cached copy marked as unverified — never an indefinite wait.
+5. **Given** a file the developer has just edited and saved, making it modified in git, **When**
    it is opened, **Then** it is still served from the cache. Git status is not a cache signal,
    and treating it as one would discard exactly the files being worked on.
-4. **Given** a file larger than a single message may carry, **When** it is opened, **Then** it
+6. **Given** a file larger than a single message may carry, **When** it is opened, **Then** it
    arrives in ranges and the developer sees the beginning without waiting for the end.
 
 ---
@@ -148,10 +167,12 @@ confirm each reads back its own content.
 
 ---
 
-### User Story 4 - Keep the cache from growing without bound (Priority: P2)
+### User Story 4 - Keep the cache healthy across time (Priority: P2)
 
-A developer uses the same machine for months across many workspaces. Disk use stays bounded, and
-the tree of a workspace they have not opened recently is still navigable.
+A developer uses the same machine for months across many workspaces and several releases of the
+application. Disk use stays bounded, the tree of a workspace they have not opened recently is
+still navigable, and upgrading does not cost them their cached content or leave them staring at
+a window that appears to have hung.
 
 **Why this priority**: P2 because a cache that never evicts still works, right up until it does
 not. This is what makes the product tolerable over months rather than days.
@@ -169,6 +190,13 @@ gone while the tree is intact and files are marked uncached.
    without the developer being told anything unusual happened.
 4. **Given** any cache hit, **When** it is served, **Then** that file's last access is recorded,
    so the retention window measures use rather than age.
+5. **Given** a running session, **When** the developer is working, **Then** no eviction runs —
+   reclaim happens at startup, before any workspace opens, so it never competes with a read.
+6. **Given** a cache written by an earlier release, **When** the application starts, **Then** it
+   is migrated with its content preserved and the developer can see the migration running.
+7. **Given** a migration that fails partway, **When** the application recovers, **Then** the
+   projection is rebuilt from scratch and the developer is told, and no half-transformed
+   projection is ever read.
 
 ---
 
@@ -198,6 +226,8 @@ come from the projection with no request attempted.
 - **A path that escapes the workspace.** A request for `../../etc/passwd`, or a symlink
   resolving outside the root. The engine must refuse it independently of anything the client
   checked, because the engine runs with the developer's full filesystem rights.
+- **A confirmation that never returns.** The engine is reachable but wedged. The developer must
+  not wait indefinitely for permission to read a file they already have.
 - **A file that changes between the hash check and the read.** The content served must be
   internally consistent — never a hash from one version and bytes from another.
 - **A file larger than the cache's practical limit.** Opening a multi-gigabyte artifact must not
@@ -209,10 +239,14 @@ come from the projection with no request attempted.
 - **A rename.** Cached content must survive a file moving, because the content is unchanged and
   refetching it would be wasted work.
 - **Two workspaces pointing at the same directory.** Legal, and each keeps its own projection.
-- **The cache schema changing between releases.** An older cache must migrate or be discarded
-  cleanly, never read with the wrong shape.
+- **The cache schema changing between releases.** An older cache migrates in place, visibly.
+- **A migration interrupted halfway** — the machine sleeps, the process is killed, the disk
+  fills. The next launch must not find a projection that is half one schema and half another and
+  read it as either.
 - **Disk full while caching.** Caching is an optimisation; failing to cache must not fail the
   read that prompted it.
+- **Eviction meeting a workspace that is already open.** It must not run at all in that
+  situation rather than running carefully.
 - **A workspace deleted on the remote side while open.** The developer must learn the workspace
   is gone rather than browsing a projection of something that no longer exists.
 
@@ -258,8 +292,18 @@ come from the projection with no request attempted.
   listing for that folder's immediate children on a miss.
 - **FR-016**: Content already listed MUST NOT be re-requested while it remains valid.
 - **FR-017**: The projection MUST survive a restart of the application.
-- **FR-018**: A schema older than the current one MUST be migrated or discarded cleanly, never
-  read with the wrong shape.
+- **FR-018**: A projection written by an older schema MUST be migrated in place, preserving its
+  cached content across an upgrade.
+- **FR-018a**: A migration MUST publish a state that says it is running, from before it begins
+  until after it completes, and MUST refresh that state at least once per second while it runs.
+  "Visible" alone is not a testable bound — one message at the start satisfies it and still
+  leaves an upgrade that appears to hang, which is indistinguishable from a broken install.
+- **FR-018b**: A migration that fails MUST discard the projection and rebuild it, and MUST tell
+  the developer that cached content was rebuilt. A half-transformed projection MUST NOT be
+  readable under any circumstance — it is the one state that could serve wrong bytes while
+  believing they are right.
+- **FR-018c**: A projection MUST NOT be read with a schema it was not written for, at any point,
+  including during a migration.
 
 **Validity**
 
@@ -269,6 +313,16 @@ come from the projection with no request attempted.
   content for exactly the files being worked on.
 - **FR-021**: Content served MUST be internally consistent: the hash and the bytes MUST describe
   the same version.
+- **FR-021a**: While connected, cached content MUST NOT be presented to the developer until the
+  engine has confirmed its hash is current. A stale byte is never shown on a working connection.
+- **FR-021b**: While a confirmation is outstanding, a state saying so MUST be published for the
+  whole time it is outstanding. "Able to show" describes a capability rather than a behaviour,
+  and a capability nothing exercises is not observable; a wait the developer cannot see is
+  indistinguishable from a frozen window.
+- **FR-021c**: A confirmation that does not complete within its limit MUST end the wait, report
+  that the content could not be verified, and offer the cached copy marked as unverified. An
+  unbounded wait is not an option, because the engine being wedged is exactly when the cache is
+  most useful.
 - **FR-022**: Cached content MUST survive a rename, because the content did not change.
 
 **Size**
@@ -290,6 +344,13 @@ come from the projection with no request attempted.
 **Retention**
 
 - **FR-026**: Content unopened for fourteen days MUST be removed.
+- **FR-026a**: Eviction MUST run once at startup, before any workspace is opened, and MUST NOT
+  run while a workspace is in use. Deleting competes with reading on the same store, and the one
+  thing §1.4 protects is a sidebar that answers in under a millisecond — a reclaim holding a
+  write lock is precisely what breaks that.
+- **FR-026b**: A session that is never restarted therefore never evicts, and disk may grow for
+  its duration. This is an accepted limit rather than an oversight: the alternative triggers all
+  reclaim while somebody is working.
 - **FR-027**: Eviction MUST remove content only. The tree MUST remain navigable and the file
   MUST remain listed.
 - **FR-028**: Every cache hit MUST record that access, so retention measures use rather than age.
@@ -297,6 +358,17 @@ come from the projection with no request attempted.
   unusual happened.
 - **FR-030**: Cached content MUST be stored compressed, and its hash MUST be computed over the
   uncompressed bytes so it is directly comparable with the engine's.
+
+**Latency**
+
+- **FR-025a**: Expanding a folder whose contents are already cached MUST complete within 1 ms,
+  and one that requires a fetch within 250 ms, per §1.4. Principle V makes the interaction budget
+  a measured question rather than an argued one, and A-NFR fixes how: p99 at the boundary
+  between the interface and the transport, with any harness delay excluded.
+- **FR-025b**: Opening a cached file while connected costs a confirmation round trip by
+  FR-021a, so the cache MUST NOT be claimed to make opening faster while online. Its online value
+  is transfer avoided; its offline value is availability. Stating this prevents a later
+  measurement being read as a regression against a promise nobody made.
 
 **Offline**
 
@@ -339,6 +411,11 @@ come from the projection with no request attempted.
 - **SC-003**: Re-opening an unchanged file transfers zero bytes of content.
 - **SC-004**: A file whose remote content changed is never served from the cache — zero
   occurrences across every exercised change scenario.
+- **SC-004a**: While connected, unverified content reaches the developer zero times.
+- **SC-004b**: A confirmation that never arrives ends within its limit and produces a stated
+  outcome, in 100% of exercised cases — never an indefinite wait.
+- **SC-004c**: Expanding a cached folder completes within 1 ms and an uncached one within 250 ms
+  at the 99th percentile, with the measured values printed rather than only compared.
 - **SC-005**: A file modified in git but unchanged in content is served from the cache in 100%
   of cases.
 - **SC-006**: A path escaping the workspace root is refused by the engine in 100% of cases,
@@ -347,6 +424,8 @@ come from the projection with no request attempted.
   zero cross-reads.
 - **SC-008**: Content unopened past the retention window is removed, while 100% of tree entries
   remain listed and navigable.
+- **SC-008a**: Zero evictions occur while a workspace is open, across a sustained working
+  session.
 - **SC-009**: An evicted file re-opens successfully with no error surfaced to the developer.
 - **SC-010**: Cached content occupies at most half the disk of the content it represents, across
   a representative source tree, with the achieved ratio printed rather than only compared — a
@@ -355,8 +434,13 @@ come from the projection with no request attempted.
   zero requests attempted.
 - **SC-012**: While disconnected, opening an uncached file produces a stated reason rather than
   an empty document, in 100% of cases.
-- **SC-013**: A cache written by an older schema is migrated or discarded without ever being read
-  with the wrong shape.
+- **SC-013**: A cache written by an older schema is migrated with its content preserved, and is
+  never read with the wrong shape at any point.
+- **SC-013a**: A migration publishes its running state at least once per second for its whole
+  duration, in 100% of exercised upgrades — asserted on the number and spacing of those reports,
+  not on one having been sent.
+- **SC-013b**: A failed migration leaves zero readable half-transformed projections across every
+  exercised failure mode, and the developer is told the cache was rebuilt.
 - **SC-014**: The full suite for this feature runs with no remote host and no network.
 
 ## Assumptions
