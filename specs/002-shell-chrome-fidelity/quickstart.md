@@ -136,7 +136,7 @@ what it judges against passes unconditionally.
 ## Automated suites
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml    # includes the migration test
+cargo test --manifest-path client/core/Cargo.toml    # includes the migration test
 npm run test:unit
 npm run lint:ds
 npm run gate:fidelity                              # run before pushing

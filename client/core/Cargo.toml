@@ -1,0 +1,48 @@
+[package]
+name = "apex-shell"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[lib]
+name = "apex_shell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "apex-shell"
+path = "src/main.rs"
+
+# OpenSSH execs SSH_ASKPASS as a program, so the helper cannot be a function in our
+# process. Deliberately tiny: it asks the running app and writes the answer out.
+[[bin]]
+name = "apex-askpass"
+path = "bin/apex-askpass.rs"
+
+# The mock stands in for the remote engine. A real binary, not a library fake, so the
+# transport under test exercises a real process boundary and a real pipe. Declared as a bin
+# rather than a harness-less test so integration tests get CARGO_BIN_EXE_apex-mock-daemon
+# and need not go hunting through target/debug/deps.
+[[bin]]
+name = "apex-mock-daemon"
+path = "tests/mock_daemon/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The wire format, shared with the engine so there is one implementation of §4.1.
+apex-protocol = { path = "../../protocol" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
+# Frame buffers: the codec reads a declared length out of a stream that does not respect
+# frame boundaries, so it needs a buffer it can split without copying.
+bytes = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+

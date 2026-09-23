@@ -119,7 +119,7 @@ out of order; `stall=...` models a link that has gone silent.
 The default suite needs no network and asserts as much. One test is opt-in:
 
 ```sh
-APEX_REAL_SSHD=1 cargo test --manifest-path src-tauri/Cargo.toml --test transport_real_sshd
+APEX_REAL_SSHD=1 cargo test --manifest-path client/core/Cargo.toml --test transport_real_sshd
 ```
 
 It spawns a private `sshd` on loopback and carries frames over a real connection with the

@@ -13,7 +13,8 @@ import { remote } from 'webdriverio';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '../..');
-const BINARY = join(REPO, 'src-tauri/target/debug/apex-shell');
+// Workspace root, not the member — see the note in tests/e2e/wdio.conf.ts.
+const BINARY = join(REPO, 'target/debug/apex-shell');
 const PROFILE = join(REPO, '.gate-profile');
 
 export const REFERENCE = { width: 1200, height: 800 };
@@ -102,7 +103,7 @@ export async function withShell(fn) {
   if (!existsSync(BINARY)) {
     throw new Error(
       `the shell binary is missing at ${BINARY}\n` +
-        '  Build it first: cargo build --manifest-path src-tauri/Cargo.toml',
+        '  Build it first: cargo build --manifest-path client/core/Cargo.toml',
     );
   }
 

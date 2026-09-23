@@ -14,8 +14,8 @@
     ]
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.svelte",
+    "client/ui/**/*.ts",
+    "client/ui/**/*.svelte",
     "tests/**/*.ts"
   ]
 }

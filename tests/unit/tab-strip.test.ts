@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { inOrder, neighbour } from '../../src/lib/tabs/ordering';
-import type { OpenDocumentReference } from '../../src/lib/ipc';
+import { inOrder, neighbour } from '../../client/ui/lib/tabs/ordering';
+import type { OpenDocumentReference } from '../../client/ui/lib/ipc';
 
 const docs = (n: number): OpenDocumentReference[] =>
   Array.from({ length: n }, (_, i) => ({ id: `d${i}`, display_name: `doc${i}`, order: i }));

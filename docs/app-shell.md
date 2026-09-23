@@ -10,7 +10,7 @@ webview owns pixels. **The core owns truth and the webview owns pixels** is the 
 the webview holds no authoritative state and can be reloaded without loss.
 
 ```
-src-tauri/src/
+client/core/src/
   domain/        no external imports at all
   application/   ports + use cases; depends only on domain and ports
   adapters/      inbound (Tauri commands), outbound (store, connection)
@@ -50,7 +50,7 @@ cache is disposable and evicted, and interface state is not.
 them. A failed write is reported, never propagated to the caller (FR-023). Do not add an
 await on persistence to an interaction path.
 
-**Styling comes from `mockups/`.** `npm run ds:sync` copies it; `src/lib/ds/` is build output
+**Styling comes from `mockups/`.** `npm run ds:sync` copies it; `client/ui/lib/ds/` is build output
 and is gitignored. Never hand-edit a token value. `npm run lint:ds` fails on raw hex, raw px
 beyond 1-2px hairlines, and hard-coded fonts; `ds:sync` fails on a reference to a token the
 design system does not define, which is the FR-022 designer-gap signal.
@@ -64,7 +64,7 @@ a designer conversation, not an implementation choice.
 ```bash
 npm install && npm run ds:sync
 npm run tauri dev          # development
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path client/core/Cargo.toml
 npm run test:unit
 npm run lint:ds            # run before pushing
 npm run perf:budget        # run before pushing
@@ -88,7 +88,7 @@ The prototype's chrome, mounted on the F000 shell. Specification in
 ## Components
 
 ```
-src/lib/chrome/
+client/ui/lib/chrome/
   ChromeHeader.svelte   product mark, project switcher, run group, omnibox, right cluster
   ActivityRail.svelte   the destination list, roving tab index, collapse toggle
   RailButton.svelte     one destination: active, available, unavailable
@@ -97,7 +97,7 @@ src/lib/chrome/
 
 The rail's destinations come from the core (`rail_destinations`), not from the interface.
 They are behaviour — identity, label, icon, availability — and the core is where behaviour
-lives. `src/lib/rail.ts` holds the ordering and keyboard helpers so they can be tested
+lives. `client/ui/lib/rail.ts` holds the ordering and keyboard helpers so they can be tested
 without a window.
 
 **Every control in the chrome header is inert.** Opening a workspace, run configurations,
@@ -109,7 +109,7 @@ header's proportions on every release.
 ## Dimensions come from the prototype, never from you
 
 No chrome dimension is written in a component. `scripts/ds-sync.mjs` extracts them from
-`mockups/` on every build into `src/lib/ds/layout-tokens.css`, and components reference
+`mockups/` on every build into `client/ui/lib/ds/layout-tokens.css`, and components reference
 `var(--vk-*)`. `lint:ds` rejects a raw pixel value, and an end-to-end test
 (`chrome-tokens.spec.ts`) rejects one that reaches the rendered stylesheet.
 

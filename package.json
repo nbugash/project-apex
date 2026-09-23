@@ -6,11 +6,11 @@
   "scripts": {
     "ds:sync": "node scripts/ds-sync.mjs",
     "dev": "vite",
-    "build": "npm run ds:sync && vite build",
+    "build": "npm run build:engine && npm run ds:sync && vite build",
     "tauri": "tauri",
     "test:unit": "vitest run",
     "lint": "eslint .",
-    "lint:ds": "eslint src && node scripts/lint-ds.mjs",
+    "lint:ds": "eslint client/ui && node scripts/lint-ds.mjs",
     "e2e": "wdio run tests/e2e/wdio.conf.ts",
     "perf:budget": "vitest run tests/perf",
     "smoke:macos": "bash scripts/smoke-macos.sh",
@@ -19,7 +19,9 @@
     "format:check": "prettier --check .",
     "gate:fidelity": "node tools/gate-fidelity/compare.mjs",
     "gate:fidelity:update": "node tools/gate-fidelity/update.mjs",
-    "gate:fidelity:test": "node --test tools/gate-fidelity/gate.test.mjs"
+    "gate:fidelity:test": "node --test tools/gate-fidelity/gate.test.mjs",
+    "build:engine": "cargo build -p apex-engine",
+    "build:engine:release": "cargo build -p apex-engine --release"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

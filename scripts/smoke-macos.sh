@@ -7,14 +7,15 @@
 # Appendix A, A-E2E and in the plan's Complexity Tracking.
 set -euo pipefail
 
-BINARY="src-tauri/target/debug/apex-shell"
+# Workspace root, not the member: F002 made this three crates and Cargo moved the artifacts.
+BINARY="target/debug/apex-shell"
 DATA_DIR="$(mktemp -d)"
 SHOT="${1:-reports/macos/smoke.png}"
 
 cleanup() { rm -rf "$DATA_DIR"; [[ -n "${APP_PID:-}" ]] && kill "$APP_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-cargo build --manifest-path src-tauri/Cargo.toml
+cargo build --manifest-path client/core/Cargo.toml
 mkdir -p "$(dirname "$SHOT")"
 
 APEX_DATA_DIR="$DATA_DIR" "$BINARY" &

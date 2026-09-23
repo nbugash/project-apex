@@ -1,0 +1,18 @@
+# Workspace root.
+#
+# F002 makes this project two shipped binaries that must agree with each other: the client and
+# the engine that runs on the remote host. They share the wire format §4.1 defines, which lives
+# in `protocol` so there is one implementation of it rather than two that drift.
+[workspace]
+resolver = "2"
+members = ["protocol", "engine", "client/core"]
+
+# Profiles must live at the workspace root. Cargo ignores `[profile.*]` in a member and warns,
+# so leaving this in client/core/Cargo.toml would have silently dropped the release settings F000
+# chose — a stripped, fat-LTO binary quietly becoming an ordinary one.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

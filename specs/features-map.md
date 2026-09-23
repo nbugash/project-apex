@@ -31,7 +31,7 @@ an intention to do it.
   - [X] Failure classification from exit codes and locale-pinned stderr
   - [X] Mock SSH daemon harness simulating 250ms RTT and 5% packet loss
 - [ ] **F002 daemon-bootstrap** (depends: F001)
-  - Spec: not yet specified
+  - Spec: specs/004-daemon-bootstrap
   - [ ] Engine binary deployment and integrity verification on first connect
   - [ ] auth/handshake request and response with capability exchange
   - [ ] Protocol version negotiation and mismatch policy
@@ -114,6 +114,12 @@ an intention to do it.
   - [ ] Conflict interface for hunks that genuinely collide
   - [ ] Reconciliation ordering across many changed files on reconnect
   - [ ] Merge outcome reporting and audit trail
+- [ ] **F020 detached-engine** (depends: F002)
+  - Spec: not yet specified
+  - [ ] Engine detaches from the channel that started it
+  - [ ] Client re-attaches to a running engine over a local socket
+  - [ ] Engine lifetime bounded by instance idle policy rather than by a client
+  - [ ] Orphaned engine detection and cleanup
 - [ ] **F013 global-search** [P] (depends: F000, F003)
   - Spec: not yet specified
   - [ ] Command palette and fuzzy path search UI
