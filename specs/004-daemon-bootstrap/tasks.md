@@ -219,8 +219,8 @@ notification, unchanged identity, and that unpreserved state is reported.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T069 Add the opt-in real-`sshd` deployment test in `src-tauri/tests/bootstrap_real_sshd.rs`, skipped with a clear reason when unavailable. This is the only place the transfer, the remote `sha256sum` and the atomic promotion run against a real remote filesystem
-- [ ] T084 Assert in `src-tauri/tests/bootstrap_real_sshd.rs` that nothing in the deployment path requires elevated privilege: every path written is owned by the connecting account, and no `sudo`, `su` or setuid invocation appears in what the deployer runs (FR-005). This is the only suite with a real filesystem and a real account, so it is the only place the property is observable
+- [X] T069 Add the opt-in real-`sshd` deployment test in `src-tauri/tests/bootstrap_real_sshd.rs`, skipped with a clear reason when unavailable. This is the only place the transfer, the remote `sha256sum` and the atomic promotion run against a real remote filesystem
+- [X] T084 Assert in `src-tauri/tests/bootstrap_real_sshd.rs` that nothing in the deployment path requires elevated privilege: every path written is owned by the connecting account, and no `sudo`, `su` or setuid invocation appears in what the deployer runs (FR-005). This is the only suite with a real filesystem and a real account, so it is the only place the property is observable
 - [ ] T070 [P] Document the engine and bootstrap in `docs/engine.md` — deployment, the handshake, the version rule, and what a session outlives
 - [ ] T071 [P] Add `reports/screenshots/README.md` recording the `${OS}/${FEATURE}/` convention and why `FEATURE` is the map identity rather than the spec directory number
 - [ ] T072 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md), including the SC-002 and SC-013 measurements as numbers rather than verdicts, per A-NFR

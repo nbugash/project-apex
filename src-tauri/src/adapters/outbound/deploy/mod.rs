@@ -26,6 +26,10 @@ const REMOTE_DIR: &str = "~/.apex/engine";
 const CHUNK: usize = 256 * 1024;
 
 pub struct SshStreamDeployer {
+    /// An ssh configuration to read, passed as `-F`. `None` lets ssh read the user's own,
+    /// which is what production wants: A-B1 chose the OpenSSH client partly because the
+    /// developer's existing config, identities and ProxyJump already work.
+    pub ssh_config: Option<String>,
     state: watch::Sender<DeploymentState>,
     keep: watch::Receiver<DeploymentState>,
 }
@@ -33,13 +37,35 @@ pub struct SshStreamDeployer {
 impl Default for SshStreamDeployer {
     fn default() -> Self {
         let (state, keep) = watch::channel(DeploymentState::Preparing);
-        Self { state, keep }
+        Self {
+            ssh_config: None,
+            state,
+            keep,
+        }
     }
 }
 
 /// The `ssh` argument list for one remote command, reusing F001's master.
-pub fn remote_command(target: &Target, script: &str) -> Vec<String> {
-    let mut v = control_options();
+pub fn remote_command(config: Option<&str>, target: &Target, script: &str) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    if let Some(path) = config {
+        v.push("-F".into());
+        v.push(path.to_string());
+    }
+    // Attach to the transport's master; never become one.
+    //
+    // `ControlMaster=auto` would make the first deployment command a master, and a master with
+    // `ControlPersist` backgrounds itself while still holding the stdout pipe it inherited — so
+    // reading that command's output waits forever for an EOF that cannot arrive. It hangs only
+    // when no master exists yet, which is exactly the first connect this feature is for.
+    //
+    // It is also the right ownership. F001's transport establishes the connection and the
+    // deployer is a guest on it. `no` still uses an existing ControlPath and simply opens an
+    // ordinary connection when there is none. ssh takes the first value it is given, so this
+    // precedes the shared options rather than replacing them.
+    v.push("-o".into());
+    v.push("ControlMaster=no".into());
+    v.extend(control_options());
     // The deployer must never prompt. There is no tty behind it and no askpass wired to it,
     // so a prompt would hang a transfer with nobody able to answer.
     v.push("-o".into());
@@ -75,9 +101,20 @@ fn classify(stderr: &str) -> DeploymentFailure {
 }
 
 impl SshStreamDeployer {
+    /// A deployer that reads the given ssh configuration instead of the user's.
+    ///
+    /// A constructor rather than public fields: the watch channel's two halves must stay
+    /// consistent with each other, and struct-update syntax would expose them for no reason.
+    pub fn with_config(path: impl Into<String>) -> Self {
+        Self {
+            ssh_config: Some(path.into()),
+            ..Default::default()
+        }
+    }
+
     fn run(&self, target: &Target, script: &str) -> Result<String, DeploymentFailure> {
         let out = Command::new("ssh")
-            .args(remote_command(target, script))
+            .args(remote_command(self.ssh_config.as_deref(), target, script))
             .env("LC_ALL", "C")
             .output()
             .map_err(|e| DeploymentFailure::PermissionDenied {
@@ -118,7 +155,11 @@ impl ArtifactDeployer for SshStreamDeployer {
         // progress has to be observable at least once a second, and only a loop we drive can
         // count bytes as they go — the alternatives print a progress bar meant for a human.
         let mut child = Command::new("ssh")
-            .args(remote_command(target, &format!("cat > {staged}")))
+            .args(remote_command(
+                self.ssh_config.as_deref(),
+                target,
+                &format!("cat > {staged}"),
+            ))
             .env("LC_ALL", "C")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -225,13 +266,21 @@ mod tests {
             host: "build-01".into(),
             user: "dev".into(),
         };
-        let args = remote_command(&t, "uname -m");
+        let args = remote_command(None, &t, "uname -m");
         assert!(
             args.windows(2)
                 .any(|w| w[0] == "-o" && w[1] == "ControlPath=~/.ssh/apex-%C"),
             "the deployer must attach to F001's master: {args:?}"
         );
-        assert!(args.windows(2).any(|w| w[1] == "ControlMaster=auto"));
+        assert!(
+            args.windows(2).any(|w| w[1] == "ControlMaster=no"),
+            "a deployer that becomes the master hangs reading its own output: {args:?}"
+        );
+        assert!(
+            args.iter().position(|a| a == "ControlMaster=no")
+                < args.iter().position(|a| a == "ControlMaster=auto"),
+            "ssh takes the first value, so the override must come first: {args:?}"
+        );
         assert_eq!(args[args.len() - 2], "dev@build-01");
         assert_eq!(args[args.len() - 1], "uname -m");
     }
@@ -244,7 +293,7 @@ mod tests {
             host: "h".into(),
             user: "u".into(),
         };
-        let args = remote_command(&t, "true");
+        let args = remote_command(None, &t, "true");
         assert!(args.windows(2).any(|w| w[1] == "BatchMode=yes"), "{args:?}");
     }
 
@@ -268,6 +317,19 @@ mod tests {
         b.digest = Digest::parse(&"d".repeat(64)).expect("valid");
         assert_eq!(paths(&a).1, paths(&a.clone()).1);
         assert_ne!(paths(&a).1, paths(&b).1);
+    }
+
+    /// A config is passed through as `-F`, and its absence adds no flag at all — production
+    /// must keep reading the developer's own configuration.
+    #[test]
+    fn an_ssh_config_is_passed_through_and_omitted_when_absent() {
+        let t = Target {
+            host: "h".into(),
+            user: "u".into(),
+        };
+        let with = remote_command(Some("/tmp/cfg"), &t, "true");
+        assert_eq!(&with[0..2], &["-F".to_string(), "/tmp/cfg".to_string()]);
+        assert!(!remote_command(None, &t, "true").contains(&"-F".to_string()));
     }
 
     #[test]

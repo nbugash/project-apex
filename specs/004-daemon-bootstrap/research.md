@@ -108,6 +108,37 @@ that must be rebuilt by hand on every engine change.
 
 ---
 
+## Pointing the deployer at a host that is not in the user's config
+
+**Decision**: `SshStreamDeployer` accepts an optional ssh config path and passes it as `-F`.
+Production passes `None`, so `ssh` reads the user's own configuration exactly as it does today.
+
+**Rationale**: This is functionality the product wants regardless of testing. A-B1 chose the
+OpenSSH client partly because it already implements `~/.ssh/config`, `ProxyJump`, per-host
+identities and everything else an enterprise developer has already configured — a client that
+cannot be pointed at a configuration throws away part of what that decision bought.
+
+It also makes the opt-in `sshd` suite possible, which is what surfaced the gap: a test daemon
+runs on a loopback port with its own key, and nothing in the invocation could name either. The
+alternative shapes were worse. A `Vec<String>` of extra options is a test-only hatch that, once
+present, becomes where somebody puts a production port. Pointing `HOME` at a temp directory
+needs no production change at all and introduces a process-wide race, because Cargo runs tests
+as threads in one process and a neighbouring test reading `HOME` would see the temporary one.
+
+**Known limit, recorded rather than discovered**: `ssh` uses the first value it obtains for any
+parameter, and command-line options are read before the config file. So the deployer's own
+`-o ControlPath` wins over anything `-F` supplies, and a test's master lands under the
+developer's `~/.ssh` rather than in the test's directory. `%C` hashes host, port and user, so it
+cannot collide with a real session — and the opt-in test closes it with `ssh -O exit`, the same
+cleanup F001's suite needed for the same reason.
+
+**Alternatives considered**: *Extra options field* — the test hatch above. *`HOME` override* — the
+race above. *Leave the deployer untested against a real `sshd`* — leaves the transfer, the remote
+digest and the atomic rename unexercised against a real filesystem, which is exactly where a
+cross-device rename or a quoting bug would surface.
+
+---
+
 ## Which digest, and where it is computed
 
 **Decision**: SHA-256. The client computes the digest of the artifact it ships at build time; the
