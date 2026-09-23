@@ -31,6 +31,8 @@ pub fn run() {
             cmd::tool_window_resize,
             cmd::rail_destinations,
             cmd::workspace_read_directory,
+            cmd::workspace_open,
+            cmd::workspace_delete,
             #[cfg(debug_assertions)]
             cmd::stub_set_connection,
         ])

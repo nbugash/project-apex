@@ -19,6 +19,7 @@ use crate::application::ports::workspace_provider::{
 use crate::application::use_cases::cached_workspace::{CachedWorkspace, Limits};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
+use crate::application::use_cases::register_workspace::RegisterWorkspace;
 use crate::application::use_cases::restore_session::RestoreSession;
 use crate::composition_workspace::prepare_cache;
 use crate::domain::rail::RailCatalogue;
@@ -128,6 +129,7 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
     // does during a real outage.
     let inner: Arc<dyn WorkspaceProvider> = Arc::new(DisconnectedWorkspace);
     let workspace = WorkspaceAccess {
+        register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
         provider: Arc::new(CachedWorkspace::new(
             inner,
             ready.get(),

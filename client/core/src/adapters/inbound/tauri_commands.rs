@@ -247,6 +247,17 @@ impl From<ProviderError> for WorkspaceFailure {
 /// field that is always `None` before then would put an unwrap in every command.
 pub struct WorkspaceAccess {
     pub provider: Arc<dyn WorkspaceProvider>,
+    pub register: Arc<crate::application::use_cases::register_workspace::RegisterWorkspace>,
+}
+
+/// A registered workspace, as the interface sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceDto {
+    pub id: String,
+    pub name: String,
+    /// `"created"` or `"attached"`. The interface shows nothing different, but a developer
+    /// reading a log needs to know whether a projection was reused (FR-011).
+    pub attachment: String,
 }
 
 #[tauri::command]
@@ -275,6 +286,53 @@ pub async fn workspace_read_directory(
             modified: e.modified,
         })
         .collect())
+}
+
+#[tauri::command]
+pub fn workspace_open(
+    name: String,
+    host: String,
+    base_path: String,
+    access: State<'_, WorkspaceAccess>,
+) -> Result<WorkspaceDto, WorkspaceFailure> {
+    use crate::application::use_cases::register_workspace::RegisterWorkspace;
+    use crate::domain::workspace::Location;
+
+    // The identity is minted here, client-side, so the workspace is addressable before the
+    // engine has ever seen it (A-WORKSPACE). Nothing keys on the display name, which is why two
+    // checkouts of one repository can both be called "apex".
+    let id = RegisterWorkspace::mint();
+    let (ws, attachment) = access
+        .register
+        .open(
+            id,
+            name,
+            Location::Remote {
+                host,
+                base: base_path,
+            },
+        )
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?;
+    Ok(WorkspaceDto {
+        id: ws.id.0,
+        name: ws.name,
+        attachment: match attachment {
+            crate::application::ports::workspace_cache::Attachment::Created => "created".into(),
+            crate::application::ports::workspace_cache::Attachment::Attached => "attached".into(),
+        },
+    })
+}
+
+#[tauri::command]
+pub fn workspace_delete(
+    workspace_id: String,
+    access: State<'_, WorkspaceAccess>,
+) -> Result<(), WorkspaceFailure> {
+    // Removes cached content **and** the tree, by cascade (FR-012).
+    access
+        .register
+        .delete(&WorkspaceId(workspace_id))
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))
 }
 
 #[cfg(test)]

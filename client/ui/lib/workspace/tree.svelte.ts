@@ -95,11 +95,15 @@ function isDescendant(path: string, ancestor: string): boolean {
   return path.startsWith(ancestor === '/' ? '/' : `${ancestor}/`) && path !== ancestor;
 }
 
-/// A gone workspace is not an outage. Offline means possibly stale and still true; gone means
-/// the thing being projected does not exist, and continuing to browse it would be fiction.
-function classify(e: unknown): TreeProblem {
-  const message = String(e);
-  if (message.includes('no longer exists')) return { kind: 'gone' };
-  if (message.includes('not connected')) return { kind: 'offline' };
-  return { kind: 'error', message };
+/// A gone workspace is not an outage.
+///
+/// Offline means possibly stale and still true; gone means the thing being projected does not
+/// exist, and continuing to browse it would be fiction rather than a stale fact. The core sends
+/// these as typed variants precisely so this does not have to match on a message — a message is
+/// something a refactor changes silently.
+export function classify(e: unknown): TreeProblem {
+  const kind = (e as { kind?: string } | null)?.kind;
+  if (kind === 'gone') return { kind: 'gone' };
+  if (kind === 'offline') return { kind: 'offline' };
+  return { kind: 'error', message: typeof e === 'string' ? e : JSON.stringify(e) };
 }
