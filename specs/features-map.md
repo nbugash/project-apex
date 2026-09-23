@@ -38,7 +38,7 @@ an intention to do it.
   - [X] In-place binary replacement and re-execution
   - [X] Session continuity contract across engine re-execution (task recovery is F010, language servers F007, surviving a disconnection F020)
 - [ ] **F003 workspace-cache** (depends: F002)
-  - Spec: not yet specified
+  - Spec: specs/005-workspace-cache
   - [ ] WorkspaceProvider trait with local and remote implementations
   - [ ] Canonical SQLite schema with WAL, FTS index and migrations
   - [ ] Workspace registration and path mapping
