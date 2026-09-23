@@ -113,20 +113,20 @@ offered functionality follows, with no request for an unadvertised capability re
 
 ### Tests for User Story 2
 
-- [ ] T031 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: the handshake is the first request on a session, and nothing precedes it (FR-010)
-- [ ] T032 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a request for a capability the engine did not advertise produces **no frame on the wire**. Assert on what was written, not on the error the caller received — a request that was sent and rejected also produces an error (SC-008)
-- [ ] T033 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a handshake that is never answered fails distinguishably from a transport failure (FR-014)
+- [X] T031 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: the handshake is the first request on a session, and nothing precedes it (FR-010)
+- [X] T032 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a request for a capability the engine did not advertise produces **no frame on the wire**. Assert on what was written, not on the error the caller received — a request that was sent and rejected also produces an error (SC-008)
+- [X] T033 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a handshake that is never answered fails distinguishably from a transport failure (FR-014)
 - [X] T034 [P] [US2] Create `engine/src/handshake.rs` with its test module and a test that unknown capability tokens are ignored rather than rejected, on both sides — the property that lets a method be added without a version bump. This task creates the file; T036 fills in the responder, because a Rust unit test lives in the file it tests and cannot precede it
 
 - [X] T080 [P] [US2] Test in `engine/src/handshake.rs`: a well-framed but malformed handshake payload is rejected without panicking and without the engine acting on any part of it. Constitution Principle VI is a MUST and makes inbound input untrusted at the receiving end; the codec tests inherited from `protocol` cover framing, not payloads, so nothing currently exercises this
-- [ ] T081 [P] [US2] Call `assert_no_network()` from `src-tauri/tests/bootstrap_handshake.rs` (SC-010)
+- [X] T081 [P] [US2] Call `assert_no_network()` from `src-tauri/tests/bootstrap_handshake.rs` (SC-010)
 
 ### Implementation for User Story 2
 
 - [X] T035 [US2] Implement the stdio frame loop in `engine/src/main.rs`, reusing `protocol::framing` and treating every inbound frame as untrusted per Principle VI
 - [X] T036 [US2] Implement the `auth/handshake` responder in `engine/src/handshake.rs`, advertising the capability set this engine actually serves
-- [ ] T037 [US2] Implement `TransportHandshake` in `src-tauri/src/adapters/outbound/deploy/mod.rs` over F001's `RequestTransport`
-- [ ] T038 [US2] Record the engine's capabilities for the session's life in `src-tauri/src/application/use_cases/bootstrap.rs`
+- [X] T037 [US2] Implement `TransportHandshake` in `src-tauri/src/adapters/outbound/deploy/mod.rs` over F001's `RequestTransport`
+- [X] T038 [US2] Record the engine's capabilities for the session's life in `src-tauri/src/application/use_cases/bootstrap.rs`
 - [X] T039 [US2] Implement the local refusal for unadvertised capabilities in `src-tauri/src/application/use_cases/bootstrap.rs`, so the request never reaches the transport
 
 **Checkpoint**: The client knows what it may ask for before it asks.
@@ -178,7 +178,7 @@ restart and resumed session with no developer action, and that a failed replacem
 
 - [ ] T053 [US4] Implement version-qualified artifact paths in `src-tauri/src/adapters/outbound/deploy/mod.rs`, so the previous engine remains under its own name rather than being backed up
 - [ ] T054 [US4] Implement `retire_previous` in `src-tauri/src/adapters/outbound/deploy/mod.rs`, idempotent and non-fatal
-- [ ] T055 [US4] Implement re-execution in `engine/src/main.rs`, preserving the stdio file descriptors across `exec` so the channel survives
+- [X] T055 [US4] Implement re-execution in `engine/src/main.rs`, preserving the stdio file descriptors across `exec` so the channel survives
 - [ ] T056 [US4] Implement the replacement sequence in `src-tauri/src/application/use_cases/bootstrap.rs`: deploy, handshake, then retire — in that order, because only the use case sees both ports
 - [ ] T057 [US4] Implement the redeploy bound in `src-tauri/src/application/use_cases/bootstrap.rs`
 
@@ -195,15 +195,15 @@ notification, unchanged identity, and that unpreserved state is reported.
 
 ### Tests for User Story 5
 
-- [ ] T058 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: a restart is announced by the engine and never inferred by the client (SC-009)
-- [ ] T059 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: the session identity is unchanged across re-execution (FR-024)
+- [X] T058 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: a restart is announced by the engine and never inferred by the client (SC-009)
+- [X] T059 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: the session identity is unchanged across re-execution (FR-024)
 - [ ] T060 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: state that did not survive is named in `unpreserved`, and an empty list is asserted to mean nothing was lost rather than nothing was checked (FR-025)
 - [ ] T061 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: work in progress survives a disconnection and is still running when the client re-attaches (SC-009a)
-- [ ] T062 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: presenting an identity the engine has forgotten yields a stated refusal and a new session — never a silent new session presented as a resumption (FR-024c)
-- [ ] T063 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: A-REQ still holds — an in-flight request dies with its connection even though the session outlives it. The two rules are easy to conflate and the distinction is the point
+- [X] T062 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: presenting an identity the engine has forgotten yields a stated refusal and a new session — never a silent new session presented as a resumption (FR-024c)
+- [X] T063 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: A-REQ still holds — an in-flight request dies with its connection even though the session outlives it. The two rules are easy to conflate and the distinction is the point
 
 - [ ] T082 [P] [US5] Unit tests in `engine/src/session.rs`: mint yields distinct identities, resume of an unknown identity returns false, and identity is stable across re-execution. These are engine-side invariants currently covered only through the client's integration tests, which cannot fail for an engine-internal reason
-- [ ] T083 [P] [US5] Call `assert_no_network()` from `src-tauri/tests/bootstrap_restart.rs` (SC-010)
+- [X] T083 [P] [US5] Call `assert_no_network()` from `src-tauri/tests/bootstrap_restart.rs` (SC-010)
 
 ### Implementation for User Story 5
 

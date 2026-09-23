@@ -421,6 +421,7 @@ the workspace.
 |---|---|---|---|
 | `auth/handshake` | request | `clientVersion`, `protocolVersion`, `capabilities`, `resumeSession?` | `engineVersion`, `protocolVersion`, `capabilities`, `sessionId`, `resumed` |
 | `session/shutdown` | request | — | — |
+| `session/restart` | request | — | — |
 | `session/onRestart` | notification | `sessionId`, `unpreserved[]` | — |
 | `log/onMessage` | notification | `level`, `message`, `source` | — |
 
@@ -438,6 +439,16 @@ rather than guessing at a protocol it does not know (§3.8, Appendix A, A-BOOT).
 and the response's `resumed` says whether that was honoured. A false `resumed` means a **new**
 session was created, and the client MUST surface that rather than treat it as success — a client
 that silently continues shows a developer work that is not happening.
+
+`session/restart` asks the engine to replace its own process image (§15.3). It is acknowledged
+before the replacement happens, because afterwards there is no process left to answer with.
+
+**Anything the engine has already read but not yet answered is refused with `-32000` before the
+replacement**, rather than disappearing. Replacing a process keeps its file descriptors and
+discards its memory, so a request that arrived moments earlier is gone while the connection
+stays up — and the client would wait for a reply that can never come. A-REQ permits losing a
+request when the connection dies; here the connection survives, so silence would be a lie. A
+client receiving `-32000` re-issues.
 
 `session/onRestart` is sent by the engine after it re-executes itself. The session identity is
 unchanged, which is what distinguishes a restart from a new session, and `unpreserved` names

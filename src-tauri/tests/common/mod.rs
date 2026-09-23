@@ -680,3 +680,165 @@ pub fn artifact(arch: apex_shell::domain::artifact::Architecture) -> EngineArtif
         bytes: b"",
     }
 }
+
+// ---------------------------------------------------------------------------
+
+/// Spawns the **real** engine instead of the mock.
+///
+/// The mock cannot serve this feature's tests: a test asserts no §4.8 method name appears in
+/// its directory, which is what keeps it a framing double rather than a second engine that
+/// would drift. So anything about the handshake has to talk to the real binary.
+pub struct EngineSpawner {
+    /// Handed to the child, so a test can drive re-execution by pre-seeding an identity.
+    pub session_env: Option<String>,
+    children: Arc<Mutex<Vec<Child>>>,
+}
+
+impl Default for EngineSpawner {
+    fn default() -> Self {
+        Self {
+            session_env: None,
+            children: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl EngineSpawner {
+    /// Where the engine binary is.
+    ///
+    /// `CARGO_BIN_EXE_*` is only set for binaries of the *same* package, and the engine is a
+    /// different crate — so the path is derived the way `build.rs` derives it, and says what to
+    /// run when it is missing rather than failing to spawn something unnamed.
+    pub fn binary() -> std::path::PathBuf {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("target")
+            .join(if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            })
+            .join("ide-engine");
+        assert!(
+            p.exists(),
+            "the engine is not built. Run `cargo build -p apex-engine` first: {}",
+            p.display()
+        );
+
+        // And that it is not *stale*. `cargo test` does not rebuild another package's binary,
+        // so an old engine sits there answering an old protocol — which surfaced as every
+        // handshake test failing with ConnectionLost, a symptom that says nothing about the
+        // cause. A missing binary is obvious; a stale one is the expensive kind of wrong.
+        let built = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+        let sources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("engine");
+        let newest = newest_source(&sources);
+        if let (Some(built), Some(newest)) = (built, newest) {
+            assert!(
+                built >= newest,
+                "the engine binary is older than its sources. Run `cargo build -p apex-engine`: {}",
+                p.display()
+            );
+        }
+        p
+    }
+
+    pub fn live_children(&self) -> usize {
+        let mut g = self.children.lock().expect("children lock");
+        g.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+        g.len()
+    }
+}
+
+/// The most recently modified Rust source or manifest under `dir`.
+fn newest_source(dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|x| x == "rs" || x == "toml") {
+                if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
+                    newest = Some(newest.map_or(t, |n: std::time::SystemTime| n.max(t)));
+                }
+            }
+        }
+    }
+    newest
+}
+
+impl ProcessSpawner for EngineSpawner {
+    fn preflight(&self) -> Result<String, SpawnError> {
+        Ok("OpenSSH_9.6p1 (engine harness)".into())
+    }
+
+    fn invocation(&self, spec: &SpawnSpec) -> Vec<String> {
+        vec![format!("{}@{}", spec.user, spec.host)]
+    }
+
+    fn environment(&self, _spec: &SpawnSpec) -> Vec<(String, String)> {
+        vec![("LC_ALL".to_string(), "C".to_string())]
+    }
+
+    fn spawn(&self, _spec: &SpawnSpec) -> Result<SpawnedChild, SpawnError> {
+        let mut cmd = Command::new(Self::binary());
+        if let Some(id) = &self.session_env {
+            cmd.env("APEX_SESSION_ID", id);
+        } else {
+            cmd.env_remove("APEX_SESSION_ID");
+        }
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| SpawnError::Io(e.to_string()))?;
+
+        let stdin = Box::new(child.stdin.take().expect("piped stdin"));
+        let stdout = Box::new(child.stdout.take().expect("piped stdout"));
+        let stderr = Box::new(child.stderr.take().expect("piped stderr"));
+        let children = self.children.clone();
+        let out = SpawnedChild {
+            stdin,
+            stdout,
+            stderr,
+            wait: Box::new(move || loop {
+                let mut g = children.lock().expect("children lock");
+                let mut ended = None;
+                for c in g.iter_mut() {
+                    if let Ok(Some(s)) = c.try_wait() {
+                        ended = Some(s.code());
+                    }
+                }
+                drop(g);
+                if let Some(code) = ended {
+                    return code;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }),
+        };
+        self.children.lock().expect("children lock").push(child);
+        Ok(out)
+    }
+
+    fn supply_passphrase(&self, _secret: Secret) -> Result<(), SpawnError> {
+        Ok(())
+    }
+}
+
+/// A transport connected to a real engine.
+pub fn connected_engine(session: Option<&str>) -> (Arc<SshTransport>, Arc<EngineSpawner>) {
+    let spawner = Arc::new(EngineSpawner {
+        session_env: session.map(|s| s.to_string()),
+        ..Default::default()
+    });
+    let t = Arc::new(SshTransport::new(spawner.clone(), spec()));
+    t.connect().expect("the engine should start");
+    (t, spawner)
+}

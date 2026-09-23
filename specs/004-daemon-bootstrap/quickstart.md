@@ -30,10 +30,16 @@ exercised — see below.
 ## Run
 
 ```bash
-cargo test                      # workspace root: client, engine, protocol
+cargo build -p apex-engine && cargo test --workspace
 ```
 
-The integration tests spawn the engine themselves. There is nothing to start by hand.
+**Build the engine first.** Cargo does not rebuild another package's *binary* for a test that
+merely executes it, so `cargo test` alone can run a current suite against a stale engine. That
+is not hypothetical: it presented as every handshake test failing with `ConnectionLost`, a
+symptom that says nothing about the cause. The harness now refuses to run against a binary older
+than its sources and names the command to run — but building first avoids the refusal entirely.
+
+The integration tests spawn the engine themselves. There is nothing else to start by hand.
 
 ---
 
@@ -125,10 +131,15 @@ digest and the atomic promotion work against a real remote filesystem rather tha
 ## Automated suites
 
 ```bash
-cargo test                                             # all of the above
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+cargo build -p apex-engine && cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 ```
+
+When reading `cargo test` output by script, count failures from each `test result:` line rather
+than matching a field position — `test result: ok.` and `test result: FAILED.` put different
+words in the same column, and a summary that checks the wrong one reports success over a failing
+run. That mistake was made here once.
 
 CI runs on manual dispatch only (`gh workflow run ci.yml --ref <branch>`), so nothing catches a
 skipped check for you.
