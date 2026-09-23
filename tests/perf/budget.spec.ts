@@ -6,11 +6,11 @@
 // that path. The end-to-end suite measures the same budget against the real window; this
 // runs on every commit without a display.
 import { describe, expect, it } from 'vitest';
-import { clampExtent } from '../../src/lib/shell/extent';
-import { inOrder, neighbour } from '../../src/lib/tabs/ordering';
-import { inRailOrder, nextSelectable } from '../../src/lib/rail';
-import type { RailDestination } from '../../src/lib/ipc';
-import type { OpenDocumentReference } from '../../src/lib/ipc';
+import { clampExtent } from '../../client/ui/lib/shell/extent';
+import { inOrder, neighbour } from '../../client/ui/lib/tabs/ordering';
+import { inRailOrder, nextSelectable } from '../../client/ui/lib/rail';
+import type { RailDestination } from '../../client/ui/lib/ipc';
+import type { OpenDocumentReference } from '../../client/ui/lib/ipc';
 
 const STALL_BUDGET_MS = 100; // SC-004
 

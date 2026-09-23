@@ -15,7 +15,7 @@ SHOT="${1:-reports/macos/smoke.png}"
 cleanup() { rm -rf "$DATA_DIR"; [[ -n "${APP_PID:-}" ]] && kill "$APP_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
-cargo build --manifest-path src-tauri/Cargo.toml
+cargo build --manifest-path client/core/Cargo.toml
 mkdir -p "$(dirname "$SHOT")"
 
 APEX_DATA_DIR="$DATA_DIR" "$BINARY" &

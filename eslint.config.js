@@ -31,8 +31,8 @@ export default [
       'dist/**',
       'node_modules/**',
       // The design system itself is the source of truth, not something we lint against.
-      'src/lib/ds/**',
-      'src-tauri/target/**',
+      'client/ui/lib/ds/**',
+      'client/core/target/**',
     ],
   },
   {

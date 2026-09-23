@@ -1,6 +1,6 @@
 dist/
 node_modules/
-src-tauri/target/
+client/core/target/
 # The signed-off design system is copied verbatim by ds:sync. Reformatting it would be a
 # divergence from the artifact Principle I binds us to.
 src/lib/ds/

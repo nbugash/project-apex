@@ -30,7 +30,7 @@ See [research.md](./research.md), "End-to-end testing on macOS".
 ```bash
 npm install
 npm run ds:sync          # copies the signed-off design system from mockups/ into the asset tree
-cargo build --manifest-path src-tauri/Cargo.toml
+cargo build --manifest-path client/core/Cargo.toml
 ```
 
 `ds:sync` is not optional. The interface layer imports the design system from its copied
@@ -145,7 +145,7 @@ While it runs, drag a splitter, switch tabs, resize the window.
 ## Automated suites
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml    # unit + integration
+cargo test --manifest-path client/core/Cargo.toml    # unit + integration
 npm run test:unit                                  # interface-layer unit
 npm run perf:budget                                # asserts SC-001 and SC-004
 npm run lint:ds                                    # design adherence

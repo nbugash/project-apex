@@ -739,6 +739,7 @@ impl EngineSpawner {
     pub fn binary() -> std::path::PathBuf {
         let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
+            .join("..")
             .join("target")
             .join(if cfg!(debug_assertions) {
                 "debug"
@@ -758,6 +759,7 @@ impl EngineSpawner {
         // cause. A missing binary is obvious; a stale one is the expensive kind of wrong.
         let built = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
         let sources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
             .join("..")
             .join("engine");
         let newest = newest_source(&sources);

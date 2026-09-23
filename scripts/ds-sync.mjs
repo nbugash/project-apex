@@ -10,7 +10,7 @@ import { cp, mkdir, readdir, readFile, rm, writeFile, access } from 'node:fs/pro
 import { join } from 'node:path';
 
 const MOCKUPS = 'mockups';
-const DEST = 'src/lib/ds';
+const DEST = 'client/ui/lib/ds';
 
 async function exists(p) {
   try {
@@ -64,7 +64,7 @@ for (const asset of ['fonts', 'icons']) {
 // here, on every build, exactly as the design system itself is copied rather than
 // transcribed: the only way to change one is to change the prototype.
 //
-// Written inside src/lib/ds/ deliberately — lint:ds skips that directory, and a token file
+// Written inside client/ui/lib/ds/ deliberately — lint:ds skips that directory, and a token file
 // necessarily contains the raw pixel values the lint forbids everywhere else.
 const PROTOTYPE = join(MOCKUPS, 'Apex IDE (standalone).html');
 
@@ -357,7 +357,7 @@ async function* sources(dir) {
 }
 
 const gaps = [];
-for await (const file of sources('src')) {
+for await (const file of sources('client/ui')) {
   const text = await readFileAsync(file, 'utf8');
   text.split('\n').forEach((line, i) => {
     for (const m of line.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) {

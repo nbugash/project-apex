@@ -153,7 +153,7 @@ export const config: WebdriverIO.Config = {
     mkdirSync(SHOTS, { recursive: true });
 
     spawnSync('npm', ['run', 'build'], { stdio: 'inherit' });
-    spawnSync('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml'], {
+    spawnSync('cargo', ['build', '--manifest-path', 'client/core/Cargo.toml'], {
       stdio: 'inherit',
     });
 

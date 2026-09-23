@@ -33,7 +33,7 @@ ssh -V        # 6.7+ required, 8.4+ for in-app passphrase prompting
 ## Run
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path client/core/Cargo.toml
 ```
 
 The transport's tests spawn the mock daemon themselves. There is nothing to start by hand.
@@ -45,7 +45,7 @@ The transport's tests spawn the mock daemon themselves. There is nothing to star
 ### 1. One connection, reused, torn down (User Story 1, SC-002, SC-003)
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test transport_recovery
+cargo test --manifest-path client/core/Cargo.toml --test transport_recovery
 ```
 
 **Expected**: one authentication for the session however many channels open; after the app
@@ -63,7 +63,7 @@ it hid two real orphaned masters during this feature's own validation.
 ### 2. Replies reach the right requests (User Story 3, SC-004, SC-005)
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test transport_exchange
+cargo test --manifest-path client/core/Cargo.toml --test transport_exchange
 ```
 
 **Expected**: with many requests in flight and replies deliberately reordered, every outcome
@@ -76,7 +76,7 @@ run, not on the run completing.
 ### 3. Failure conditions are distinguished (User Story 4, SC-007, SC-008)
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test transport_failures
+cargo test --manifest-path client/core/Cargo.toml --test transport_failures
 ```
 
 **Expected**: each of the seven conditions in [data-model.md](./data-model.md) classifies as
@@ -89,7 +89,7 @@ not a flaky test.
 ### 4. Loss, backoff, recovery (User Story 1, SC-009, SC-012)
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test transport_recovery
+cargo test --manifest-path client/core/Cargo.toml --test transport_recovery
 ```
 
 **Expected**: the mock closes the pipe; every outstanding request resolves as
@@ -134,7 +134,7 @@ that had silently desynchronised.
 ### 8. No credential reaches a log (FR-008)
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test transport_failures -- passphrase_reaches
+cargo test --manifest-path client/core/Cargo.toml --test transport_failures -- passphrase_reaches
 ```
 
 **Expected**: after a passphrase-assisted connect against the mock, the phrase appears in no
@@ -146,9 +146,9 @@ passed as the passphrase.
 ## Automated suites
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml        # all of the above
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --manifest-path client/core/Cargo.toml        # all of the above
+cargo clippy --manifest-path client/core/Cargo.toml --all-targets -- -D warnings
+cargo fmt --manifest-path client/core/Cargo.toml --check
 ```
 
 CI runs on manual dispatch only (`gh workflow run ci.yml --ref <branch>`), so nothing catches

@@ -14,7 +14,7 @@
 //! network-free assertion in `transport_exchange.rs` would fail, correctly.
 //!
 //! ```sh
-//! APEX_REAL_SSHD=1 cargo test --manifest-path src-tauri/Cargo.toml --test transport_real_sshd -- --nocapture
+//! APEX_REAL_SSHD=1 cargo test --test transport_real_sshd -- --nocapture
 //! ```
 
 // A test that waits for a daemon to come up, on the thread doing the waiting and with no

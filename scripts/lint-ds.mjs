@@ -9,8 +9,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 
-const ROOTS = ['src'];
-const SKIP = ['src/lib/ds'];
+const ROOTS = ['client/ui'];
+const SKIP = ['client/ui/lib/ds'];
 const EXTS = new Set(['.svelte', '.css', '.html']);
 
 // The design system's rule is "never hard-code a px value THE TOKENS ALREADY CARRY". Its

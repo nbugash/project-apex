@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampExtent, deltaFor, MIN_REGION_EXTENT } from '../../src/lib/shell/extent';
+import { clampExtent, deltaFor, MIN_REGION_EXTENT } from '../../client/ui/lib/shell/extent';
 
 describe('region extent clamping (FR-004)', () => {
   it('holds at the minimum rather than collapsing', () => {

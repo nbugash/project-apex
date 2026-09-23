@@ -2,7 +2,7 @@
 //
 // A detached monitor cannot be simulated in CI, so this asserts the observable invariant:
 // whatever is persisted, the window opens within the attached display. The detach case
-// itself is covered exhaustively by src-tauri/tests/display_geometry.rs, where display
+// itself is covered exhaustively by client/core/tests/display_geometry.rs, where display
 // topology is an input rather than hardware.
 import { relaunch, waitForShell, writeSessionRaw } from './helpers';
 

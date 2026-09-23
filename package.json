@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "test:unit": "vitest run",
     "lint": "eslint .",
-    "lint:ds": "eslint src && node scripts/lint-ds.mjs",
+    "lint:ds": "eslint client/ui && node scripts/lint-ds.mjs",
     "e2e": "wdio run tests/e2e/wdio.conf.ts",
     "perf:budget": "vitest run tests/perf",
     "smoke:macos": "bash scripts/smoke-macos.sh",

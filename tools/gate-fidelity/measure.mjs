@@ -103,7 +103,7 @@ export async function withShell(fn) {
   if (!existsSync(BINARY)) {
     throw new Error(
       `the shell binary is missing at ${BINARY}\n` +
-        '  Build it first: cargo build --manifest-path src-tauri/Cargo.toml',
+        '  Build it first: cargo build --manifest-path client/core/Cargo.toml',
     );
   }
 

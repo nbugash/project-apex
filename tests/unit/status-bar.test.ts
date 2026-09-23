@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ConnectionState } from '../../src/lib/ipc';
+import type { ConnectionState } from '../../client/ui/lib/ipc';
 // The component's own presentation, not a copy of it. The copy this file used to hold was
 // why `Retrying` reached the status bar untested: a duplicate cannot fail when the original
 // changes, which is the one thing the duplicate was supposed to do.
-import { PRESENTATION, present } from '../../src/lib/statusbar/presentation';
+import { PRESENTATION, present } from '../../client/ui/lib/statusbar/presentation';
 
 const STATES: ConnectionState[] = ['unknown', 'connecting', 'connected', 'disconnected'];
 

@@ -6,9 +6,10 @@ fn engine_artifact() -> PathBuf {
     if let Ok(p) = std::env::var("APEX_ENGINE_BIN") {
         return PathBuf::from(p);
     }
-    // The workspace target directory, two levels up from src-tauri.
+    // The workspace target directory, three levels up from client/core.
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
         .join("..")
         .join("target")
         .join(profile)

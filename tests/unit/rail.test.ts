@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { hasNoSelectableDestination, inRailOrder, nextSelectable } from '../../src/lib/rail';
-import type { RailDestination } from '../../src/lib/ipc';
+import { hasNoSelectableDestination, inRailOrder, nextSelectable } from '../../client/ui/lib/rail';
+import type { RailDestination } from '../../client/ui/lib/ipc';
 
 const dest = (id: string, order: number, available = true): RailDestination => ({
   id,
