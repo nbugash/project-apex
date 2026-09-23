@@ -49,9 +49,13 @@ F007 and F010 implement their side against that contract when they arrive. This 
 of the map entry, recorded here rather than silently absorbed.
 
 **It does not carry requests across a lost connection.** A-REQ is unchanged: an in-flight
-request dies with its connection. Session continuity across an engine *restart* is a different
-question — the connection may survive a re-execution — and nothing in this feature weakens
-A-REQ.
+request dies with its connection, and a reconnecting client re-issues whatever it still wants.
+
+That is a narrower claim than it first appears, and the distinction is the point. A *request*
+dies with the connection; the *work* the engine was already doing does not. A build running on
+the remote host keeps running while the developer's laptop is shut, and the client re-attaches
+to the session that owns it. What A-REQ forbids is pretending an unanswered request survived —
+not forbidding the engine to continue work it had already started.
 
 **It does not update the client.** A-UPDATE gives that to platform package managers. This
 feature only detects the skew and says so.
@@ -69,6 +73,19 @@ feature only detects the skew and says so.
   supported remote architectures, detects the host's architecture during connect, and deploys
   the matching one. An unsupported architecture is refused with a clear reason rather than
   deploying something that cannot run.
+- Q: When the client replaces an engine, what happens to the one it replaces? → A: Both are kept
+  until the new one has proven itself. The replacement is staged alongside, verified, started and
+  required to complete a handshake before the previous engine is discarded. Rollback is then the
+  absence of an action rather than an action.
+- Q: What is the integrity check on a deployed engine defending against? → A: Corruption and
+  truncation in transfer, verified by hash before first execution. The threat model explicitly
+  excludes a hostile or compromised host, because A-EC2 makes the instance single-tenant and the
+  developer's own. This does not weaken Principle VI: what the engine *sends* remains untrusted
+  regardless.
+- Q: When the engine restarts or the connection drops, what is a session allowed to outlive? →
+  A: Both re-execution and reconnection. The session is owned by the engine and lives as long as
+  the engine process, so a reconnecting client re-attaches by identity and finds work still
+  running. It does not survive an engine crash; persisting state to disk is a feature of its own.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -202,6 +219,12 @@ rather than silently dropped.
    so anything keyed to the session remains addressable.
 3. **Given** state the engine could not carry across the restart, **When** the client resumes,
    **Then** that state is reported as lost rather than appearing to still exist.
+4. **Given** a session with work in progress and a developer who closes their laptop, **When**
+   they reconnect within the instance's idle window, **Then** the client re-attaches to the same
+   session and the work is still running.
+5. **Given** a client presenting a session identity the engine does not recognise, **When** it
+   attempts to re-attach, **Then** it is told so and starts a new session, rather than appearing
+   to resume one that no longer exists.
 
 ---
 
@@ -222,9 +245,32 @@ rather than silently dropped.
   in a loop must not be the response to a binary that runs and dies.
 - **The client is older than every engine it meets.** The refusal in Story 3 is correct but must
   not be a dead end — the developer is told what to update and how.
+- **A client re-attaches with an identity the engine has forgotten.** The instance was stopped
+  under A-EC2's idle policy, or the engine crashed and came back. The developer must learn their
+  work is gone rather than watch a session that is not running anything.
 - **A deployment succeeds but verification of the landed artifact fails.** Treated as a failed
   deployment, not as a compromised host; the remedy is to retry, and repeated failure is
   reported.
+
+## Threat model for deployment
+
+The integrity check in FR-003 defends against **transfer corruption and truncation**. It does
+not defend against a hostile or compromised remote host, and does not claim to.
+
+That limit is deliberate and follows from A-EC2: the instance is single-tenant and the
+developer's own. Anything able to tamper with the deployed binary already holds the developer's
+account on that machine, and therefore already holds their SSH access, their workspace and their
+credentials. A check defending against that attacker would be defending a door in a wall that is
+not there.
+
+**This does not weaken Constitution Principle VI.** Principle VI governs *input crossing a
+boundary* — what the engine sends is untrusted at the client regardless of how the engine got
+there, and F001 already treats every frame that way. Supply integrity and input validation are
+different axes, and both hold: the client checks that the binary it deployed arrived intact, and
+independently refuses to trust a single byte that binary later sends it.
+
+Stating the limit is the point. A verification step that people believe covers more than it does
+is worse than none, because it stops anyone asking the question again.
 
 ## Requirements *(mandatory)*
 
@@ -237,9 +283,11 @@ rather than silently dropped.
 - **FR-002**: The application MUST deploy the engine when it is absent, detected from the
   condition F001 already classifies, without requiring the developer to act.
 - **FR-003**: The application MUST verify the deployed artifact against the artifact it shipped
-  with, before that artifact is executed.
+  with, before that artifact is executed. The property being checked is that the bytes arrived
+  intact — the threat model is transfer corruption and truncation, not a hostile host.
 - **FR-004**: A verification failure MUST abort the deployment without executing anything, and
-  MUST be reported as a failed deployment.
+  MUST be reported as a failed deployment rather than as a compromised host, because the check
+  cannot distinguish those and claiming the stronger one would be a guess.
 - **FR-005**: The application MUST place the engine in a location writable by the developer's own
   account, and MUST NOT require elevated privileges at any point.
 - **FR-006**: Deployment MUST be atomic with respect to execution: no partially transferred
@@ -249,8 +297,11 @@ rather than silently dropped.
 - **FR-008**: The application MUST select an engine build matching the remote host's
   architecture, and MUST refuse with a clear reason when it carries no build for that
   architecture.
-- **FR-009**: The application MUST make deployment progress visible while it is running, because
-  it is a transfer that takes long enough to be mistaken for a hang.
+- **FR-009**: The application MUST report deployment progress at least once per second while a
+  transfer is running, carrying bytes transferred and total size. "Visible" alone is not a
+  testable bound — a single message at the start satisfies it while still looking like a hang,
+  which is the failure the requirement exists to prevent. How the interface renders that is not
+  this feature's decision.
 
 **Handshake and capabilities**
 
@@ -281,16 +332,31 @@ rather than silently dropped.
 
 - **FR-020**: The engine MUST support being replaced and re-executed in place, without the
   developer reconnecting.
-- **FR-021**: A replacement that fails to start MUST leave a working engine in place, and MUST
-  be reported as a failed update rather than as an absent engine.
+- **FR-021**: A replacement that fails MUST leave the previous engine in place and usable, and
+  MUST be reported as a failed update rather than as an absent engine.
+- **FR-021a**: A replacement MUST be staged alongside the engine it replaces, never over it. The
+  previous engine MUST remain intact and executable throughout.
+- **FR-021b**: The previous engine MUST NOT be discarded until the replacement has started and
+  completed a handshake. Verification of the artifact is not sufficient: a binary can be exactly
+  what was sent and still be unable to run on this host.
+- **FR-021c**: Rollback MUST require no recovery action. If the replacement never completes a
+  handshake, the previous engine is already in place and already working.
 - **FR-022**: The application MUST stop redeploying after three consecutive attempts in which
   the engine starts and exits before completing a handshake, and MUST report that the engine
   cannot run on this host. "Indefinitely" is not a testable bound, and a redeploy loop against a
   binary that runs and dies is indistinguishable from a hang.
 - **FR-023**: The engine MUST notify the client that a restart occurred, rather than leaving the
   client to infer it.
-- **FR-024**: A session's identity MUST survive re-execution, so that anything keyed to the
-  session remains addressable across it.
+- **FR-024**: A session's identity MUST survive both re-execution of the engine and loss of the
+  connection, so that anything keyed to the session remains addressable across either.
+- **FR-024a**: The session MUST be owned by the engine and live as long as the engine process.
+  Work the engine is performing MUST continue while no client is connected.
+- **FR-024b**: A reconnecting client MUST be able to re-attach to an existing session by
+  presenting its identity, without restarting the work that session holds.
+- **FR-024c**: An identity the engine does not recognise MUST be reported as such, and the
+  client MUST establish a new session rather than proceeding as though it had re-attached. A
+  client that silently continues against a session that no longer exists would show a developer
+  work that is not happening.
 - **FR-025**: The engine MUST report state it could not preserve across a restart. State that is
   lost MUST NOT appear to have survived.
 
@@ -306,15 +372,19 @@ rather than silently dropped.
   target architecture, and a digest that is the sole means of deciding whether what landed is
   what was sent.
 - **Deployment**: One attempt to place an artifact on a host. Has a staged location and a final
-  location, and becomes executable only on passing verification.
+  location, and becomes executable only on passing verification. A deployment that replaces an
+  existing engine keeps both until the new one has completed a handshake, so the previous engine
+  is the rollback rather than something that has to be restored.
 - **Handshake**: The first exchange on a session. Carries versions and capabilities in both
   directions and produces either an established session or a named refusal.
 - **Protocol version**: An integer that increments on any breaking change to the method
   catalogue. Compared, never negotiated — the client is the authority.
 - **Capability set**: What each side declares it can do. The client's offered functionality is a
   function of the engine's set.
-- **Session**: The established relationship between client and engine. Carries an identity that
-  survives re-execution of the engine.
+- **Session**: The established relationship between client and engine, owned by the engine and
+  living as long as the engine process. Carries an identity that survives both re-execution and
+  disconnection, and which a reconnecting client presents to re-attach. It does not survive an
+  engine crash: identity is held in the engine's memory, not on disk.
 
 ## Success Criteria *(mandatory)*
 
@@ -332,9 +402,14 @@ rather than silently dropped.
   its own.
 - **SC-006**: An engine update completes without the developer reconnecting, and without losing
   the session they were working in.
-- **SC-007**: A failed update leaves a working engine in 100% of exercised failure modes.
+- **SC-007**: A failed update leaves a working engine in 100% of exercised failure modes,
+  including a replacement that verifies correctly and then cannot run on this host.
 - **SC-008**: A capability the engine does not advertise produces no request on the wire, in 100%
   of cases.
+- **SC-013**: A developer can tell a running deployment from a stalled one at any point, because
+  progress is reported at least once per second for the duration of the transfer.
+- **SC-009a**: Work in progress on the engine survives a disconnection and is still running when
+  the client re-attaches, for any outage shorter than the instance's idle-stop policy.
 - **SC-009**: Every restart is reported to the client; the client never learns of one by
   inference.
 - **SC-010**: The full suite for this feature runs with no remote host, no network and no real
@@ -347,6 +422,9 @@ rather than silently dropped.
 
 ## Assumptions
 
+- **The remote host is inside the developer's trust boundary.** A-EC2 makes it single-tenant and
+  theirs. If instances ever become shared, the threat model above is the first thing that must be
+  revisited, not the last.
 - **The developer can write to their own home directory on the remote host.** Guaranteed by
   A-EC2's single-tenant, per-developer instance. A shared or locked-down host would reopen
   FR-005.

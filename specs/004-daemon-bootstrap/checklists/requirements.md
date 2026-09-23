@@ -31,6 +31,28 @@
 
 ## Notes
 
+### Re-validated after clarification, 2026-09-23
+
+Three questions were asked and integrated. All 16 items still pass, but two would have
+regressed without fixes, and both are recorded because the pattern is the same one this
+checklist caught the first time.
+
+**"All functional requirements have clear acceptance criteria"** would have failed. FR-024b —
+a reconnecting client re-attaches to an existing session — is new from this session and had no
+acceptance scenario, because User Story 5 only covered restart. Two scenarios were added to
+US5 for reconnection and for an identity the engine no longer recognises.
+
+**"Requirements are testable and unambiguous"** would have failed on FR-009, which read "MUST
+make deployment progress visible". That is the same untestable shape as FR-022 before it was
+bounded: a single message at the start satisfies "visible" while still looking exactly like a
+hang. It now requires a report at least once per second carrying bytes transferred and total,
+with SC-013 making it observable.
+
+That is twice now that a requirement written as an adjective rather than an observation has
+slipped through the first draft. Worth watching for in planning.
+
+### Original pass
+
 Two items were failing on the first pass and were fixed rather than marked complete.
 
 **"Requirements are testable and unambiguous"** failed on FR-022, which read "MUST NOT respond
