@@ -1,0 +1,267 @@
+---
+description: "Task list for F002 daemon-bootstrap"
+---
+
+# Tasks: Daemon Bootstrap
+
+**Input**: Design documents from `/specs/004-daemon-bootstrap/`
+
+**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md),
+[data-model.md](./data-model.md), [contracts/](./contracts/), [architecture.md](./architecture.md),
+[design.md](./design.md)
+
+**Tests**: Included. Constitution Principle VII requires them, and A-TEST names the four levels.
+
+**Organization**: By user story, so each is independently implementable and testable.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel — different files, no dependency on incomplete work
+- **[Story]**: US1–US5, matching [spec.md](./spec.md)
+
+## Path Conventions
+
+Paths follow the Module & File Layout in [design.md](./design.md). The repository becomes a
+Cargo workspace: `protocol/`, `engine/` and the existing `src-tauri/`.
+
+**Screenshots** are written to `reports/screenshots/${OS}/${FEATURE}/`, where `FEATURE` is the
+feature map identity — `F002` here, not the spec directory number. The two differ (F001's spec
+directory is `003-ssh-transport-core`), and the map identity is the immutable one.
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Turn one crate into a workspace and give the screenshots somewhere to go.
+
+- [ ] T001 Create the workspace root `Cargo.toml` listing `protocol`, `engine` and `src-tauri`, and verify `cargo test` at the root still runs F001's whole suite unchanged
+- [ ] T002 Create the `protocol` crate skeleton in `protocol/Cargo.toml` and `protocol/src/lib.rs` with no dependencies beyond `serde`
+- [ ] T003 Create the `engine` crate skeleton in `engine/Cargo.toml` and `engine/src/main.rs`, producing a binary that starts and exits cleanly
+- [ ] T004 [P] Derive the screenshot feature segment from the git branch in `tests/e2e/wdio.conf.ts` — `feature/F002-daemon-bootstrap` yields `F002` — with an `APEX_FEATURE` override and an explicit fallback when not on a feature branch. A run on a feature branch must file its own screenshots without anyone tagging anything
+- [ ] T005 [P] Update `capturedFiles()` in `tests/e2e/wdio.conf.ts` for the extra directory level. It currently reads exactly one level deep; with `${OS}/${FEATURE}/` it would count zero files and the capture gate would fail every run — or worse, pass while counting nothing if the comparison were loosened to fix it
+- [ ] T006 [P] Update the screenshot path convention in `tests/e2e/wdio.conf.ts` `afterTest` to `reports/screenshots/${OS}/${FEATURE}/`, and confirm the gate still fails when captures are missing by re-running the mutation check that proved it works
+
+**Checkpoint**: Workspace builds, F001's suite passes unchanged, screenshots land under the new
+convention and the gate still bites.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**⚠️ CRITICAL**: No user story work begins until this phase is complete.
+
+- [ ] T007 Move `FrameCodec` and its tests from `src-tauri/src/adapters/outbound/openssh/framing.rs` into `protocol/src/framing.rs` unchanged, and re-export it from the openssh adapter so F001's tests pass without edits
+- [ ] T008 Define the wire types in `protocol/src/wire.rs` per [data-model.md](./data-model.md): `HandshakeRequest`, `HandshakeResponse`, `RestartNotice`, `SessionId`, `CapabilitySet`, and the `PROTOCOL_VERSION` constant
+- [ ] T009 [P] Implement `EngineArtifact`, `Architecture` and `Digest` in `src-tauri/src/domain/artifact.rs` per [data-model.md](./data-model.md), including the rule that a digest is derived from bytes and never hand-written
+- [ ] T010 [P] Implement `DeploymentState` and `DeploymentFailure` in `src-tauri/src/domain/artifact.rs` with the six named failure causes
+- [ ] T011 [P] Define the `ArtifactDeployer` port in `src-tauri/src/application/ports/deployer.rs` with `deploy`, `retire_previous` and `observe`, matching the signatures in [design.md](./design.md)
+- [ ] T012 [P] Define the `HandshakePeer` port in `src-tauri/src/application/ports/handshake.rs`
+- [ ] T013 Extend `src-tauri/build.rs` to embed the host-native engine binary and compute its SHA-256 at build time, so the constant and the bytes cannot disagree
+- [ ] T014 Add `session/onRestart` to the Session group in §4.8 of `project-apex-predator.md`, with its params and its notification kind. **This is a system specification edit, not a note in a plan** — Principle II makes §4.8 the source of truth for method signatures, and a method described only in `design.md` would make this feature a second source
+- [ ] T015 [P] Implement `ScriptedDeployer` in `src-tauri/tests/common/mod.rs` — chosen failures, recorded calls, no bytes moved. This is the seam that makes every deployment failure path testable without a host
+
+**Checkpoint**: Both crates compile, ports exist, the protocol is shared, and §4.8 describes the
+notification the engine will send.
+
+---
+
+## Phase 3: User Story 1 - Connect to a machine that has never run the engine (Priority: P1) 🎯 MVP
+
+**Goal**: A developer points the app at a bare host and reaches a working session with no manual
+step.
+
+**Independent Test**: Against a host with no engine, connect and confirm a session is established
+and the deployed artifact matches what the client shipped.
+
+### Tests for User Story 1
+
+- [ ] T016 [P] [US1] Failing test in `src-tauri/tests/bootstrap_deploy.rs`: a host reporting no engine triggers a deployment and reaches a session, with no developer action (SC-001)
+- [ ] T017 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an artifact whose digest does not match is **never executed**. Assert on execution count being zero, not on the error returned — a deployment that ran the binary and then reported an error also returns an error (SC-004)
+- [ ] T018 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: an architecture with no embedded artifact is refused by name before anything transfers (FR-008)
+- [ ] T019 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: a second connect with a matching digest transfers nothing and still establishes a session (SC-003)
+- [ ] T020 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: progress is published at least once per second while transferring, carrying bytes and total. Assert on the **number and spacing** of reports, not their existence — one report at the start satisfies "progress was reported" and still looks exactly like a hang (SC-013)
+- [ ] T021 [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: interleaved concurrent deployments yield one valid engine or a reported failure, never a mixed artifact, across a sustained run rather than a single pair that may happen to serialise (SC-012)
+- [ ] T022 [P] [US1] Test in `src-tauri/tests/bootstrap_deploy.rs`: each of the six `DeploymentFailure` causes is reported as itself and not collapsed into a generic failure
+
+### Implementation for User Story 1
+
+- [ ] T023 [US1] Implement `SshStreamDeployer::deploy` in `src-tauri/src/adapters/outbound/deploy/mod.rs`: stream to a digest-qualified staged path over F001's control master, counting bytes as they go
+- [ ] T024 [US1] Implement remote verification in `src-tauri/src/adapters/outbound/deploy/mod.rs` by invoking `sha256sum` on the host and comparing exactly — not by prefix, which is a weaker check that looks identical in a passing test
+- [ ] T025 [US1] Implement atomic promotion in `src-tauri/src/adapters/outbound/deploy/mod.rs`: set the executable bit only after verification, then `rename` within the same directory so the rename cannot silently become a copy across filesystems
+- [ ] T026 [US1] Implement progress publication in `src-tauri/src/adapters/outbound/deploy/mod.rs` on the cadence T020 asserts
+- [ ] T027 [US1] Implement artifact selection and the unsupported-architecture refusal in `src-tauri/src/adapters/outbound/deploy/embedded.rs`
+- [ ] T028 [US1] Implement the idempotence check in `src-tauri/src/adapters/outbound/deploy/mod.rs` — a present artifact with a matching digest transfers nothing
+- [ ] T029 [US1] Implement `Bootstrap::establish` deployment path in `src-tauri/src/application/use_cases/bootstrap.rs`, consuming F001's `EngineMissing` classification, which today has no recipient
+- [ ] T030 [P] [US1] Add the deploying state with progress to `src/lib/statusbar/presentation.ts` and its unit test in `tests/unit/status-bar.test.ts`, built from design tokens per Principle I
+
+**Checkpoint**: A bare host reaches a session. This is the MVP.
+
+---
+
+## Phase 4: User Story 2 - Know what the engine can do before asking it (Priority: P1)
+
+**Goal**: Versions and capabilities exchanged first; the client offers only what this engine
+supports.
+
+**Independent Test**: Handshake against engines advertising different capability sets and confirm
+offered functionality follows, with no request for an unadvertised capability reaching the wire.
+
+### Tests for User Story 2
+
+- [ ] T031 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: the handshake is the first request on a session, and nothing precedes it (FR-010)
+- [ ] T032 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a request for a capability the engine did not advertise produces **no frame on the wire**. Assert on what was written, not on the error the caller received — a request that was sent and rejected also produces an error (SC-008)
+- [ ] T033 [P] [US2] Test in `src-tauri/tests/bootstrap_handshake.rs`: a handshake that is never answered fails distinguishably from a transport failure (FR-014)
+- [ ] T034 [P] [US2] Test in `engine/src/handshake.rs`: unknown capability tokens are ignored rather than rejected, on both sides — the property that lets a method be added without a version bump
+
+### Implementation for User Story 2
+
+- [ ] T035 [US2] Implement the stdio frame loop in `engine/src/main.rs`, reusing `protocol::framing` and treating every inbound frame as untrusted per Principle VI
+- [ ] T036 [US2] Implement the `auth/handshake` responder in `engine/src/handshake.rs`, advertising the capability set this engine actually serves
+- [ ] T037 [US2] Implement `TransportHandshake` in `src-tauri/src/adapters/outbound/deploy/mod.rs` over F001's `RequestTransport`
+- [ ] T038 [US2] Record the engine's capabilities for the session's life in `src-tauri/src/application/use_cases/bootstrap.rs`
+- [ ] T039 [US2] Implement the local refusal for unadvertised capabilities in `src-tauri/src/application/use_cases/bootstrap.rs`, so the request never reaches the transport
+
+**Checkpoint**: The client knows what it may ask for before it asks.
+
+---
+
+## Phase 5: User Story 3 - Refuse a protocol the client does not understand (Priority: P1)
+
+**Goal**: A newer engine stops the session with a clear instruction, never a guess.
+
+**Independent Test**: Drive the handshake with older, identical and newer protocol versions and
+confirm redeploy, proceed and refuse respectively.
+
+### Tests for User Story 3
+
+- [ ] T040 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an engine reporting a newer protocol version refuses the session and names both versions (FR-017)
+- [ ] T041 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: **no request is ever exchanged with a newer engine** beyond the handshake itself (SC-005)
+- [ ] T042 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: the refusal has no override. Like F001's changed-host-key test, this asserts the absence of a path — a flag, option or retry that proceeds anyway must not exist (FR-018)
+- [ ] T043 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an identical protocol version proceeds with no deployment (FR-019)
+- [ ] T044 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an older protocol version triggers replacement without involving the developer (FR-016)
+
+### Implementation for User Story 3
+
+- [ ] T045 [US3] Implement `VersionVerdict` in `src-tauri/src/application/use_cases/bootstrap.rs` as a comparison, never a negotiation
+- [ ] T046 [US3] Wire each verdict to its response in `src-tauri/src/application/use_cases/bootstrap.rs` per the table in [data-model.md](./data-model.md)
+- [ ] T047 [US3] Implement the `RefusedNewerEngine` outcome in `src-tauri/src/application/use_cases/bootstrap.rs`, carrying both versions so the message can name them
+
+**Checkpoint**: Skew is safe in both directions.
+
+---
+
+## Phase 6: User Story 4 - Update the engine without the developer noticing (Priority: P2)
+
+**Goal**: A newer client replaces an older engine and carries on, and a failed replacement leaves
+a working one.
+
+**Independent Test**: Connect with a client newer than the deployed engine; confirm replacement,
+restart and resumed session with no developer action, and that a failed replacement is survivable.
+
+### Tests for User Story 4
+
+- [ ] T048 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: replacing an engine requires no reconnection by the developer (SC-006)
+- [ ] T049 [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: a replacement that **verifies correctly and then fails to run** leaves the previous engine in place and serving. Write this before the corrupt-artifact case — verification passing is not proof of runnability, and a test that only corrupts the artifact never exercises this path (SC-007)
+- [ ] T050 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: `retire_previous` is called only after a successful handshake, never on promotion (contracts/deployment.md)
+- [ ] T051 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: a `retire_previous` failure is logged and the session continues — an orphaned binary costs disk, not correctness
+- [ ] T052 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: an engine that starts and dies is redeployed at most three times before being reported as unable to run here (FR-022, SC-011)
+
+### Implementation for User Story 4
+
+- [ ] T053 [US4] Implement version-qualified artifact paths in `src-tauri/src/adapters/outbound/deploy/mod.rs`, so the previous engine remains under its own name rather than being backed up
+- [ ] T054 [US4] Implement `retire_previous` in `src-tauri/src/adapters/outbound/deploy/mod.rs`, idempotent and non-fatal
+- [ ] T055 [US4] Implement re-execution in `engine/src/main.rs`, preserving the stdio file descriptors across `exec` so the channel survives
+- [ ] T056 [US4] Implement the replacement sequence in `src-tauri/src/application/use_cases/bootstrap.rs`: deploy, handshake, then retire — in that order, because only the use case sees both ports
+- [ ] T057 [US4] Implement the redeploy bound in `src-tauri/src/application/use_cases/bootstrap.rs`
+
+**Checkpoint**: The estate can move forward without the developer participating.
+
+---
+
+## Phase 7: User Story 5 - Keep the session across an engine restart (Priority: P2)
+
+**Goal**: The client knows a restart happened, what survived and what did not.
+
+**Independent Test**: Force a restart with state registered against the session; confirm
+notification, unchanged identity, and that unpreserved state is reported.
+
+### Tests for User Story 5
+
+- [ ] T058 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: a restart is announced by the engine and never inferred by the client (SC-009)
+- [ ] T059 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: the session identity is unchanged across re-execution (FR-024)
+- [ ] T060 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: state that did not survive is named in `unpreserved`, and an empty list is asserted to mean nothing was lost rather than nothing was checked (FR-025)
+- [ ] T061 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: work in progress survives a disconnection and is still running when the client re-attaches (SC-009a)
+- [ ] T062 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: presenting an identity the engine has forgotten yields a stated refusal and a new session — never a silent new session presented as a resumption (FR-024c)
+- [ ] T063 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: A-REQ still holds — an in-flight request dies with its connection even though the session outlives it. The two rules are easy to conflate and the distinction is the point
+
+### Implementation for User Story 5
+
+- [ ] T064 [US5] Implement `SessionRegistry` in `engine/src/session.rs`: mint, resume, and the in-memory lifetime that makes a crash fatal to a session by design
+- [ ] T065 [US5] Implement resumption in `engine/src/handshake.rs`, setting `resumed` truthfully so the client can tell a new session from a re-attached one
+- [ ] T066 [US5] Implement `session/onRestart` emission in `engine/src/main.rs` after re-execution
+- [ ] T067 [US5] Implement restart handling in `src-tauri/src/application/use_cases/bootstrap.rs`, surfacing `unpreserved` rather than absorbing it
+- [ ] T068 [US5] Implement the refused-resumption path in `src-tauri/src/application/use_cases/bootstrap.rs`
+
+**Checkpoint**: Every credential-free restart path reaches an outcome the developer can trust.
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+- [ ] T069 Add the opt-in real-`sshd` deployment test in `src-tauri/tests/bootstrap_real_sshd.rs`, skipped with a clear reason when unavailable. This is the only place the transfer, the remote `sha256sum` and the atomic promotion run against a real remote filesystem
+- [ ] T070 [P] Document the engine and bootstrap in `docs/engine.md` — deployment, the handshake, the version rule, and what a session outlives
+- [ ] T071 [P] Add `reports/screenshots/README.md` recording the `${OS}/${FEATURE}/` convention and why `FEATURE` is the map identity rather than the spec directory number
+- [ ] T072 Run the full quickstart validation and record the results in [quickstart.md](./quickstart.md), including the SC-002 and SC-013 measurements as numbers rather than verdicts, per A-NFR
+- [ ] T073 Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` across the workspace and fix what they report
+- [ ] T074 Promote the two marked decisions in [research.md](./research.md) to Appendix A of `project-apex-predator.md` — that bulk data travels beside the protocol channel rather than through it, and that the protocol version increments only on breaking changes. Both bind every later feature, and a decision only F002's research records is one F003 will not find
+- [ ] T075 Verify by mutation that the capture gate in `tests/e2e/wdio.conf.ts` still fails when screenshots are missing, after the path convention change. The gate was proven once; a path change is exactly the kind of edit that silently unproves it
+
+---
+
+## Dependencies
+
+```
+Phase 1 Setup
+    ↓
+Phase 2 Foundational  ← blocks everything
+    ↓
+Phase 3 US1 (deploy)  ← MVP
+    ↓
+Phase 4 US2 (handshake) ← needs an engine to talk to, so needs US1's engine crate running
+    ↓
+Phase 5 US3 (version)   ← needs the handshake to report a version
+    ↓
+Phase 6 US4 (replace)   ← needs both deploy and handshake
+    ↓
+Phase 7 US5 (session)   ← needs re-execution from US4
+    ↓
+Phase 8 Polish
+```
+
+US1 and US2 are both P1 but not parallel: the handshake needs an engine, and US1 is what puts one
+there. US3 depends on US2 for the same reason. US4 and US5 are genuinely sequential — a restart
+notification needs something that restarts.
+
+## Parallel Opportunities
+
+- **Within Phase 2**: T009–T012 and T015 are different files with no shared state
+- **Within each story's test block**: every `[P]` test is a separate assertion in the same file and may be written independently, though they land in one file and must be committed together
+- **Phase 8**: T070 and T071 are documentation and independent of each other
+
+## Implementation Strategy
+
+**MVP is Phase 1 + 2 + 3.** At that point a developer connects to a bare host and gets a session.
+It does nothing useful yet — the engine serves no workspace method until F003 — but the
+bootstrap works end to end, which is the thing nothing before this feature could do.
+
+Then US2 and US3 together make the session safe across versions, US4 makes the estate
+maintainable, and US5 makes it trustworthy across restarts.
+
+## Notes
+
+- `[P]` marks different files with no incomplete dependency
+- Verify each test fails before implementing against it
+- Commit at each checkpoint
+- Three tests here assert the **absence** of something — no frame on the wire (T032), no override
+  path (T042), no execution of an unverified artifact (T017). Absence is the hardest thing to
+  test and the easiest to fake, so each states what it asserts on rather than what it hopes for
