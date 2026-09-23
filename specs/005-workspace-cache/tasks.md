@@ -108,7 +108,7 @@ this phase owns the mechanism.
 
 ### Composition ordering
 
-- [ ] T035 Extend `client/core/src/composition.rs` so the cache is constructed, maintenance is run, and **only then** are any providers built. Add an assertion or a type-level guard that makes the order impossible to get wrong (FR-018c, FR-026a). `MaintainCache` may be a version check only at this point; US4 fills it in
+- [X] T035 Extend `client/core/src/composition.rs` so the cache is constructed, maintenance is run, and **only then** are any providers built. Add an assertion or a type-level guard that makes the order impossible to get wrong (FR-018c, FR-026a). `MaintainCache` may be a version check only at this point; US4 fills it in
 - [X] T036 [P] Implement `RegisterWorkspace` in `client/core/src/application/use_cases/register_workspace.rs`: mint a `WorkspaceId` (A-WORKSPACE), attach to an existing projection if one exists, and call `workspace/register` on the engine
 
 **Checkpoint**: Both binaries are hexagonal, the schema exists, a workspace can be registered end
@@ -160,7 +160,7 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 
 - [X] T048 [P] [US2] Write `client/core/tests/cache_validity.rs` **before** the implementation, covering US2 scenarios 1, 2 and 5: a matching hash transfers zero content bytes; a changed hash refetches and replaces; **a file marked `MODIFIED` in git with unchanged content is still served from the cache**. Confirm they fail first
 - [X] T049 [P] [US2] Write `client/core/tests/cache_verification.rs`: `Verifying` is published before the stat is issued and stays published until it resolves (US2.3); no bytes reach the caller before confirmation across every ordering the fake can produce (SC-004a); a fake engine that never answers ends the wait at the limit and yields `Unverified` (US2.4, SC-004b). Use `FakeClock` — **a test that really sleeps for two seconds is a test nobody runs on every commit**
-- [ ] T050 [P] [US2] Write `engine/tests/read_file.rs` against a real tree: ranged reads, a range past EOF returning zero bytes with the correct `totalSize`, a `length` above 512 KiB refused with `-32602` rather than truncated, and binary content surviving byte-for-byte. **Add the stat-then-read race**: take a `stat`, rewrite the file on disk, then read it, and assert the returned `sha256` differs from the one `stat` gave — so a caller assembling ranges can detect that the file moved underneath it. Without this assertion FR-021's internal-consistency claim is unverifiable, and an implementation that reported a cached hash beside fresh bytes would pass every other test in this file
+- [X] T050 [P] [US2] Write `engine/tests/read_file.rs` against a real tree: ranged reads, a range past EOF returning zero bytes with the correct `totalSize`, a `length` above 512 KiB refused with `-32602` rather than truncated, and binary content surviving byte-for-byte. **Add the stat-then-read race**: take a `stat`, rewrite the file on disk, then read it, and assert the returned `sha256` differs from the one `stat` gave — so a caller assembling ranges can detect that the file moved underneath it. Without this assertion FR-021's internal-consistency claim is unverifiable, and an implementation that reported a cached hash beside fresh bytes would pass every other test in this file
 - [ ] T051 [P] [US2] Write `tests/e2e/cache-verification.spec.ts` asserting the verification indicator is visible while a confirmation is outstanding (FR-021b)
 
 ### Implementation for User Story 2
@@ -231,7 +231,7 @@ gone while the tree is intact and files are marked uncached.
 - [X] T071 [US4] Implement `MaintainCache` in `client/core/src/application/use_cases/maintain_cache.rs`: migrate, then evict, once, publishing `MaintenancePhase` at least once per second throughout. `run()` **never returns an error** — a failure becomes a rebuild and is reported (FR-018b)
 - [X] T072 [US4] Complete the migration ladder in `client/core/src/adapters/outbound/sqlite/migrate.rs` with the discard-and-rebuild path and the developer-facing message that cached content was rebuilt
 - [ ] T073 [US4] Add the three rendered maintenance states — `Migrating`, `Rebuilding` and `Evicting` — each with a non-colour affordance (FR-039) — to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/MaintenanceBanner.svelte`. Use the names [data-model.md](./data-model.md) defines and no others; `Idle`, `Checking` and `Ready` are not rendered. **Do not collapse them into one "maintaining" state** — FR-018a requires a state saying a *migration* is running and SC-013a asserts on migration reports specifically, so a merged state makes that criterion unmeasurable
-- [ ] T074 [US4] Verify in `client/core/src/composition.rs` that maintenance completes before any provider is constructed, and that the guard added in T035 actually prevents the wrong order rather than documenting it
+- [X] T074 [US4] Verify in `client/core/src/composition.rs` that maintenance completes before any provider is constructed, and that the guard added in T035 actually prevents the wrong order rather than documenting it
 
 **Checkpoint**: A months-old installation across several releases still works, and an upgrade shows
 its progress.

@@ -7,3 +7,4 @@ pub mod openssh;
 pub mod remote_workspace;
 pub mod sqlite;
 pub mod stub_connection;
+pub mod system_clock;

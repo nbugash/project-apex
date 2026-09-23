@@ -7,6 +7,7 @@
 pub mod adapters;
 pub mod application;
 pub mod composition;
+pub mod composition_workspace;
 pub mod domain;
 pub mod logging;
 pub mod window;
