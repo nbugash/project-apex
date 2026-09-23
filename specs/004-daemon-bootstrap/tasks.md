@@ -142,11 +142,11 @@ confirm redeploy, proceed and refuse respectively.
 
 ### Tests for User Story 3
 
-- [ ] T040 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an engine reporting a newer protocol version refuses the session and names both versions (FR-017)
-- [ ] T041 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: **no request is ever exchanged with a newer engine** beyond the handshake itself (SC-005)
-- [ ] T042 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: the refusal has no override. Like F001's changed-host-key test, this asserts the absence of a path — a flag, option or retry that proceeds anyway must not exist (FR-018)
-- [ ] T043 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an identical protocol version proceeds with no deployment (FR-019)
-- [ ] T044 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an older protocol version triggers replacement without involving the developer (FR-016)
+- [X] T040 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an engine reporting a newer protocol version refuses the session and names both versions (FR-017)
+- [X] T041 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: **no request is ever exchanged with a newer engine** beyond the handshake itself (SC-005)
+- [X] T042 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: the refusal has no override. Like F001's changed-host-key test, this asserts the absence of a path — a flag, option or retry that proceeds anyway must not exist (FR-018)
+- [X] T043 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an identical protocol version proceeds with no deployment (FR-019)
+- [X] T044 [P] [US3] Test in `src-tauri/tests/bootstrap_handshake.rs`: an older protocol version triggers replacement without involving the developer (FR-016)
 
 ### Implementation for User Story 3
 
@@ -168,19 +168,19 @@ restart and resumed session with no developer action, and that a failed replacem
 
 ### Tests for User Story 4
 
-- [ ] T048 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: replacing an engine requires no reconnection by the developer (SC-006)
-- [ ] T049 [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: a replacement that **verifies correctly and then fails to run** leaves the previous engine in place and serving. Write this before the corrupt-artifact case — verification passing is not proof of runnability, and a test that only corrupts the artifact never exercises this path (SC-007)
-- [ ] T050 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: `retire_previous` is called only after a successful handshake, never on promotion (contracts/deployment.md)
-- [ ] T051 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: a `retire_previous` failure is logged and the session continues — an orphaned binary costs disk, not correctness
-- [ ] T052 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: an engine that starts and dies is redeployed at most three times before being reported as unable to run here (FR-022, SC-011)
+- [X] T048 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: replacing an engine requires no reconnection by the developer (SC-006)
+- [X] T049 [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: a replacement that **verifies correctly and then fails to run** leaves the previous engine in place and serving. Write this before the corrupt-artifact case — verification passing is not proof of runnability, and a test that only corrupts the artifact never exercises this path (SC-007)
+- [X] T050 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: `retire_previous` is called only after a successful handshake, never on promotion (contracts/deployment.md)
+- [X] T051 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: a `retire_previous` failure is logged and the session continues — an orphaned binary costs disk, not correctness
+- [X] T052 [P] [US4] Test in `src-tauri/tests/bootstrap_restart.rs`: an engine that starts and dies is redeployed at most three times before being reported as unable to run here (FR-022, SC-011)
 
 ### Implementation for User Story 4
 
-- [ ] T053 [US4] Implement version-qualified artifact paths in `src-tauri/src/adapters/outbound/deploy/mod.rs`, so the previous engine remains under its own name rather than being backed up
-- [ ] T054 [US4] Implement `retire_previous` in `src-tauri/src/adapters/outbound/deploy/mod.rs`, idempotent and non-fatal
+- [X] T053 [US4] Implement version-qualified artifact paths in `src-tauri/src/adapters/outbound/deploy/mod.rs`, so the previous engine remains under its own name rather than being backed up
+- [X] T054 [US4] Implement `retire_previous` in `src-tauri/src/adapters/outbound/deploy/mod.rs`, idempotent and non-fatal
 - [X] T055 [US4] Implement re-execution in `engine/src/main.rs`, preserving the stdio file descriptors across `exec` so the channel survives
-- [ ] T056 [US4] Implement the replacement sequence in `src-tauri/src/application/use_cases/bootstrap.rs`: deploy, handshake, then retire — in that order, because only the use case sees both ports
-- [ ] T057 [US4] Implement the redeploy bound in `src-tauri/src/application/use_cases/bootstrap.rs`
+- [X] T056 [US4] Implement the replacement sequence in `src-tauri/src/application/use_cases/bootstrap.rs`: deploy, handshake, then retire — in that order, because only the use case sees both ports
+- [X] T057 [US4] Implement the redeploy bound in `src-tauri/src/application/use_cases/bootstrap.rs`
 
 **Checkpoint**: The estate can move forward without the developer participating.
 
@@ -197,7 +197,7 @@ notification, unchanged identity, and that unpreserved state is reported.
 
 - [X] T058 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: a restart is announced by the engine and never inferred by the client (SC-009)
 - [X] T059 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: the session identity is unchanged across re-execution (FR-024)
-- [ ] T060 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: state that did not survive is named in `unpreserved`, and an empty list is asserted to mean nothing was lost rather than nothing was checked (FR-025)
+- [X] T060 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: state that did not survive is named in `unpreserved`, and an empty list is asserted to mean nothing was lost rather than nothing was checked (FR-025)
 - [ ] T061 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: work in progress survives a disconnection and is still running when the client re-attaches (SC-009a)
 - [X] T062 [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: presenting an identity the engine has forgotten yields a stated refusal and a new session — never a silent new session presented as a resumption (FR-024c)
 - [X] T063 [P] [US5] Test in `src-tauri/tests/bootstrap_restart.rs`: A-REQ still holds — an in-flight request dies with its connection even though the session outlives it. The two rules are easy to conflate and the distinction is the point
@@ -210,8 +210,8 @@ notification, unchanged identity, and that unpreserved state is reported.
 - [X] T064 [US5] Implement `SessionRegistry` in `engine/src/session.rs`: mint, resume, and the in-memory lifetime that makes a crash fatal to a session by design
 - [X] T065 [US5] Implement resumption in `engine/src/handshake.rs`, setting `resumed` truthfully so the client can tell a new session from a re-attached one
 - [X] T066 [US5] Implement `session/onRestart` emission in `engine/src/main.rs` after re-execution
-- [ ] T067 [US5] Implement restart handling in `src-tauri/src/application/use_cases/bootstrap.rs`, surfacing `unpreserved` rather than absorbing it
-- [ ] T068 [US5] Implement the refused-resumption path in `src-tauri/src/application/use_cases/bootstrap.rs`
+- [X] T067 [US5] Implement restart handling in `src-tauri/src/application/use_cases/bootstrap.rs`, surfacing `unpreserved` rather than absorbing it
+- [X] T068 [US5] Implement the refused-resumption path in `src-tauri/src/application/use_cases/bootstrap.rs`
 
 **Checkpoint**: Every credential-free restart path reaches an outcome the developer can trust.
 

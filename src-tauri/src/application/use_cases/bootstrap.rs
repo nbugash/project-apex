@@ -106,6 +106,27 @@ impl<P: HandshakePeer> Bootstrap<'_, P> {
     /// Deployment happens first here because this path is entered when the transport has
     /// already classified the engine as missing — F001 produces that classification and, until
     /// this feature, had no recipient for it.
+    /// Replace an engine and retire the one it superseded.
+    ///
+    /// The order is deploy, handshake, retire — and only this type may run it, because only
+    /// this type sees both ports. Retiring on promotion instead would break the guarantee
+    /// that a verified-but-unrunnable binary is survivable: verification says the bytes are
+    /// right, and only a completed handshake says the binary runs here.
+    pub async fn replace(&self, previous_version: &str) -> BootstrapOutcome {
+        let outcome = self.deploy_then_establish().await;
+        if matches!(outcome, BootstrapOutcome::Deployed { .. }) {
+            if let Err(e) = self
+                .deployer
+                .retire_previous(previous_version, &self.target)
+            {
+                // Not a failure of the update: the new engine is running, and an orphaned
+                // binary costs disk rather than correctness.
+                crate::logging::warn(&format!("could not retire {previous_version}: {e}"));
+            }
+        }
+        outcome
+    }
+
     pub async fn deploy_then_establish(&self) -> BootstrapOutcome {
         let machine = match self.deployer.remote_architecture(&self.target) {
             Ok(m) => m,
@@ -118,13 +139,25 @@ impl<P: HandshakePeer> Bootstrap<'_, P> {
         if let Err(f) = self.deployer.deploy(artifact, &self.target) {
             return BootstrapOutcome::Failed(f);
         }
-        match self.peer.handshake(self.request(None)).await {
-            Ok(r) => BootstrapOutcome::Deployed {
-                session_id: r.session_id,
-                capabilities: r.capabilities,
-            },
-            Err(e) => BootstrapOutcome::HandshakeFailed(e.to_string()),
+
+        // An engine that starts and dies is retried a bounded number of times. "Indefinitely"
+        // is not a bound anything can test, and a redeploy loop against a binary that runs and
+        // exits is indistinguishable from a hang.
+        let mut last = String::new();
+        for _ in 0..MAX_START_ATTEMPTS {
+            match self.peer.handshake(self.request(None)).await {
+                Ok(r) => {
+                    return BootstrapOutcome::Deployed {
+                        session_id: r.session_id,
+                        capabilities: r.capabilities,
+                    }
+                }
+                Err(e) => last = e.to_string(),
+            }
         }
+        BootstrapOutcome::HandshakeFailed(format!(
+            "the engine did not start after {MAX_START_ATTEMPTS} attempts: {last}"
+        ))
     }
 
     /// Establish a session against an engine that is already running.
@@ -145,8 +178,12 @@ impl<P: HandshakePeer> Bootstrap<'_, P> {
                 capabilities: response.capabilities,
                 resumed: response.resumed,
             },
-            // Replaced and re-executed without involving the developer.
-            VersionVerdict::EngineOlder => self.deploy_then_establish().await,
+            // Replaced and re-executed without involving the developer, and the engine it
+            // superseded is retired only once the replacement has proven it runs.
+            VersionVerdict::EngineOlder => {
+                let previous = response.engine_version.clone();
+                self.replace(&previous).await
+            }
             // No override exists. A client that speaks a protocol it does not know produces
             // confident wrong behaviour, which is worse than a refusal naming the problem.
             VersionVerdict::EngineNewer => BootstrapOutcome::RefusedNewerEngine {

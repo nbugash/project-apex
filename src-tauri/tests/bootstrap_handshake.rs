@@ -127,3 +127,137 @@ async fn this_suite_opens_no_network_sockets() {
     common::assert_no_network();
     t.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// User Story 3: refuse a protocol the client does not understand.
+//
+// Driven through doubles rather than the real engine: producing an engine that speaks a
+// *newer* protocol would mean building one, and the property under test is the client's
+// decision, not the engine's behaviour.
+
+use apex_shell::application::use_cases::bootstrap::{Bootstrap, BootstrapOutcome};
+use apex_shell::domain::artifact::Architecture;
+use common::{artifact, target, ScriptedDeployer, ScriptedPeer};
+
+fn boot<'a>(
+    d: &'a ScriptedDeployer,
+    p: &'a ScriptedPeer,
+    arts: &'a [apex_shell::domain::artifact::EngineArtifact],
+) -> Bootstrap<'a, ScriptedPeer> {
+    Bootstrap {
+        deployer: d,
+        peer: p,
+        artifacts: arts,
+        target: target(),
+        client_version: "0.1.0".into(),
+        capabilities: CapabilitySet::of(&["auth/handshake"]),
+    }
+}
+
+/// T040 — FR-017. A newer engine ends the session, and the refusal names both versions so the
+/// message can tell the developer what to update and to what.
+#[tokio::test]
+async fn a_newer_engine_refuses_the_session_and_names_both_versions() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::speaking(PROTOCOL_VERSION + 1);
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    match boot(&d, &p, &arts).establish(None).await {
+        BootstrapOutcome::RefusedNewerEngine {
+            engine_protocol,
+            client_protocol,
+        } => {
+            assert_eq!(engine_protocol, PROTOCOL_VERSION + 1);
+            assert_eq!(client_protocol, PROTOCOL_VERSION);
+        }
+        other => panic!("a newer engine must be refused, got {other:?}"),
+    }
+}
+
+/// T041 — SC-005. Nothing is exchanged with a newer engine beyond the handshake that
+/// discovered the mismatch. Asserted on the count of requests the peer saw, because "we
+/// refused" is compatible with having already asked it something.
+#[tokio::test]
+async fn no_request_is_exchanged_with_a_newer_engine_beyond_the_handshake() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::speaking(PROTOCOL_VERSION + 5);
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    let _ = boot(&d, &p, &arts).establish(None).await;
+    assert_eq!(p.asked(), 1, "exactly one handshake, and nothing after it");
+    assert!(
+        d.calls().is_empty(),
+        "and nothing may be deployed to an engine we refuse to speak to: {:?}",
+        d.calls()
+    );
+}
+
+/// T042 — FR-018. The refusal has no way past it.
+///
+/// Like F001's changed-host-key test, this asserts the **absence** of a path: no argument,
+/// flag or repeated call turns a refusal into a session. A client that speaks a protocol it
+/// does not know produces confident wrong behaviour, which is worse than a refusal.
+#[tokio::test]
+async fn the_refusal_cannot_be_overridden() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::speaking(PROTOCOL_VERSION + 1);
+    let arts = [artifact(Architecture::LinuxX86_64)];
+    let b = boot(&d, &p, &arts);
+
+    // Every way a caller could ask, including pretending to resume an existing session.
+    for resume in [None, Some(SessionId("previous".into()))] {
+        assert!(
+            matches!(
+                b.establish(resume).await,
+                BootstrapOutcome::RefusedNewerEngine { .. }
+            ),
+            "no argument may turn a refusal into a session"
+        );
+    }
+    // And repetition is not an override either.
+    for _ in 0..3 {
+        assert!(matches!(
+            b.establish(None).await,
+            BootstrapOutcome::RefusedNewerEngine { .. }
+        ));
+    }
+}
+
+/// T043 — FR-019. Matching versions proceed with no deployment at all.
+#[tokio::test]
+async fn a_matching_protocol_proceeds_without_deploying_anything() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::default();
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    match boot(&d, &p, &arts).establish(None).await {
+        BootstrapOutcome::Ready { .. } => {}
+        other => panic!("expected a ready session, got {other:?}"),
+    }
+    assert!(
+        d.calls().is_empty(),
+        "a current engine must not be redeployed: {:?}",
+        d.calls()
+    );
+}
+
+/// T044 — FR-016. An older engine is replaced without the developer being asked.
+#[tokio::test]
+async fn an_older_engine_is_replaced_without_involving_the_developer() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::speaking(PROTOCOL_VERSION.saturating_sub(1));
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    // The peer answers every handshake with the same old version, so the sequence deploys and
+    // then hands back what the replacement reported.
+    let outcome = boot(&d, &p, &arts).establish(None).await;
+    assert!(
+        matches!(outcome, BootstrapOutcome::Deployed { .. }),
+        "an older engine must be replaced, got {outcome:?}"
+    );
+    assert!(
+        d.calls().iter().any(|c| c.starts_with("deploy:")),
+        "the replacement must actually be deployed: {:?}",
+        d.calls()
+    );
+}

@@ -136,3 +136,114 @@ async fn this_suite_opens_no_network_sockets() {
     common::assert_no_network();
     t.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// User Story 4: replacement and rollback, through doubles.
+//
+// The real engine cannot express "older, then newer after replacement" without building two
+// of them, and the property under test is the client's sequencing, not the engine's version.
+
+use apex_shell::application::ports::handshake::HandshakeError;
+use apex_shell::application::use_cases::bootstrap::{Bootstrap, BootstrapOutcome};
+use apex_shell::domain::artifact::{Architecture, DeploymentFailure};
+use common::{artifact, target, ScriptedDeployer, ScriptedPeer};
+
+fn boot<'a>(
+    d: &'a ScriptedDeployer,
+    p: &'a ScriptedPeer,
+    arts: &'a [apex_shell::domain::artifact::EngineArtifact],
+) -> Bootstrap<'a, ScriptedPeer> {
+    Bootstrap {
+        deployer: d,
+        peer: p,
+        artifacts: arts,
+        target: target(),
+        client_version: "0.1.0".into(),
+        capabilities: CapabilitySet::of(&["auth/handshake"]),
+    }
+}
+
+/// T050 — the ordering the deployment contract turns on. `retire_previous` runs **after** a
+/// successful handshake, never on promotion: verification says the bytes are right, and only a
+/// handshake says the binary runs here.
+#[tokio::test]
+async fn the_previous_engine_is_retired_only_after_the_replacement_answers() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::answering(&[PROTOCOL_VERSION.saturating_sub(1), PROTOCOL_VERSION]);
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    let outcome = boot(&d, &p, &arts).establish(None).await;
+    assert!(
+        matches!(outcome, BootstrapOutcome::Deployed { .. }),
+        "{outcome:?}"
+    );
+
+    let calls = d.calls();
+    let deploy = calls.iter().position(|c| c.starts_with("deploy:"));
+    let retire = calls.iter().position(|c| c.starts_with("retire:"));
+    assert!(
+        deploy.is_some(),
+        "the replacement must be deployed: {calls:?}"
+    );
+    assert!(retire.is_some(), "and the old engine retired: {calls:?}");
+    assert!(deploy < retire, "retire must follow deploy: {calls:?}");
+}
+
+/// T049 — SC-007, and the case worth writing first. A replacement that **verifies correctly
+/// and then will not run** must leave the previous engine in place. A test that only corrupts
+/// the artifact never reaches this path, because verification catches that one earlier.
+#[tokio::test]
+async fn a_replacement_that_verifies_but_will_not_run_leaves_the_old_engine_alone() {
+    let d = ScriptedDeployer::default(); // deployment succeeds: the bytes are fine
+    let p = ScriptedPeer::failing(HandshakeError::TimedOut); // the binary never answers
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    let outcome = boot(&d, &p, &arts).replace("0.0.9").await;
+    assert!(
+        matches!(outcome, BootstrapOutcome::HandshakeFailed(_)),
+        "a replacement that will not run is a failed update, got {outcome:?}"
+    );
+    assert!(
+        !d.calls().iter().any(|c| c.starts_with("retire:")),
+        "the previous engine must survive a replacement that does not answer: {:?}",
+        d.calls()
+    );
+}
+
+/// T052 — FR-022, SC-011. An engine that starts and dies is retried a bounded number of times.
+#[tokio::test]
+async fn an_engine_that_never_answers_is_not_redeployed_forever() {
+    let d = ScriptedDeployer::default();
+    let p = ScriptedPeer::failing(HandshakeError::TimedOut);
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    match boot(&d, &p, &arts).deploy_then_establish().await {
+        BootstrapOutcome::HandshakeFailed(m) => {
+            assert!(m.contains("3 attempts"), "the bound must be stated: {m}");
+        }
+        other => panic!("expected a bounded failure, got {other:?}"),
+    }
+    assert_eq!(
+        p.asked(),
+        3,
+        "exactly the bound, not one more and not forever"
+    );
+}
+
+/// T051 — a failed retirement is logged and the session continues. The new engine is running;
+/// an orphaned binary costs disk, not correctness.
+#[tokio::test]
+async fn a_failed_retirement_does_not_fail_the_update() {
+    let mut d = ScriptedDeployer::default();
+    d.retire_fails = Some(DeploymentFailure::PermissionDenied {
+        path: "/home/dev/.apex".into(),
+    });
+    let p = ScriptedPeer::default();
+    let arts = [artifact(Architecture::LinuxX86_64)];
+
+    let outcome = boot(&d, &p, &arts).replace("0.0.9").await;
+    assert!(
+        matches!(outcome, BootstrapOutcome::Deployed { .. }),
+        "the update succeeded even though cleanup did not: {outcome:?}"
+    );
+}

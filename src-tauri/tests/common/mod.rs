@@ -434,6 +434,8 @@ use apex_shell::domain::artifact::{DeploymentFailure, DeploymentState, EngineArt
 pub struct ScriptedDeployer {
     pub architecture: Result<String, DeploymentFailure>,
     pub outcome: Result<(), DeploymentFailure>,
+    /// Makes retirement fail, which must not fail the update that preceded it.
+    pub retire_fails: Option<DeploymentFailure>,
     /// Published as the deployment runs, so a test can assert on progress cadence.
     pub progress: Vec<(u64, u64)>,
     pub calls: Recorded<String>,
@@ -447,6 +449,7 @@ impl Default for ScriptedDeployer {
         Self {
             architecture: Ok("x86_64".into()),
             outcome: Ok(()),
+            retire_fails: None,
             progress: Vec::new(),
             calls: Arc::new(Mutex::new(Vec::new())),
             state,
@@ -513,7 +516,10 @@ impl ArtifactDeployer for ScriptedDeployer {
             .lock()
             .expect("calls lock")
             .push(format!("retire:{version}"));
-        Ok(())
+        match &self.retire_fails {
+            Some(f) => Err(f.clone()),
+            None => Ok(()),
+        }
     }
 
     fn observe(&self) -> tokio::sync::watch::Receiver<DeploymentState> {
@@ -602,6 +608,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// An engine that answers the handshake however a test needs.
 pub struct ScriptedPeer {
+    /// Versions answered in order, then the last repeats. A replacement changes what the
+    /// engine reports, so a double that answers identically forever cannot express the
+    /// sequence US4 is about.
+    pub versions: Mutex<Vec<u32>>,
     pub protocol_version: u32,
     pub capabilities: CapabilitySet,
     pub error: Option<HandshakeError>,
@@ -613,6 +623,7 @@ pub struct ScriptedPeer {
 impl Default for ScriptedPeer {
     fn default() -> Self {
         Self {
+            versions: Mutex::new(Vec::new()),
             protocol_version: PROTOCOL_VERSION,
             capabilities: CapabilitySet::of(&["session/shutdown"]),
             error: None,
@@ -627,6 +638,14 @@ impl ScriptedPeer {
     pub fn speaking(protocol_version: u32) -> Self {
         Self {
             protocol_version,
+            ..Default::default()
+        }
+    }
+
+    /// Answers these versions in order — an older engine, then the replacement.
+    pub fn answering(versions: &[u32]) -> Self {
+        Self {
+            versions: Mutex::new(versions.iter().rev().copied().collect()),
             ..Default::default()
         }
     }
@@ -652,6 +671,14 @@ impl HandshakePeer for ScriptedPeer {
     ) -> Result<HandshakeResponse, HandshakeError> {
         self.asked.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().expect("requests lock").push(request);
+        let version = {
+            let mut q = self.versions.lock().expect("versions lock");
+            if q.len() > 1 {
+                q.pop().unwrap_or(self.protocol_version)
+            } else {
+                q.last().copied().unwrap_or(self.protocol_version)
+            }
+        };
         if let Some(e) = &self.error {
             return Err(match e {
                 HandshakeError::TimedOut => HandshakeError::TimedOut,
@@ -660,8 +687,8 @@ impl HandshakePeer for ScriptedPeer {
             });
         }
         Ok(HandshakeResponse {
-            engine_version: "0.1.0".into(),
-            protocol_version: self.protocol_version,
+            engine_version: format!("0.{version}.0"),
+            protocol_version: version,
             capabilities: self.capabilities.clone(),
             session_id: SessionId("session-1".into()),
             resumed: self.resumed,
