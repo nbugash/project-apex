@@ -99,6 +99,22 @@ const LITERAL_TOKENS = [
     re: /<nav style=\\?"flex:none;width:(\d+px)/,
     what: 'activity rail width',
   },
+  {
+    // The tree's per-level indent lives in the prototype's view model rather than in a style
+    // attribute: `pad:(10+d*13)+'px'`. Read rather than retyped, for the same reason as every
+    // other dimension here — a literal in a component is a second source of truth for a value
+    // the prototype owns.
+    token: '--vk-tree-indent',
+    re: /pad:\(\d+\+d\*(\d+)\)\+'px'/,
+    what: 'file tree per-level indent',
+    unit: 'px',
+  },
+  {
+    token: '--vk-tree-pad-left',
+    re: /pad:\((\d+)\+d\*\d+\)\+'px'/,
+    what: 'file tree base left padding',
+    unit: 'px',
+  },
 ];
 
 const prototypeMarkup = await readFile(PROTOTYPE, 'utf8');
@@ -139,9 +155,9 @@ if (densityDefault && densTable) {
   }
 }
 
-for (const { token, re, what } of LITERAL_TOKENS) {
+for (const { token, re, what, unit } of LITERAL_TOKENS) {
   const m = re.exec(prototypeMarkup);
-  if (m) extracted.push({ token, value: m[1], what });
+  if (m) extracted.push({ token, value: unit ? `${m[1]}${unit}` : m[1], what });
   else missing.push(`${token} (${what})`);
 }
 
@@ -193,6 +209,19 @@ const SURFACES = [
       [0, 'width', '--vk-rail-width', 'activity rail width'],
       [0, 'padding', '--vk-rail-pad', 'activity rail padding'],
       [0, 'gap', '--vk-rail-gap', 'activity rail gap'],
+    ],
+  },
+  {
+    name: 'file tree row',
+    // Anchored on the loop that emits the rows, so a prototype change breaks here loudly
+    // rather than silently matching some other element with the same numbers.
+    anchor: /<sc-for list=\\?"\{\{ tree \}\}\\?"/,
+    count: 4,
+    read: [
+      [0, 'gap', '--vk-tree-gap', 'file tree row gap'],
+      [0, 'padding-right', '--vk-tree-pad-right', 'file tree row right padding'],
+      [1, 'font-size', '--vk-tree-icon', 'file tree icon size'],
+      [3, 'font-size', '--vk-tree-vcs-size', 'file tree vcs marker size'],
     ],
   },
   {
