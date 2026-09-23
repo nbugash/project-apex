@@ -141,7 +141,7 @@ listings requested equals the number of folders actually expanded, not the numbe
 - [ ] T043 [US1] Implement `list_children` and `put_listing` in `client/core/src/adapters/outbound/sqlite/mod.rs`. `put_listing` replaces a parent's children atomically and preserves `file_id` for entries that remain **under the same name**, so their cached content survives with them. **It must not claim to handle renames** — a re-listing sees one name gone and another present, with no identity linking them, so the vanished entry's content cascades away and the file is re-cached on next open (FR-022a). The entry stays listed throughout (FR-022b). See [contracts/cache.md](./contracts/cache.md) C9
 - [ ] T044 [US1] Implement `CachedWorkspace::read_directory` in `client/core/src/application/use_cases/cached_workspace.rs`: consult the projection first, issue exactly one shallow request on a miss, persist, return (FR-014, FR-015, FR-016, §10.1)
 - [ ] T045 [US1] Add the workspace tree commands to `client/core/src/adapters/inbound/tauri_commands.rs` and the tree store in `client/ui/lib/workspace/tree.svelte.ts`
-- [ ] T046 [US1] Implement `client/ui/lib/workspace/FileTree.svelte` using design system tokens and Phosphor icons only. No raw hex, no raw pixel values, no hard-coded font family — `npm run lint:ds` must pass (Principle I)
+- [ ] T046 [US1] Implement `client/ui/lib/workspace/FileTree.svelte` using design system tokens and Phosphor icons only. **Make it keyboard-operable**: focusable, showing the design system's 2px accent `:focus-visible` ring and never the browser default, with Enter or Space expanding and collapsing a folder (FR-040, US1.5). Arrow-key traversal and type-ahead are out of scope and land with F006 (FR-040a) — do not build them here. No raw hex, no raw pixel values, no hard-coded font family — `npm run lint:ds` must pass (Principle I)
 - [ ] T047 [US1] Add the two §1.4 sidebar measurements to `tests/perf/` : cached expand p99 under 1 ms, uncached under 250 ms, over at least 100 samples, measured at the interface/transport boundary with harness delay excluded, **printing the measured values** (A-NFR, SC-004c)
 
 **Checkpoint**: A developer can open a large repository and browse it, and the cost is provably
@@ -174,7 +174,7 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 - [ ] T057 [US2] Implement `touch` in `client/core/src/adapters/outbound/sqlite/mod.rs`, recording the access in the same transaction that reads the entry (FR-028)
 - [ ] T058 [US2] Implement `CachedWorkspace::read_file` for the connected path in `client/core/src/application/use_cases/cached_workspace.rs`, in the order [design.md](./design.md) specifies: publish `Verifying`, then stat with the 2 s limit, then branch on match, mismatch or expiry. **Nothing reaches the caller before the branch resolves** (FR-021a). A `StoreOutcome::Failed` is logged and discarded, never propagated (FR-034)
 - [ ] T059 [US2] Implement `CachedWorkspace::stat` in `client/core/src/application/use_cases/cached_workspace.rs` with pass-through when connected
-- [ ] T060 [US2] Add the `Verifying`, `Current` and `Unverified` states to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/VerifyBadge.svelte`. Extend the **existing** state map rather than adding a parallel one — F001 shipped a bug where a test kept its own copy of that map and passed while the component crashed
+- [ ] T060 [US2] Add the `Verifying`, `Current` and `Unverified` states to `client/ui/lib/statusbar/presentation.ts`, **each carrying a non-colour affordance** — a Phosphor glyph, a label, or both — so the state survives a greyscale render (FR-039) and implement `client/ui/lib/workspace/VerifyBadge.svelte`. Extend the **existing** state map rather than adding a parallel one — F001 shipped a bug where a test kept its own copy of that map and passed while the component crashed
 
 - [ ] T091 [US2] Write the rename test in `client/core/tests/cache_validity.rs`: cache a file, call `WorkspaceCache::rename` to move it, then look it up under the new path and assert **the same `file_id` and the same content blob**, with zero bytes transferred (FR-022, US2 scenario 7). Then assert the other half: run `put_listing` over a folder where a cached name vanished and a new one appeared, and confirm the old content is gone, the new entry is listed, and nothing errored (FR-022a, FR-022b, US2 scenario 8). **Both halves matter** — the first proves opaque `file_id` works, the second proves nothing pretends it works where it cannot
 - [ ] T092 [US2] Implement `rename` in `client/core/src/adapters/outbound/sqlite/mod.rs`: update `relative_path`, `parent_path` and `name` for one `file_id` and **never touch `file_contents`** (FR-022, C9). This is the operation A-B5's opaque `file_id` exists for. Its first caller is F006's write path — document that on the function, so nobody wires `put_listing` into it on the assumption that a re-listing knows what moved
@@ -204,7 +204,7 @@ confirm each reads back its own content.
 - [ ] T065 [US3] Add workspace registration and deletion commands to `client/core/src/adapters/inbound/tauri_commands.rs`
 - [ ] T093 [US3] Write the vanished-root test in `client/core/tests/workspace_registry.rs` and `engine/tests/register.rs`: register a workspace, delete its root on disk, then issue a read. Assert the engine reports **the workspace as gone**, distinctly from a path missing inside it, and that the client stops presenting the projection as a live view (FR-038, SC-015). **Assert the specific code** — `-32009`, not `-32001` and not `-32003`. Asserting only that the read failed would pass for an implementation that reports every deleted root as an ordinary not-found; asserting `-32001` would pass for one that sends the client into a re-registration loop. Both are the confusion this requirement exists to prevent
 - [ ] T094 [US3] Implement the distinction in `engine/src/application/use_cases/workspace.rs` and `engine/src/domain/path.rs`: when resolution fails because the **registered root itself** no longer resolves, return `WorkspaceGone` (`-32009`) rather than a missing path (`-32003`) or an unregistered workspace (`-32001`). The root is canonicalised once at registration, so this is a re-check of the root before the per-request prefix comparison, not a second canonicalisation of every path
-- [ ] T095 [US3] Surface it: add the `Gone` state to `client/ui/lib/statusbar/presentation.ts` alongside the other five, map `ProviderError::WorkspaceGone` to it in `client/core/src/application/use_cases/cached_workspace.rs`, and render it in `client/ui/lib/workspace/tree.svelte.ts` so the projection is no longer presented as current. **`Gone` is a variant, not a flag on `Unavailable`** — offline-and-uncached stops being true when the connection returns, and a deleted workspace does not. **This is not the offline path** — offline means possibly stale and still true; gone means the thing being projected does not exist, which is the one case where the cache stops being a stale fact and becomes fiction
+- [ ] T095 [US3] Surface it: add the `Gone` state — with a non-colour affordance (FR-039) — to `client/ui/lib/statusbar/presentation.ts` alongside the other five, map `ProviderError::WorkspaceGone` to it in `client/core/src/application/use_cases/cached_workspace.rs`, and render it in `client/ui/lib/workspace/tree.svelte.ts` so the projection is no longer presented as current. **`Gone` is a variant, not a flag on `Unavailable`** — offline-and-uncached stops being true when the connection returns, and a deleted workspace does not. **This is not the offline path** — offline means possibly stale and still true; gone means the thing being projected does not exist, which is the one case where the cache stops being a stale fact and becomes fiction
 
 **Checkpoint**: Two checkouts of one repository coexist, each with its own projection, and a
 workspace that has been deleted underneath the client says so.
@@ -231,7 +231,7 @@ gone while the tree is intact and files are marked uncached.
 - [ ] T070 [US4] Implement `evict` in `client/core/src/adapters/outbound/sqlite/mod.rs`: delete from `file_contents` only, clear `is_cached`, and **never** remove a `files` row (FR-027, §5.5, C4)
 - [ ] T071 [US4] Implement `MaintainCache` in `client/core/src/application/use_cases/maintain_cache.rs`: migrate, then evict, once, publishing `MaintenancePhase` at least once per second throughout. `run()` **never returns an error** — a failure becomes a rebuild and is reported (FR-018b)
 - [ ] T072 [US4] Complete the migration ladder in `client/core/src/adapters/outbound/sqlite/migrate.rs` with the discard-and-rebuild path and the developer-facing message that cached content was rebuilt
-- [ ] T073 [US4] Add the three rendered maintenance states — `Migrating`, `Rebuilding` and `Evicting` — to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/MaintenanceBanner.svelte`. Use the names [data-model.md](./data-model.md) defines and no others; `Idle`, `Checking` and `Ready` are not rendered. **Do not collapse them into one "maintaining" state** — FR-018a requires a state saying a *migration* is running and SC-013a asserts on migration reports specifically, so a merged state makes that criterion unmeasurable
+- [ ] T073 [US4] Add the three rendered maintenance states — `Migrating`, `Rebuilding` and `Evicting` — each with a non-colour affordance (FR-039) — to `client/ui/lib/statusbar/presentation.ts` and implement `client/ui/lib/workspace/MaintenanceBanner.svelte`. Use the names [data-model.md](./data-model.md) defines and no others; `Idle`, `Checking` and `Ready` are not rendered. **Do not collapse them into one "maintaining" state** — FR-018a requires a state saying a *migration* is running and SC-013a asserts on migration reports specifically, so a merged state makes that criterion unmeasurable
 - [ ] T074 [US4] Verify in `client/core/src/composition.rs` that maintenance completes before any provider is constructed, and that the guard added in T035 actually prevents the wrong order rather than documenting it
 
 **Checkpoint**: A months-old installation across several releases still works, and an upgrade shows
@@ -256,7 +256,7 @@ come from the projection with no request attempted.
 - [ ] T077 [US5] Implement `search_paths` in `client/core/src/adapters/outbound/sqlite/mod.rs` against `files_fts`, never a leading-wildcard `LIKE` (§5.2, §5.4)
 - [ ] T078 [US5] Implement `SearchPaths` in `client/core/src/application/use_cases/search_paths.rs`, which never touches a provider (C6)
 - [ ] T079 [US5] Implement the disconnected branch of `CachedWorkspace::read_file` in `client/core/src/application/use_cases/cached_workspace.rs`. **Consult `ConnectionStatusSource` before the cache, not after a failure** — an outage must cost nothing and produce no timeout
-- [ ] T080 [US5] Add the `PossiblyStale` and `Unavailable` states to `client/ui/lib/statusbar/presentation.ts`, and surface offline search in `client/ui/lib/workspace/tree.svelte.ts`
+- [ ] T080 [US5] Add the `PossiblyStale` and `Unavailable` states, each with a non-colour affordance (FR-039), to `client/ui/lib/statusbar/presentation.ts`, and surface offline search in `client/ui/lib/workspace/tree.svelte.ts`
 
 **Checkpoint**: A developer on a plane can find and read what they have already visited.
 
@@ -271,6 +271,8 @@ come from the projection with no request attempted.
 - [ ] T085 [P] Update `docs/` with the cache's location on disk, what discarding it costs, and the three constants a developer may hit — the 8 MiB cap, the 14-day window and the 2 s confirmation limit
 - [ ] T086 Verify in `client/core/src/adapters/outbound/remote_workspace.rs` and `engine/src/adapters/inbound/rpc.rs` that every `Unsupported` refusal names its owning feature (F004 or F006) so a log reads as a schedule rather than a bug (FR-004), and that no unimplemented method has any side effect. Assert it in `client/core/tests/provider_contract.rs` rather than by inspection
 - [ ] T087 Run `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` across `protocol/`, `engine/` and `client/core/`. **Not a formality**: F002's clippy caught a `std::thread::sleep` inside an async function, and this feature has a blocking boundary at the SQLite adapter, which is exactly the shape that mistake takes
+- [ ] T097 Add the greyscale assertion to `tests/e2e/cache-verification.spec.ts` and `tests/e2e/cache-maintenance.spec.ts`: render with colour removed and assert **all eight published states remain distinguishable from one another**, zero pairs collapsing (FR-039, SC-016, US2.9, US4.8). Follow `tests/e2e/rail-greyscale.spec.ts`, which F018 already uses for exactly this — a greyscale render is the only way to prove colour is not the sole channel, and the adherence lint provably cannot: it restricts raw hex, raw pixel values and font families and has no view of state encoding
+- [ ] T098 Add the keyboard assertion to `tests/e2e/workspace-tree.spec.ts`: tab to the tree, assert the focus indicator is the design system's 2px accent ring and **not** the browser default, and expand and collapse a folder with Enter or Space (FR-040, SC-017, US1.5). Follow `tests/e2e/rail-keyboard.spec.ts` from F001
 - [ ] T088 Run `npm run lint:ds` and `npm run gate:fidelity` against the three new interface surfaces — `client/ui/lib/workspace/FileTree.svelte`, `VerifyBadge.svelte` and `MaintenanceBanner.svelte` — confirming tokens only, no raw hex, no raw pixel values (Principle I)
 - [ ] T089 Execute [quickstart.md](./quickstart.md) end to end and record the results in it, including the three printed performance numbers. **Read the test summary line, not the exit code** — F001 found a gate reporting `failed=no` while six tests failed, because `test result: FAILED.` puts the word in the third field
 - [ ] T090 Tick F003's six subfeature boxes in `specs/features-map.md` **only** for what shipped, and reconcile the "local and remote implementations" line with plan.md's Structure Decision — the local provider belongs to F015 and is deliberately not built here. Do not tick a box for work that did not happen
@@ -316,6 +318,9 @@ task. This table exists so coverage is checkable rather than asserted — it is 
 | FR-022a | T043, T091 | | |
 | FR-022b | T043, T091 | | |
 | FR-038 | T093, T094, T095 | | |
+| FR-039 | T060, T073, T080, T095, T097 | | |
+| FR-040 | T046, T098 | | |
+| FR-040a | T046 | | |
 
 | Criterion | Tasks | Criterion | Tasks |
 |---|---|---|---|
@@ -330,6 +335,8 @@ task. This table exists so coverage is checkable rather than asserted — it is 
 | SC-006 | T019 | SC-013b | T067 |
 | SC-007 | T061 | SC-014 | T082, T089 |
 | SC-015 | T093 | | |
+| SC-016 | T097 | | |
+| SC-017 | T098 | | |
 
 Three requirements are satisfied by a **record** rather than by code, and their tasks write that
 record: FR-037 (the cache does not make opening faster while online) and FR-026b (a session that
@@ -359,8 +366,9 @@ wins" is enforced by T058 having no branch in which a cached hash overrides the 
 | US4 (P2) | Phase 2 | Eviction needs content to evict, which US2 produces, but the tests create rows directly |
 | US5 (P2) | Phase 2 | Needs a populated projection, which its tests build directly |
 
-**T091–T096 are appended IDs** placed in their own phases: T096 in Setup (the fourth system-spec
-amendment), T091–T092 in US2 (rename), T093–T095 in US3 (the vanished root). They came from two
+**T091–T098 are appended IDs** placed in their own phases: T096 in Setup (the fourth system-spec
+amendment), T091–T092 in US2 (rename), T093–T095 in US3 (the vanished root), T097–T098 in Polish
+(the design-system gates the constitution requires). They came from two
 `/speckit-analyze` passes after numbering was fixed. Renumbering ninety-odd tasks to insert six
 would have invalidated every cross-reference in this file; F002 set the precedent with its T076.
 

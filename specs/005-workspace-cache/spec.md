@@ -140,6 +140,8 @@ exist.
 4. **Given** a repository of a hundred thousand files, **When** the developer expands ten
    folders, **Then** the work done is proportional to those ten folders rather than to the
    repository.
+5. **Given** a developer using only the keyboard, **When** they focus the tree and expand a folder,
+   **Then** the focus indicator is the design system's and the folder expands — no pointer needed.
 
 ---
 
@@ -176,6 +178,8 @@ content is served — then reopen an unchanged file and confirm nothing was tran
 8. **Given** a cached file renamed on the engine and noticed only when its folder is re-listed,
    **When** it is opened under its new name, **Then** it is fetched again and remains listed
    throughout — the content is lost, the file is not.
+9. **Given** the interface rendered without colour, **When** content is verifying, unverified or
+   possibly stale, **Then** each state is still distinguishable from the others and from current.
 
 ---
 
@@ -236,6 +240,8 @@ gone while the tree is intact and files are marked uncached.
 7. **Given** a migration that fails partway, **When** the application recovers, **Then** the
    projection is rebuilt from scratch and the developer is told, and no half-transformed
    projection is ever read.
+8. **Given** the interface rendered without colour, **When** a migration, a rebuild or an eviction
+   is running, **Then** each is still distinguishable from the others.
 
 ---
 
@@ -441,6 +447,20 @@ come from the projection with no request attempted.
   optimisation.
 - **FR-035**: Every behaviour here MUST be verifiable with no remote host and no network,
   consistent with the standard F001 established and A-TEST made binding.
+- **FR-039**: Every state this feature publishes MUST be distinguishable by more than colour alone.
+  That covers all eight: the five content presentations — verifying, current, unverified, possibly
+  stale and gone — and the three maintenance states the interface renders. The design system's
+  accessibility floor requires it, F001 states it for connection state and F018 for the rail, and
+  the adherence lint cannot catch it: that lint restricts raw hex, raw pixel values and font
+  families, and has no view of whether a state carries a second channel.
+- **FR-040**: A new interactive surface MUST be reachable and operable from the keyboard, and MUST
+  take its focus indicator from the design system rather than the browser default. This feature's
+  interactive surface is the file tree: it MUST be focusable, MUST show the design system's
+  `:focus-visible` ring, and MUST expand and collapse a folder from the keyboard.
+- **FR-040a**: Arrow-key traversal of the tree and type-ahead selection are **out of scope** and
+  land with the editor in F006. Recorded as a decision rather than left as an omission: FR-040
+  delivers the accessibility floor the design system requires, and full tree navigation is a
+  distinct body of work with no user story here.
 - **FR-038**: A workspace whose root no longer exists on the engine MUST be reported as gone, and
   its projection MUST stop being presented as a live view. The developer MUST be able to tell the
   difference between a folder that has not been fetched yet and a workspace that is not there any
@@ -505,6 +525,11 @@ come from the projection with no request attempted.
 - **SC-014**: The full suite for this feature runs with no remote host and no network.
 - **SC-015**: A workspace deleted on the engine while open is reported as gone in 100% of exercised
   cases, with zero instances of its projection continuing to be presented as current.
+- **SC-016**: Rendered without colour, all eight published states remain distinguishable from one
+  another — zero pairs that become identical.
+- **SC-017**: The file tree is reachable by keyboard, shows the design system's focus indicator and
+  never the browser default, and expands and collapses a folder from the keyboard, in 100% of
+  exercised cases.
 
 ## Assumptions
 

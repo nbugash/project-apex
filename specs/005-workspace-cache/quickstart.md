@@ -89,6 +89,7 @@ What it proves:
 | US1.2 | An unexpanded folder has issued none |
 | US1.3 | Collapse and re-expand issues none |
 | US1.4 | Expanding ten folders of a hundred-thousand-file tree issues ten |
+| US1.5 | The tree is keyboard-focusable, shows the design system's ring, and expands from the keyboard |
 
 The count comes from a recording fake transport, not from a log. A test that greps a log for
 request lines passes when the logging changes shape; a test that counts calls does not.
@@ -116,6 +117,7 @@ cargo test -p apex-engine --test read_file
 | US2.6 | File larger than one message: arrives in ranges, first range returned before the last |
 | US2.7 | A rename the projection is **told about**: same `file_id`, same blob, zero bytes transferred |
 | US2.8 | A rename only **observed** in a re-listing: content dropped, file still listed, no error |
+| US2.9 | Rendered without colour, verifying/unverified/possibly-stale/current stay distinguishable |
 
 US2.5 is the one worth watching run. It is the scenario that fails if anyone ever wires git status
 into validity, and §5.3 says that mistake was already made once in this project's history.
@@ -205,6 +207,7 @@ about SQLite's behaviour and a fake would be asserting our own beliefs about it.
 | A migration killed mid-step leaves the **old** version, intact and readable | FR-018c, M2 |
 | A migration that fails deterministically discards and rebuilds, and says so | FR-018b, SC-013b |
 | Progress is published at least once per second — asserted on **count and spacing** | FR-018a, SC-013a |
+| Rendered without colour, migrating/rebuilding/evicting stay distinguishable (US4.8) | FR-039, SC-016 |
 
 Ageing uses a fake clock. The interrupted-migration case opens the file, begins a step and drops
 the connection without committing, which is what a kill looks like to SQLite.
@@ -288,6 +291,14 @@ cargo fmt --all -- --check
 npm run lint:ds          # design token adherence, Principle I
 npm run gate:fidelity    # mockup fidelity
 ```
+
+Two design-system obligations are **not** covered by either command, and carry their own end-to-end
+assertions instead. `lint:ds` restricts raw hex, raw pixel values and font families; it has no view
+of whether a state carries a channel other than colour, and none of whether a surface is reachable
+from the keyboard. So the greyscale check lives in `cache-verification.spec.ts` and
+`cache-maintenance.spec.ts` (FR-039, SC-016), and the focus-and-keyboard check in
+`workspace-tree.spec.ts` (FR-040, SC-017) — following `rail-greyscale.spec.ts` and
+`rail-keyboard.spec.ts`, which F018 and F001 already use for exactly this.
 
 Clippy is not a formality here. In F002 it caught a `std::thread::sleep` inside an async function —
 a real defect that would have stalled a runtime worker, found by a lint rather than by a test. This
