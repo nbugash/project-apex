@@ -8,8 +8,9 @@
 
 Statements here are normative. Where a design decision was made deliberately, it is marked
 **(A-xx)** and its rationale, alternatives and rejection reasons are recorded in Appendix A.
-Where something is genuinely undecided it is marked `[OPEN: id]` and listed in Appendix B;
-those markers are blocking for the feature they appear in.
+Where something is genuinely undecided it is marked `[OPEN: id]` and listed in Appendix B; those
+markers are blocking for the feature they appear in. As of 2026-09-23 none remain open — Appendix
+B records where each was answered, and Appendix A holds the decisions themselves.
 
 Code in this document is normative only where a section says so. Everything else is
 illustrative of intent, not of implementation.
@@ -54,9 +55,11 @@ Recorded as a possible later extension in §9.4.
 
 The system targets **sub-250 ms** for any interaction a developer perceives as immediate.
 
-`[OPEN: NFR]` This budget names no percentile, no measurement point and no excluded conditions,
-and the same is true of the availability and footprint targets below. They are directional until
-Appendix B, NFR is closed.
+These targets are measured at the 99th percentile, at the boundary between the interface and the
+transport, excluding any delay a test harness itself injects, over at least 100 samples.
+Cold-start and first-connect paths are excluded and budgeted separately, because deployment
+(§3.8) and instance wake (§15.5) belong to a different question. A gate reports the measured
+value, not only a verdict. See Appendix A, A-NFR.
 
 | Property | Target | Notes |
 |---|---|---|
@@ -286,11 +289,20 @@ remember is stored in the system Keychain, never in application preferences.
 
 ## 3.8 Daemon bootstrap and version negotiation
 
-`[OPEN: H-BOOT]` The invocation in §3.1 assumes `/usr/local/bin/ide-engine` exists at the
-expected version. How it arrives, how its version is verified against the client, and what
-happens on absence (`ssh` exits 127) are unspecified. This is a prerequisite for every
-remote-mode feature and is made load-bearing by the in-place binary replacement in §15.3. See
-Appendix B, H-BOOT.
+The client carries the engine binary and deploys it over the SSH connection it already holds,
+into a per-user directory on the remote host. It does so when the engine is absent — which §3.4
+classifies from `ssh` exiting 127 — and when the handshake reports a version older than the
+client's. What landed is hashed against what the client shipped with before anything is
+executed; a mismatch aborts without running it.
+
+`auth/handshake` (§4.8) carries a `protocolVersion` integer that increments on any breaking
+change to §4. The client is the authority: an older engine is redeployed and re-executed, and a
+**newer** engine is refused with an instruction to update the client, because speaking a
+protocol the client does not know produces confident wrong behaviour rather than an honest
+failure.
+
+This is what makes skew resolvable in one direction only, which is the property that keeps the
+in-place replacement in §15.3 safe. See Appendix A, A-BOOT.
 
 ## 3.9 Host key policy
 
@@ -411,7 +423,9 @@ the workspace.
 | `session/shutdown` | request | — | — |
 | `log/onMessage` | notification | `level`, `message`, `source` | — |
 
-`[OPEN: H-BOOT]` Behaviour on protocol version mismatch is undefined. See Appendix B.
+`protocolVersion` is an integer that increments on any breaking change to this section. On
+mismatch the client is the authority: it redeploys an older engine, and refuses a newer one
+rather than guessing at a protocol it does not know (§3.8, Appendix A, A-BOOT).
 
 ### Workspace
 
@@ -709,17 +723,22 @@ The supervisor handles four transitions per server:
 Child processes run under Linux cgroups so a runaway indexing task cannot destabilise the
 orchestrator.
 
-`[OPEN: LSP]` Concrete cgroup limits, multi-root workspace handling, and capability negotiation
-passthrough are unspecified. See Appendix B.
+One server per language per workspace, started lazily on first use of that language, each under
+a cgroup memory limit. A server exceeding its limit is killed and restarted rather than allowed
+to exhaust the instance — under §15.5's single-tenant model, one runaway server would otherwise
+take down the developer's whole environment. One workspace is one root; multi-root workspaces
+are not supported. Client capabilities pass through to the server unmodified. See Appendix A,
+A-LSP.
 
 ## 7.4 Debugging
 
 The engine acts as a DAP broker, fronting `delve` (Go), `lldb-vscode` (Rust, C, C++, Zig) and
 `debugpy` (Python).
 
-`[OPEN: DAP]` Beyond this intent, debugging is unspecified: no methods, no breakpoint
-synchronisation, no variable inspection model, and no persistence for breakpoints. This is a
-whole feature that the original document named without defining. See Appendix B.
+**Out of scope for v1.** Debugging is not specified, not built, and reserved for in neither §4
+nor the build sequence in §19. The section is kept because the intent above is the shape any
+future support would take, not because anything implements it. Reopening it is a product
+decision that adds at least one feature to the map. See Appendix A, A-DAP.
 
 ---
 
@@ -783,10 +802,11 @@ files; §6.1 returns bytes precisely so this works.
 When user code serves HTTP, the client opens a dynamic local forward (§3.5) and renders
 `http://127.0.0.1:<local>` in a preview pane.
 
-`[OPEN: PREVIEW]` Whether previews are auto-detected — the engine notices a process binding a
-port and offers a banner — or user-initiated is undecided. Auto-detection is better UX and
-requires watching listening sockets; user-initiated is trivial and cannot surprise anyone. It
-does not affect the transport. See Appendix B.
+Previews are **user-initiated**: the developer names the port and starts the preview. Nothing is
+forwarded without being asked for, which is what keeps the security story trivial — a port is
+forwarded because somebody asked for that port, not because a heuristic guessed. Auto-detection
+remains addable later, since an explicit action is a subset of an offered one. See Appendix A,
+A-PREVIEW.
 
 ## 9.4 Native GUI output
 
@@ -818,9 +838,12 @@ queries — and returns a bounded result list. The client renders text it did no
 The engine owns all file watches, using `inotify` scoped to the workspace with build and
 dependency directories excluded.
 
-`[OPEN: IGNORE]` The exclusion set is unspecified. At minimum it should cover `node_modules`,
-`target`, `.git` internals, `build`, `dist` and `__pycache__`, but it needs to be configurable
-per workspace and shared with the indexer so both agree on what is invisible. See Appendix B.
+The exclusion set is the repository's own `.gitignore` files plus a fixed built-in set —
+`.git/`, `node_modules/`, `target/`, `dist/`, `build/`, `.venv/`, `__pycache__/`. One resolved
+set is computed per workspace and used by **both** the indexer and the watcher, so disagreement
+is impossible by construction: an indexer that indexes what the watcher ignores returns search
+results for files whose changes are never noticed. No per-workspace user configuration in v1.
+See Appendix A, A-IGNORE.
 
 The client sets no OS watches in remote mode. It receives `workspace/onFileEvent` and acts only
 on paths it is currently displaying.
@@ -884,17 +907,24 @@ Prefetch is background-priority (§4.6) and must never delay interactive traffic
 A tokio loop attempts reconnection on a backoff while offline. On success:
 
 1. Re-establish the connection per §3.1 and §3.3.
-2. Re-run the handshake and verify protocol compatibility (`[OPEN: H-BOOT]`).
+2. Re-run the handshake and verify protocol compatibility (§3.8).
 3. Reconcile: compare cached hashes against the engine for open files; refetch what changed.
 4. Restore language servers for open workspaces.
 5. Unlock the editor and update the status bar.
 
-Because nothing was written offline, reconciliation is a pull. There is no merge, no conflict
-prompt and no data to lose — which is the main thing §11.1 buys.
+Reconciliation is a **three-way merge**, not a pull: edits made offline persist against the
+`baseSha256` the client held when the connection dropped, and on reconnect the client merges
+base, local and remote per file. Where the remote has not moved it fast-forwards; where it has,
+only genuinely colliding hunks raise a conflict for the developer to resolve.
 
-`[OPEN: B3-reversal]` Conflict resolution exists as a problem only if §11.1 is reversed. Under read-only
-offline it is not needed. Should the outbox model be adopted, this section requires a stored
-base revision in `file_contents`, a three-way merge, and a conflict UI.
+A merge that silently picks a side is a merge nobody can audit, so conflicts prompt rather than
+resolve themselves. See Appendix A, A-OFFLINE.
+
+Conflict resolution is in scope. A-OFFLINE reversed the read-only call that had made it moot, so
+this section requires a stored base revision in `file_contents` (§5.2), a three-way merge, and a
+conflict interface. The base revision is not a new protocol concept: `workspace/writeFile`
+already carries `baseSha256` so the engine can refuse a stale write with `-32004`, and offline
+editing reuses exactly that value.
 
 ---
 
@@ -984,12 +1014,16 @@ Findings surface as an editor banner above the document, not a modal:
 
 ## 14.3 Remediation constraints
 
-`[OPEN: D12]` Automated installation is specified in intent but not safely. As described it
-runs unpinned network installs (`go install ...@latest`, `brew install`) triggered by a UI
-button, with no version pinning, no verification of what is fetched, no failure path, no
-privilege model and undefined offline behaviour.
+Automated installation runs **pinned and verified, and fails closed**. Every toolchain is pinned
+to an exact version and checked against a hash recorded in the client before execution;
+verification failure aborts and reports rather than falling back to an unverified copy, because
+a fallback path is the one that runs precisely when verification failed. Nothing escalates
+privilege: under §15.5 the instance is the developer's own, and a toolchain needing root on a
+single-user machine is being installed in the wrong place. This is the same integrity mechanism
+as §3.8's deployment check, deliberately — one way of saying "this binary is the one we meant",
+not two. See Appendix A, A-D12.
 
-Before this ships it requires: pinned versions in the dependency manifest, verification of
+Concretely this requires: pinned versions in the dependency manifest, verification of
 fetched artifacts, the exact command shown to the user before execution, and a defined failure
 path. See Appendix B.
 
@@ -1028,18 +1062,26 @@ Moving a local workspace to an instance:
 4. Switch the provider from local to remote and re-point path mapping in SQLite.
 5. Warm the language servers for the detected toolchains.
 
-`[OPEN: WORKSPACE]` Remote workspace registration is unspecified: naming and collision
-behaviour under `~/ide-workspaces/<name>`, whether a second burst of the same project
-overwrites or forks, deletion, and disk quota. See Appendix B.
+A remote workspace is identified by an opaque `workspaceId` minted by the client, so it is
+addressable before the engine has ever seen it. Its display name is the repository directory
+name and **may collide freely**, because nothing keys on it — two checkouts of one repository
+are the ordinary case, not an edge one. A second burst of the same workspace attaches to what is
+already there rather than overwriting or forking. Deletion is explicit and removes both the
+remote directory and the local cache. No quota: under §15.5 the instance is single-tenant, so a
+developer filling their own disk is a problem they can see, and exhaustion surfaces as an
+ordinary engine error. See Appendix A, A-WORKSPACE.
 
 ## 15.5 Instance lifecycle
 
-`[OPEN: EC2]` Substantially unspecified. The intent is proactive stop on sustained
-disconnection with dynamic address resolution on wake, and security groups restricted to port
-22. Undefined: the idle threshold before stopping, the cost target this serves, acceptable wake
-latency, how instances are provisioned in the first place (AMI contents, infrastructure as
-code), and whether an instance is per-developer or shared. Every one of these changes the
-feature. See Appendix B.
+Instances are **per developer**, never shared. An instance stops after 30 minutes without
+interactive traffic — background indexing must not hold one awake, or nothing ever stops — and
+the wake target is under 60 seconds from the developer's action to a usable editor. Beyond about
+a minute developers start leaving instances running to avoid the wait, which defeats the policy
+entirely. Address resolution is dynamic on wake, and security groups remain restricted to port
+22.
+
+Single tenancy is load-bearing rather than incidental: it is the condition under which §16.3's
+authorization model is acceptable at all. See Appendix A, A-EC2.
 
 ---
 
@@ -1075,10 +1117,13 @@ Three boundaries matter:
 
 ## 16.3 Gaps
 
-`[OPEN: SEC]` There is no authorization model beyond "whoever can SSH to the instance", no
-per-client resource limits, and no audit log of what the engine executed. Acceptable while an
-instance is single-developer; a blocker if instances are ever shared. This intersects with
-§15.5. See Appendix B.
+Authorization **is** the developer's SSH access to their own instance. There is no second
+authorization layer, no per-client resource limit and no audit log, because under §15.5 that
+client is the machine's only user. Building a token layer over a single-user machine would imply
+a boundary that does not exist, and the honest model is the one stated plainly.
+
+This decision is downstream of §15.5 and falls with it: any move to shared instances reopens
+authorization, per-client limits and audit logging together. See Appendix A, A-SEC.
 
 ---
 
@@ -1120,14 +1165,23 @@ cleanly, so unwinding buys nothing here.
 
 Targets are `.dmg` for macOS and `.deb` for Linux.
 
-`[OPEN: SIGN]` Code signing and notarization are entirely unspecified. An unsigned `.dmg` is
-blocked by Gatekeeper, which makes the macOS build undeliverable regardless of its quality.
-Subprocess spawning (§3.1) is permitted under the hardened runtime that notarization requires,
-so the transport decision is compatible with direct distribution — it would not survive App
-Store sandboxing. Decide alongside the client update mechanism. See Appendix B.
+The macOS client ships **unsigned and un-notarized**, with the Gatekeeper bypass documented on
+the download page. Subprocess spawning (§3.1) is permitted under the hardened runtime that
+notarization would require, so signing remains available later without reopening the transport
+decision; it would not survive App Store sandboxing either way.
 
-`[OPEN: UPDATE]` The engine self-replaces (§15.3); the client has no update mechanism. Version
-skew between the two is therefore unmanaged in one direction. See Appendix B.
+The cost is recorded rather than glossed: every first launch is a security warning the user is
+told to dismiss, which is the habit §3.9 refuses to train for host keys. The two are traded
+against different costs, and the trade is written down in Appendix A, A-SIGN.
+
+The client is delivered through platform package managers — an apt repository for Debian and
+Ubuntu, a Homebrew cask for macOS — with no in-application updater. The package manager owns
+integrity checking, so no separate update feed needs signing, which matters given §17 ships
+unsigned.
+
+Skew has exactly one remedy in exactly one direction: §3.8 makes the client the authority that
+deploys the engine, so the client is always the half that needs updating, and the package
+manager is how it gets updated. See Appendix A, A-UPDATE.
 
 ---
 
@@ -1141,17 +1195,27 @@ spend, and it is a deliverable of the first build increment, not an afterthought
 
 ## 18.2 Test strategy
 
-`[OPEN: TEST]` Beyond the mock daemon, testing is unspecified. Required before the first
-increment is accepted: unit coverage for the framing codec and correlation registry,
-integration coverage against a real `sshd` in a container, end-to-end coverage of open-edit-save
-and run-a-task, and a performance gate that fails when the interaction budget regresses. See
-Appendix B.
+Every increment is accepted against four levels: unit coverage for domain and application logic,
+integration coverage against the mock daemon, end-to-end coverage on Linux per Appendix A A-E2E,
+and an opt-in suite against a real `sshd` for what no mock can prove — the §3.1 option set being
+the canonical example, since a mock has no socket and no keepalive. A performance gate fails when
+the interaction budget regresses, measured per §1.4.
+
+One rule beyond coverage: a test that cannot fail is worse than no test, because it reports
+confidence it has not earned. Where a check guards a property that would otherwise be invisible,
+verify the check fails when the property is broken. See Appendix A, A-TEST.
 
 ## 18.3 Observability
 
-`[OPEN: OBS]` The intent is to monitor connection reuse efficiency, reconnection loops and time
-to first interaction. Undefined: metric names, transport, retention, and the privacy position
-on telemetry that would otherwise carry repository paths and file names. See Appendix B.
+Logs are structured, stay on the developer's machine with bounded retention, and are never
+transmitted. There are no metrics and no usage telemetry, so no repository path or file name
+leaves the machine. The single exception is a crash reporter that uploads a stack trace on an
+unhandled panic and nothing else.
+
+That exception carries a hard requirement: a panic payload is exactly where a secret is most
+likely to surface, which §16 already defends against locally. Any crash reporter must redact
+before transmission and be tested against a sentinel, or the existing assertion that a
+passphrase reaches no panic payload becomes a lie. See Appendix A, A-OBS.
 
 ---
 
@@ -1174,8 +1238,9 @@ classification (§3.4), and the mock SSH daemon (§18.1). Nothing *remote* prece
 carries the design's riskiest unknowns, so it should not trail F000 by long. F000 and F001
 have no dependency between them and may proceed concurrently.
 
-**F002 `daemon-bootstrap`** — deployment, handshake, version negotiation (§3.8). Blocked on
-`[OPEN: H-BOOT]`.
+**F002 `daemon-bootstrap`** — deployment, handshake, version negotiation (§3.8). Unblocked
+2026-09-23 by A-BOOT; the client pushes the engine over the connection it already holds and is
+the authority on protocol version.
 
 **F003 `workspace-cache`** — the `WorkspaceProvider` trait (§6.1), canonical schema (§5.2),
 lazy tree loading (§10.1), ranged reads, hash-based validity (§5.3). First point at which a
@@ -1185,7 +1250,8 @@ real repository can be browsed.
 the ignore set, and client-side invalidation (§10.4). Without it the client never learns that
 a file changed underneath it.
 
-**F005 `ec2-lifecycle`** — wake, stop, address resolution (§15.5). Blocked on `[OPEN: EC2]`.
+**F005 `ec2-lifecycle`** — wake, stop, address resolution (§15.5). Unblocked 2026-09-23 by
+A-EC2: per developer, 30-minute idle stop, under 60 seconds to wake.
 
 ## 19.2 First usable product
 
@@ -1221,18 +1287,20 @@ online behaviour.
 
 ## 19.5 Composite and delivery
 
-**F014 `client-packaging`** (§17.4) — blocked on `[OPEN: SIGN]` and `[OPEN: UPDATE]`, and
-nothing ships without it. **F016 `cloud-burst`** (§15.4) — requires both modes working.
+**F014 `client-packaging`** (§17.4) — unblocked 2026-09-23 by A-SIGN and A-UPDATE, and nothing
+ships without it. Note its scope grew with those decisions: package-manager delivery is three
+pipelines rather than one installer. **F016 `cloud-burst`** (§15.4) — requires both modes working.
 **F017 `previews-artifacts`** (§3.5, §9.2, §9.3) — requires execution.
 
 ## 19.6 Not scheduled
 
-**Debugging** (§7.4) cannot be sequenced until `[OPEN: DAP]` is closed — it has no methods, no
-breakpoint model and no persistence defined, so its scope cannot be stated honestly. Note it
-would also need a per-language pass equivalent to F009: delve, lldb-vscode and debugpy.
+**Debugging** (§7.4) is out of scope for v1 by decision, not by omission (A-DAP). Reopening it
+is a product call that adds at least one feature here, and it would also need a per-language
+pass equivalent to F009: delve, lldb-vscode and debugpy.
 
-**Observability** (§18.3) likewise awaits `[OPEN: OBS]`: no metric names, transport or
-retention exist to build against.
+**Observability** (§18.3) is settled at local logs plus a redacting crash reporter (A-OBS),
+which needs no feature of its own: logging already exists, and the crash reporter is a bounded
+addition to F014's packaging work rather than a separate increment.
 
 Both are absent from the map by intent, not oversight. Neither blocks anything on it.
 
@@ -1283,7 +1351,12 @@ bind address — which the original fixed-port design got wrong by implying stat
 tunnels. Because A-B1 provides a `ControlMaster`, `-O forward` mutates the authenticated
 connection with no new handshake.
 
-## A-B3 — Read-only offline (2026-09-21, provisional)
+## A-B3 — Read-only offline (2026-09-21, provisional) — SUPERSEDED
+
+**Superseded by A-OFFLINE (2026-09-23).** Product answered the question this entry left to
+them and reversed it: offline editing is a differentiator worth its cost. The entry is kept
+in full rather than edited, because the reasoning below is still the argument against, and a
+decision record that quietly becomes its own opposite teaches nobody anything.
 
 **Decision.** Losing the connection makes the workspace a read-only mirror. No write queue.
 
@@ -1423,7 +1496,8 @@ The payload also has none of the properties that justify a database: no querying
 concurrent writers, no partial reads, and no growth with workspace size. It is read once at
 launch and written on change.
 
-Practically, it also decouples the shell from F003, which sits behind `[OPEN: H-BOOT]`. Had
+Practically, it also decouples the shell from F003, which sat behind `[OPEN: H-BOOT]` at the
+time this was decided (resolved 2026-09-23 by A-BOOT). Had
 session state lived in the workspace cache, the first feature in the build order would have
 depended on a feature that cannot yet be built.
 
@@ -1556,41 +1630,587 @@ two — or measurement showing the 1 MiB cap admits an unacceptable head-of-line
 
 ---
 
+## A-OFFLINE — Offline editing with three-way merge (2026-09-23)
+
+**Supersedes A-B3. Resolves `[OPEN: B3-reversal]`, and the B4 question that A-B3's existence
+had made moot.**
+
+**Decision.** Losing the connection leaves the editor writable. Edits persist locally against
+the `baseSha256` the client held when the connection dropped. On reconnect the client performs
+a three-way merge — base, local, remote — per file, fast-forwarding where the remote has not
+moved and raising a conflict only for hunks that genuinely collide.
+
+**Rationale.** Product judged offline editing a differentiator worth roughly two additional
+features, which is the cost A-B3 priced and declined to pay on engineering grounds alone. That
+was always product's call to make; A-B3 said so.
+
+Three-way rather than last-writer-wins because the base hash already exists in the protocol:
+`workspace/writeFile` carries `baseSha256` precisely so the engine can refuse a stale write
+(§4.8, error `-32004`). Offline editing needs no new protocol field, only the merge and the
+interface for it. Last-writer-wins would have been cheaper and is the one option that can
+destroy a remote change without telling anyone — the failure this product cannot afford,
+because the remote side is where CI and colleagues write.
+
+Conflicts prompt rather than resolve automatically. A merge that silently picks a side is a
+merge nobody can audit, and developers already have an accurate mental model for this from
+version control.
+
+**Consequences.** §11 is rewritten: the read-only lock is gone and reconciliation becomes a
+merge rather than a pull. F012 `offline-readonly` grows from one feature to roughly three and
+is renamed accordingly. A persisted outbox with base revisions becomes part of the cache
+schema (§5.2). None of this touches the transport: A-REQ still holds, and an in-flight request
+still dies with its connection.
+
+**Rejected — last-writer-wins with a backup copy.** Silently loses the remote change unless
+somebody notices a `.conflict` file. Defensible for a single developer whose remote never
+changes underneath them; indefensible the moment CI or a second person writes.
+
+**Rejected — refuse to sync and choose per file.** No merge engine and no silent loss, but it
+discards work whenever a file changed on both sides for unrelated reasons, which is the
+ordinary case rather than the exceptional one.
+
+### Reversal conditions
+
+Measurement showing developers essentially never edit offline, or a merge implementation that
+proves unable to produce trustworthy results on the languages in scope.
+
+---
+
+## A-BOOT — Daemon deployment, version negotiation and mismatch policy (2026-09-23)
+
+**Resolves `[OPEN: H-BOOT]`, which blocked every remote feature.**
+
+**Decision.** Three parts.
+
+*Deployment.* The client carries the engine binary and pushes it over the SSH connection it
+already holds, into a per-user directory on the remote host. It does this on `EngineMissing`
+(the exit-127 classification F001 already produces) and on a version mismatch. Integrity is
+verified by comparing a hash of what landed against the hash of what the client shipped with;
+a mismatch aborts without executing anything.
+
+*Negotiation.* `auth/handshake` exchanges `protocolVersion` alongside the versions and
+capabilities §4.8 already defines. The protocol version is an integer that increments on any
+breaking change to §4.
+
+*Mismatch policy.* The client is always the authority. If the engine's protocol version is
+older, the client redeploys and re-executes it. If it is **newer**, the client refuses to
+proceed and tells the user to update the client — it does not attempt to speak a protocol it
+does not know.
+
+**Rationale.** Pushing over the existing connection introduces no second trust root, no
+package registry, no outbound internet requirement on the remote host, and no additional
+credential. It works against any host the developer can already reach, which is the property
+that makes the product usable against a machine the developer did not build.
+
+The client being the authority is what makes skew always resolvable in one direction. Because
+the client deploys the engine, the two can only diverge when the client is older — and the
+remedy for that is updating one thing, which the user controls. A negotiation that tried to
+find a common subset would need every version to know every other version's capabilities,
+which is a compatibility matrix nobody maintains correctly.
+
+Refusing a newer engine rather than attempting it is the same instinct as `Unknown` in F001's
+failure classification: acting on a protocol you cannot verify produces confident wrong
+behaviour, and a clear refusal is more useful than a subtle corruption.
+
+**Rejected — remote downloads from a release URL.** Keeps large binaries off the SSH channel
+and makes updates a URL change, but requires outbound internet from the remote host — which a
+locked-down VPC will not have — and introduces a signing identity to verify, which the
+delivery decisions have declined to establish.
+
+**Rejected — pre-baked into the machine image.** Fastest first connect, nothing to deploy, but
+every version bump rebuilds the image and the client becomes useless against any host the
+developer did not build. That forecloses the ordinary case of pointing it at an existing
+machine.
+
+**Rejected — a version negotiation that finds a common subset.** The compatibility matrix
+above.
+
+### Reversal conditions
+
+An engine that must run on hosts the client cannot write to, or a binary large enough that
+pushing it over the control channel breaches the interaction budget during deployment.
+
+---
+
+## A-EC2 — Per-developer instances, stopped when idle (2026-09-23)
+
+**Resolves `[OPEN: EC2]`.**
+
+**Decision.** One instance per developer. Stopped automatically after 30 minutes without
+interactive traffic. Wake target under 60 seconds from the developer's action to a usable
+editor. Provisioning is per-developer and not shared.
+
+**Rationale.** Single tenancy is the condition under which the authorization model in §16.3 is
+acceptable rather than blocking — see A-SEC, which this decision closes. Sharing instances
+would buy cost efficiency at team scale and immediately reopen authorization, per-client
+resource limits and audit logging as blocking work.
+
+Idle stopping rather than always-on because the usage pattern is a few hours a day against a
+machine billed by the hour. The 30-minute threshold is long enough to survive a meeting and
+short enough that a forgotten session costs one hour rather than a weekend.
+
+The 60-second wake target is what makes idle stopping tolerable: beyond about a minute,
+developers start leaving instances running to avoid the wait, which defeats the policy. Idle
+detection keys on interactive traffic specifically — background indexing must not hold an
+instance awake, or nothing ever stops.
+
+**Rejected — always-on per developer.** Deletes wake latency as a design problem entirely, and
+pays around the clock for a machine used a few hours a day.
+
+**Rejected — shared instances.** Reopens SEC in full, as above.
+
+### Reversal conditions
+
+A team large enough that per-developer instances are the dominant cost, at which point SEC
+must be answered properly before sharing anything.
+
+---
+
+## A-SEC — Authorization is SSH access, under single tenancy (2026-09-23)
+
+**Resolves `[OPEN: SEC]`.**
+
+**Decision.** Authorization is exactly the developer's SSH access to their own instance. No
+additional authorization layer, no per-client resource limits, no audit log. The engine trusts
+any client that authenticated over SSH, because under A-EC2 that client is the machine's only
+user.
+
+**Rationale.** SEC was never unconditionally blocking; its own entry says the model is
+"acceptable single-tenant, blocking if shared". A-EC2 chose single tenancy, so this follows
+from it rather than being decided independently.
+
+Building an authorization layer over a single-user machine would add a second set of
+credentials protecting a resource the first set already gates completely. The honest model is
+that SSH access *is* the authorization, and saying so plainly is better than a token layer
+that implies a boundary which does not exist.
+
+**Rejected — build it anyway for future-proofing.** Speculative, and it would have to be
+redesigned against whatever sharing model is eventually chosen, because the right boundary
+depends on what is being shared.
+
+### Reversal conditions
+
+Any move to shared instances. This decision is downstream of A-EC2 and falls with it.
+
+---
+
+## A-SIGN — macOS ships unsigned, with documented bypass (2026-09-23)
+
+**Resolves `[OPEN: SIGN]`.**
+
+**Decision.** The macOS client is distributed unsigned and un-notarized. The download page
+documents the Gatekeeper bypass.
+
+**Rationale.** Product chose this over deferring macOS or paying for a Developer ID. It avoids
+an annual cost and keeps CI free of signing secrets.
+
+**Recorded cost, because it is real.** Every user's first launch is a security warning they are
+instructed to dismiss. §3.9 refuses to train exactly that habit for host keys, on the grounds
+that an IDE which teaches users to click through security warnings has removed the protection
+entirely. This decision trains it at install time instead. The reasoning in §3.9 does not stop
+being true because the warning comes from Gatekeeper rather than OpenSSH; the two are simply
+being traded against different costs, and the trade is recorded here rather than left implicit.
+
+Note also that A-UPDATE's Homebrew route does not rescue this: a cask installing an unsigned
+application meets the same Gatekeeper prompt.
+
+**Rejected — Apple Developer ID with notarization.** 99 USD per year and a signing identity in
+CI. The only route to a first launch without a warning.
+
+**Rejected — defer macOS entirely.** Would have closed the item as a scoping decision at no
+cost, consistent with A-E2E already treating macOS as the reduced-coverage platform.
+
+### Reversal conditions
+
+A user base large enough that first-run friction costs more than the certificate, or an Apple
+policy change that blocks unsigned applications outright rather than warning about them.
+
+---
+
+## A-UPDATE — Platform package managers deliver the client (2026-09-23)
+
+**Resolves `[OPEN: UPDATE]`.**
+
+**Decision.** The client is distributed through platform package managers — an apt repository
+for Debian and Ubuntu, a Homebrew cask for macOS. No in-application updater.
+
+**Rationale.** Developers update these the way they update everything else, and the package
+manager owns the integrity checking, so there is no update feed to sign separately — which
+matters given A-SIGN declined to establish a signing identity.
+
+It pairs with A-BOOT rather than duplicating it: the client deploys the engine, so the client
+is always the half that needs updating, and the package manager is how it gets updated. Version
+skew always has exactly one remedy.
+
+**Recorded cost.** This is three delivery pipelines to build and maintain — apt, Homebrew, and
+whatever Windows eventually needs — for one client. An in-application updater would have been
+one. That cost falls on F014.
+
+**Rejected — built-in auto-updater.** One pipeline and the best experience for users who never
+update by hand, but it needs signing keys for the update feed, which A-SIGN declined, and an
+update server to run.
+
+**Rejected — manual download with a skew warning.** Least machinery of all: the handshake
+already detects the mismatch under A-BOOT, so the client could simply say so and link the
+download.
+
+### Reversal conditions
+
+Maintaining the pipelines proving more expensive than the updater would have been, or a
+platform target that has no package manager worth using.
+
+---
+
+## A-OBS — Local logs, plus a crash reporter that redacts (2026-09-23)
+
+**Resolves `[OPEN: OBS]`.**
+
+**Decision.** Structured logs stay on the developer's machine with bounded retention and are
+never transmitted. Unhandled panics upload a stack trace and nothing else. No metrics, no
+usage telemetry, no consent flow beyond the crash reporter's own opt-out.
+
+**Rationale.** Local logging already exists and already has the property that matters: F001's
+`FR-008` asserts a passphrase reaches no log, no error and no panic payload. Keeping logs local
+means that assertion is the whole of the privacy story.
+
+The crash reporter is the narrow exception, and it is worth it because unhandled panics are the
+failures a developer will never report by hand.
+
+**Hard requirement it creates.** A panic payload is precisely where a secret is most likely to
+surface — F001 tested that case specifically, because `Secret`'s redaction is what stands
+between a passphrase and a panic message. Any crash reporter must therefore redact before
+transmission and must be tested against a sentinel, exactly as `a_passphrase_reaches_no_log_no_error_and_no_panic`
+does today. An unredacted crash reporter would make a passing test a lie.
+
+**Rejected — local logs only.** Simplest and strictly safest, with no transport to secure at
+all.
+
+**Rejected — opt-in anonymous metrics.** Would answer whether the interaction budget holds on
+real networks rather than against the mock, which Principle V would value. Needs a collector, a
+retention policy and a privacy statement.
+
+### Reversal conditions
+
+Evidence that the interaction budget behaves differently in the field than against the mock,
+which would justify revisiting metrics with an explicit consent flow.
+
+---
+
+## A-PREVIEW — Previews are user-initiated (2026-09-23)
+
+**Resolves `[OPEN: PREVIEW]`.**
+
+**Decision.** The developer names the port and starts the preview explicitly. Nothing is
+forwarded without being asked for. §9.3 is built on this.
+
+**Rationale.** No heuristic to get wrong and no surprising port forwarding. The security story
+is trivial precisely because there is no inference: a port is forwarded because someone asked
+for that port. A-B2 already permits preview forwarding; this decides only how one starts.
+
+Auto-detection remains addable later without breaking anything, because an explicit action is a
+subset of an offered one.
+
+**Rejected — auto-detected previews.** Nicer when it guesses right. Needs process or port
+watching on the remote host, and a wrong guess forwards a port the developer did not intend to
+expose.
+
+### Reversal conditions
+
+Usage showing developers start the same preview repeatedly by hand, which would make detection
+worth its risk.
+
+---
+
+## A-WORKSPACE — Remote workspace identity and lifecycle (2026-09-23)
+
+**Resolves `[OPEN: WORKSPACE]`.**
+
+**Decision.** A remote workspace is identified by an opaque `workspaceId` minted by the client
+and recorded on the instance. Its display name is the repository directory name and may
+collide freely, because nothing keys on it. Re-opening a workspace that already exists on the
+instance attaches to it rather than re-provisioning. Deletion is explicit and removes both the
+remote directory and the local cache. No quota is enforced; the instance's disk is the limit,
+and exhaustion surfaces as an ordinary engine error.
+
+**Rationale.** §4.8 already makes `workspaceId` mandatory on every workspace method, so the
+identity exists; what was undefined was how it is minted and what a second use does. Minting
+client-side means a workspace is addressable before the engine has ever seen it, which is what
+the first connect needs.
+
+Names collide because names are for humans. Keying on a path or a name would make two
+checkouts of the same repository indistinguishable, which is the ordinary case, not an edge
+one.
+
+No quota because under A-EC2 the instance is single-tenant: a developer filling their own disk
+is a problem they can see and fix, and a quota would add a policy to enforce and a failure mode
+to explain for no protection they need.
+
+**Rejected — derive the identity from the remote path.** Makes re-burst and rename undefined,
+and collides on exactly the common case.
+
+**Rejected — enforce a per-workspace quota.** Meaningful only under sharing, which A-EC2
+declined.
+
+### Reversal conditions
+
+Shared instances, which would make both naming collisions and disk quotas real problems.
+
+---
+
+## A-DAP — Debugging is out of scope for v1 (2026-09-23)
+
+**Resolves `[OPEN: DAP]` by scoping it out rather than answering it.**
+
+**Decision.** No debugging support in v1. The Debug Adapter Protocol, breakpoint synchronisation
+and the variable model are not specified, not built, and not reserved for in the protocol.
+
+**Rationale.** DAP is absent from the §19 build sequence, which is the honest signal that it was
+never planned into this version. Specifying it now would be designing a large surface — adapter
+lifecycle, breakpoint persistence across reconnects, a variable inspection model — with no
+feature scheduled to consume it, and §4 would acquire methods nothing calls.
+
+Scoping it out closes the open item honestly. An `[OPEN]` marker that means "we have not thought
+about this yet" is indistinguishable from one that means "we decided not to", and the
+difference matters to whoever reads this next.
+
+**Rejected — specify it now.** Design work with no consumer, which would age badly before
+anything used it.
+
+**Rejected — leave it open.** Principle IV makes an open item a hard gate, so leaving it open
+blocks a feature that does not exist for a capability nobody has scheduled.
+
+### Reversal conditions
+
+A decision to support debugging, which reopens this as a full design question and adds at least
+one feature to the map.
+
+---
+
+## A-LSP — Language server resource and scope policy (2026-09-23)
+
+**Resolves `[OPEN: LSP]`.**
+
+**Decision.** One language server process per language per workspace, started lazily on first
+use of that language (already §7.3). Each server runs under a cgroup memory limit, and a server
+that exceeds it is killed and restarted rather than allowed to exhaust the instance. Multi-root
+workspaces are not supported: one workspace is one root. Client capabilities are passed through
+to the server unmodified.
+
+**Rationale.** A memory limit is the only one of these that is load-bearing under A-EC2 — a
+runaway server on a single-tenant instance takes down the developer's whole environment, and
+restarting one server is recoverable where an out-of-memory kill of the engine is not.
+
+Single-root because multi-root doubles the addressing model — every request would need to say
+which root it means — for a case the product has not committed to. `workspaceId` already
+distinguishes workspaces; a second level inside one is a different feature.
+
+Capabilities pass through unmodified because the client is a thin renderer of LSP results. A
+filtering layer would be a second place for capability bugs to live, and the failures would be
+silent ones where a feature simply never appears.
+
+**Rejected — a shared server across workspaces.** Saves memory and entangles the lifetimes: one
+workspace closing would have to reason about another's state.
+
+**Rejected — no memory limit.** The current state, and the reason this item was open.
+
+### Reversal conditions
+
+A product commitment to multi-root workspaces, or measurement showing per-workspace servers are
+the dominant memory cost on a reference instance.
+
+---
+
+## A-IGNORE — One exclusion set, shared by indexer and watcher (2026-09-23)
+
+**Resolves `[OPEN: IGNORE]`.**
+
+**Decision.** Exclusions are the repository's own `.gitignore` files, plus a fixed built-in set
+(`.git/`, `node_modules/`, `target/`, `dist/`, `build/`, `.venv/`, `__pycache__/`). One
+resolved set is computed per workspace and used by both the indexer and the file watcher. No
+per-workspace user configuration in v1.
+
+**Rationale.** The item's own note says this "affects indexer and watcher agreement", and
+agreement is the entire point: an indexer that indexes what the watcher ignores produces search
+results for files whose changes are never noticed, which is worse than not indexing them.
+Computing the set once and sharing it makes disagreement impossible by construction rather than
+by discipline.
+
+`.gitignore` because it is already there, already maintained, and already expresses precisely
+"files this project does not consider its own". The built-in additions cover directories that
+are routinely *not* in `.gitignore` yet ruinous to index — `node_modules` being the canonical
+example.
+
+No user configuration in v1 because the two sources above cover the real cases, and a third
+source would need a precedence order that someone has to learn.
+
+**Rejected — index everything and filter at query time.** Wastes the indexing cost and the
+watch descriptors, which are the scarce resource.
+
+**Rejected — a bespoke exclusion format.** A second thing to learn that duplicates what
+`.gitignore` already says.
+
+### Reversal conditions
+
+A workspace where `.gitignore` and indexing needs genuinely diverge, which would justify a
+per-workspace override with a stated precedence.
+
+---
+
+## A-D12 — Toolchain changes are pinned, verified, and fail closed (2026-09-23)
+
+**Resolves `[OPEN: D12]`, recorded as "currently unpinned remote code execution".**
+
+**Decision.** Any toolchain the engine installs or remediates is pinned to an exact version and
+verified against a hash recorded in the client before execution. Verification failure aborts and
+reports; it never falls back to an unverified copy. Nothing runs with elevated privileges — the
+engine has the developer's own rights on their own instance and needs no more.
+
+**Rationale.** The open item named the actual danger: unpinned remote code execution. "Install
+the latest toolchain" means executing whatever a third party publishes, at a moment nobody
+chose, on a machine holding the developer's credentials.
+
+Pinning plus hash verification makes the installed artifact a decision recorded in the client
+rather than a property of the network at install time. It is the same shape as A-BOOT's
+integrity check, deliberately: one mechanism for "this binary is the one we meant", not two.
+
+Failing closed rather than falling back because a fallback path is the one that runs when
+verification fails — which is exactly when it must not run.
+
+No privilege escalation because under A-EC2 the instance is the developer's own. A toolchain
+that needs root on a single-user machine is a toolchain being installed in the wrong place.
+
+**Rejected — install latest and verify nothing.** The status quo this item exists to end.
+
+**Rejected — verify signatures instead of hashes.** Stronger in principle, and requires
+establishing trust roots per toolchain publisher. Hashes recorded in the client are weaker
+against a compromised publisher but need no key management, and the client is already the trust
+root under A-BOOT.
+
+### Reversal conditions
+
+A toolchain with no stable artifact to pin, or a supply-chain requirement that demands
+signature verification against a published key.
+
+---
+
+## A-TEST — The strategy already in force, made explicit (2026-09-23)
+
+**Resolves `[OPEN: TEST]`.**
+
+**Decision.** Unit tests for domain and application logic; integration tests against the mock
+daemon for every transport-facing behaviour; end-to-end tests on Linux per A-E2E; an opt-in
+suite against a real `sshd` for what no mock can prove. No feature is accepted without the
+levels Principle VII requires, and any omitted level carries a recorded justification.
+
+**Rationale.** This is not a new strategy — it is what F000, F018 and F001 actually did, written
+down so it binds rather than being re-derived per feature. The item asked for "test strategy
+beyond the mock daemon", and F001 answered it in practice: the mock proves the logic, the
+opt-in `sshd` suite proves the invocation the mock cannot model, and the split is recorded in
+that feature's quickstart.
+
+The one addition worth stating as policy: a test that cannot fail is worse than no test,
+because it reports confidence it has not earned. F001 found five such tests — a redaction check
+reading a log that was never written, a priority check whose helper returned a constant, a
+component test holding its own copy of the thing under test. Where a check guards a property
+that would otherwise be invisible, verify the check fails when the property is broken.
+
+**Rejected — a separate acceptance suite per increment.** A fourth level to maintain, when the
+three above plus the opt-in suite already cover what acceptance would assert.
+
+### Reversal conditions
+
+A defect class that repeatedly escapes all four levels, which would indicate a missing one.
+
+---
+
+## A-NFR — How the §1.4 targets are measured (2026-09-23)
+
+**Resolves `[OPEN: NFR]`.**
+
+**Decision.** The §1.4 interaction targets are measured at the 99th percentile, at the boundary
+between the interface and the transport, excluding any simulated network delay the harness
+itself injects. A target is met when p99 is under it across at least 100 samples. Cold-start and
+first-connect paths are excluded and measured separately.
+
+**Rationale.** F001 set this precedent under SC-011 and it is generalised here. Wall-clock
+measurement would have passed regardless of what the transport did, because the harness's own
+250 ms round trip dominated it — so the measurement subtracts what the harness injects and
+reports only what the system added. That distinction is the whole difference between a
+performance gate and a number.
+
+p99 rather than a mean because the interaction budget is about the keystroke that feels slow,
+and a mean hides exactly those. p99 rather than max because a single scheduler hiccup should not
+fail a build.
+
+Excluding cold start because it is a different question with a different budget: first connect
+involves deployment under A-BOOT and possibly an instance wake under A-EC2, and folding those
+into a per-keystroke target would make the target meaningless.
+
+**Requirement it creates.** A performance gate reports the measured value, not merely a verdict.
+A budget that is only ever compared against tells nobody how much headroom remains, which is
+what says whether the next feature's work can be afforded.
+
+**Rejected — measure wall clock end to end.** Simpler, and dominated by whatever the harness
+injects.
+
+**Rejected — measure at the median.** Would pass a system that is slow exactly when it matters.
+
+### Reversal conditions
+
+Reference hardware changing enough to invalidate the targets themselves, which reopens §1.4
+rather than this entry.
+
+---
+
 ---
 
 # Appendix B — Open Items
 
-Blocking for the feature each appears in. Nothing here has an owner yet.
+**All items resolved 2026-09-23.** Nothing here blocks a feature. The table is kept as a record
+of what was open and where each was answered, because a resolved question and a question nobody
+asked look identical once the marker is gone.
+
+Constitution Principle IV makes an `[OPEN: id]` marker a hard gate on the feature it appears in,
+and notes that the feature map's sequence gate cannot see specification holes — it reported F002
+ready while H-BOOT, which defines most of F002, was undecided. That is the situation this round
+closed.
 
 ## Product decisions
 
-| Id | Question | Consequence of leaving it open |
+| Id | Question | Resolved by |
 |---|---|---|
-| **B3-reversal** | Is offline editing a product differentiator worth roughly two features? | §11 is built on a provisional engineering call (A-B3) |
-| **PREVIEW** | Auto-detected previews, or user-initiated? | §9.3 unbuildable; does not block transport |
-| **EC2** | Idle threshold, cost target, wake latency, provisioning, per-developer or shared instances | §15.5 unbuildable; shared instances would also reopen SEC |
-| **WORKSPACE** | Remote workspace naming, collision, re-burst, deletion, quota | §15.4 has undefined behaviour on second use |
+| **B3-reversal** | Is offline editing a product differentiator worth roughly two features? | **A-OFFLINE** — yes; A-B3 superseded, three-way merge on reconnect |
+| **PREVIEW** | Auto-detected previews, or user-initiated? | **A-PREVIEW** — user-initiated; nothing forwarded unasked |
+| **EC2** | Idle threshold, cost target, wake latency, provisioning, per-developer or shared instances | **A-EC2** — per developer, stopped after 30 min idle, under 60 s wake |
+| **WORKSPACE** | Remote workspace naming, collision, re-burst, deletion, quota | **A-WORKSPACE** — opaque id, names may collide, re-open attaches, no quota |
 
 ## Engineering decisions
 
-| Id | Question | Blocks |
+| Id | Question | Resolved by |
 |---|---|---|
-| **H-BOOT** | Daemon deployment, version negotiation, mismatch policy | Every remote feature; build increment 2 |
-| **DAP** | Debugging protocol, breakpoint sync and persistence, variable model | Debugging entirely; absent from §19 |
-| **LSP** | cgroup limits, multi-root workspaces, capability passthrough | §7.3 acceptance criteria |
-| **IGNORE** | Indexing and watch exclusion set, per-workspace configuration | §10.3; affects indexer and watcher agreement |
-| **D12** | Safe toolchain remediation: pinning, verification, failure path, privileges | §14.3; currently unpinned remote code execution |
-| **SEC** | Authorization beyond SSH access, per-client limits, audit log | §16.3; acceptable single-tenant, blocking if shared |
+| **H-BOOT** | Daemon deployment, version negotiation, mismatch policy | **A-BOOT** — client pushes over SSH, client is the authority, refuse a newer engine |
+| **DAP** | Debugging protocol, breakpoint sync and persistence, variable model | **A-DAP** — out of scope for v1, scoped out rather than answered |
+| **LSP** | cgroup limits, multi-root workspaces, capability passthrough | **A-LSP** — memory-limited per language per workspace, single root, passthrough |
+| **IGNORE** | Indexing and watch exclusion set, per-workspace configuration | **A-IGNORE** — `.gitignore` plus a built-in set, one set shared by both |
+| **D12** | Safe toolchain remediation: pinning, verification, failure path, privileges | **A-D12** — pinned, hash-verified, fails closed, no privilege escalation |
+| **SEC** | Authorization beyond SSH access, per-client limits, audit log | **A-SEC** — SSH access is the authorization, downstream of A-EC2 |
 
 ## Delivery decisions
 
-| Id | Question | Blocks |
+| Id | Question | Resolved by |
 |---|---|---|
-| **SIGN** | Code signing and notarization | macOS delivery entirely — unsigned `.dmg` is blocked by Gatekeeper |
-| **UPDATE** | Client update mechanism | Version skew management; pairs with H-BOOT |
-| **TEST** | Test strategy beyond the mock daemon | Acceptance of every increment |
-| **OBS** | Metric names, transport, retention, telemetry privacy | §18.3 |
-| **NFR** | Percentiles, measurement points, exclusions for the §1.4 targets | Any performance gate |
+| **SIGN** | Code signing and notarization | **A-SIGN** — unsigned with documented bypass; cost recorded against §3.9 |
+| **UPDATE** | Client update mechanism | **A-UPDATE** — platform package managers, no in-app updater |
+| **TEST** | Test strategy beyond the mock daemon | **A-TEST** — the strategy F000/F018/F001 already follow, made binding |
+| **OBS** | Metric names, transport, retention, telemetry privacy | **A-OBS** — local logs, crash reporter that must redact |
+| **NFR** | Percentiles, measurement points, exclusions for the §1.4 targets | **A-NFR** — p99 at the interface boundary, harness delay excluded |
+
+## Adding an open item
+
+A new `[OPEN: id]` marker goes in the body at the point it blocks, and a row goes here naming
+what it blocks. It is removed only by a decision recorded in Appendix A, never by deciding it
+inline in a feature specification — a decision that binds several features belongs where all of
+them can find it.
 
 ## Provenance
 

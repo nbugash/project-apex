@@ -101,13 +101,13 @@ an intention to do it.
   - [ ] File tree colouring from cached status
   - [ ] Diff gutter coordinates via git/getFileDiff
   - [ ] Bulk invalidation on branch switch
-- [ ] **F012 offline-readonly** [P] (depends: F006)
+- [ ] **F012 offline-editing** [P] (depends: F006)
   - Spec: not yet specified
-  - [ ] Connection state detection from keepalive expiry and pipe EOF
-  - [ ] Read-only editor lock and offline UI state
+  - [ ] Offline UI state consuming F001's connection state, not re-detecting it
   - [ ] Cached-only tree, file and FTS path search behaviour
   - [ ] Background prefetch of recent-commit and manifest files
-  - [ ] Reconnection with hash reconciliation and editor unlock
+  - [ ] Local persistence of offline edits against their base revision
+  - [ ] Reconnection fast-forward where the remote has not moved
 - [ ] **F013 global-search** [P] (depends: F000, F003)
   - Spec: not yet specified
   - [ ] Command palette and fuzzy path search UI
