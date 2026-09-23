@@ -377,9 +377,18 @@ found, `-32602` invalid params, `-32603` internal). Application codes occupy `-3
 | -32006 | Task not found or already exited |
 | -32007 | Payload exceeds the frame limit |
 | -32008 | Request cancelled by the client |
+| -32009 | Workspace root no longer exists — registered, but the directory is gone |
 
 Every error carries a human-readable `message`. Errors that a user can act on carry a `data`
 object describing the remedy.
+
+`-32009` is deliberately distinct from `-32001`, because the two demand **opposite** responses.
+`-32001` means the engine has never been told about this workspace and the client should register
+it — which is also how a client recovers after an engine restart. `-32009` means the workspace was
+registered and the thing it pointed at has been deleted, and the client must tell the developer and
+stop presenting its cached projection as a live view. Routing a deleted workspace through `-32001`
+would send the client into a re-registration that then fails because the root is no longer a
+directory, surfacing a registration error for a deletion.
 
 ## 4.5 Cancellation
 
@@ -460,7 +469,8 @@ discovers that when a resumption is refused.
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `workspace/readDirectory` | request | `workspaceId`, `relativePath` | `items[]` of `{name, type, size, modified}` |
+| `workspace/register` | request | `workspaceId`, `path` | `{name, canonicalPath}` |
+| `workspace/readDirectory` | request | `workspaceId`, `relativePath`, `cursor?`, `limit?` | `items[]` of `{name, type, size, modified}`, `nextCursor?` |
 | `workspace/stat` | request | `workspaceId`, `relativePath` | `{type, size, modified, sha256}` |
 | `workspace/readFile` | request | `workspaceId`, `relativePath`, `offset?`, `length?` | `{content, encoding, sha256, totalSize}` |
 | `workspace/writeFile` | request | `workspaceId`, `relativePath`, `content`, `baseSha256` | `{sha256}` |
@@ -474,6 +484,25 @@ discovers that when a resumption is refused.
 
 `workspaceId` is mandatory on every workspace method. The original "formal" contract omitted
 it, which silently removed multi-workspace addressing.
+
+`workspace/register` tells the engine what a `workspaceId` means. Until this was added the
+catalogue presumed it in two places and defined it nowhere — §15.4 step 3 says to register a
+workspace with the engine, and `-32001` below is reserved for one "not registered" — which left
+every other workspace method unusable as specified. The engine canonicalises the root once here,
+so each later request is a resolve and a prefix comparison rather than a second canonicalisation.
+Registering an id that is already registered against the same path succeeds and changes nothing;
+against a **different** path it is an error, because two meanings for one identity is precisely
+what `workspaceId` exists to prevent. The registry is in memory and dies with the engine, so a
+client re-registers after a restart — `session/onRestart`'s `unpreserved` list is how it learns it
+must.
+
+`workspace/readDirectory` is **paged**. `limit` defaults to and is capped at 1000 entries, and
+`nextCursor` is present exactly when more entries follow. Entries are ordered
+`(type DESC, name ASC)` — directories first, then by name, byte-wise on the UTF-8 encoding — and
+**that ordering is part of the contract**, because the cursor is the last `name` returned. A page
+request therefore needs no server-side iterator, survives a restart, and can never duplicate or
+skip a stable entry the way an offset would. Changing the ordering later is a breaking change and
+would increment `protocolVersion`; adding the three optional fields did not.
 
 `encoding` is `utf8` or `base64`. Binary files are legal and are returned base64-encoded within
 the frame limit, or fetched over SFTP when larger.
@@ -599,9 +628,31 @@ CREATE VIRTUAL TABLE files_fts USING fts5(
     content='files',
     content_rowid='rowid'
 );
+
+-- An external-content FTS5 table stores only the index and reads column values back from
+-- `files`. SQLite does NOT keep it in step: without these triggers the table is created
+-- empty and stays empty, and every offline path search returns nothing -- quickly, and with
+-- no error. The 'delete' command row must carry the OLD values, because the index cannot
+-- read them back from a row that is already gone.
+CREATE TRIGGER files_fts_insert AFTER INSERT ON files BEGIN
+    INSERT INTO files_fts(rowid, relative_path, name)
+    VALUES (new.rowid, new.relative_path, new.name);
+END;
+
+CREATE TRIGGER files_fts_delete AFTER DELETE ON files BEGIN
+    INSERT INTO files_fts(files_fts, rowid, relative_path, name)
+    VALUES ('delete', old.rowid, old.relative_path, old.name);
+END;
+
+CREATE TRIGGER files_fts_update AFTER UPDATE ON files BEGIN
+    INSERT INTO files_fts(files_fts, rowid, relative_path, name)
+    VALUES ('delete', old.rowid, old.relative_path, old.name);
+    INSERT INTO files_fts(rowid, relative_path, name)
+    VALUES (new.rowid, new.relative_path, new.name);
+END;
 ```
 
-Three corrections are load-bearing:
+Four corrections are load-bearing:
 
 - **`file_id` is an opaque UUID**, not a hash of the path. Path-derived identity meant a rename
   produced a new identity and orphaned the cached blob. Renames now update `relative_path`,
@@ -610,6 +661,13 @@ Three corrections are load-bearing:
   which the original schema could not express because it stored only write time.
 - **`files_fts` exists.** Offline path search was specified as a leading-wildcard `LIKE`, which
   cannot use an index.
+- **`files_fts` has synchronisation triggers.** The table is declared `content='files'`, which makes
+  it *external-content*: it holds the index and reads the values back from `files`. SQLite does not
+  maintain such a table on its own, and the original schema declared the table with no triggers — so
+  as written the index was created empty and stayed empty, and offline path search returned no rows
+  with no error. Triggers rather than adapter code because they make correctness structural: no
+  write path can forget to update the index, since no write path is involved, and F004's watcher and
+  F012's offline writes are exactly the future writes that would forget.
 
 ## 5.3 Cache validity
 
@@ -2188,6 +2246,114 @@ injects.
 
 Reference hardware changing enough to invalidate the targets themselves, which reopens §1.4
 rather than this entry.
+
+---
+
+## A-BULKSIZE — The threshold at which a read leaves the control channel (2026-09-23)
+
+**Refines A-BULK, which established the rule without fixing a number.**
+
+**Decision.** A single read whose raw payload would exceed **512 KiB** is fetched beside the
+channel, over its own `ssh` invocation on the existing control master. Reads at or under it travel
+as `workspace/readFile` frames.
+
+**Rationale.** §4.1 caps a frame at 1 MiB and §4.6 gives the reason: one pipe is one queue, so a
+large response serialises ahead of every interactive request behind it. The threshold must
+therefore sit below the cap with room for what the encoding adds, not at it. `workspace/readFile`
+returns `{content, encoding, ...}`, and binary content is base64, which is four bytes out for every
+three in. 512 KiB raw becomes roughly 683 KiB encoded, leaving about 340 KiB inside the cap for the
+envelope, the path and the hash. A threshold of 768 KiB raw would encode to 1 MiB exactly and fail
+on the first frame carrying a path.
+
+This is also what reconciles two rules that read as if they conflict: that a large file must be
+readable in ranges so the developer sees the beginning immediately, and that anything which would
+not fit in a message must leave the channel. Both hold, because they govern different requests. The
+*first screen* is a small ranged read and goes through the channel. The *whole file* is bulk and
+goes beside it. §4.6 rule 3 describes exactly this.
+
+**Rejected — set the threshold at the cap.** Off by the base64 expansion, so it fails on precisely
+the files it was meant to permit.
+
+**Rejected — route every file read through bulk.** One code path instead of two, and it puts a
+second `ssh` invocation on the critical path of opening a small file. A-BULK measured that
+invocation as free in *authentication* terms over an existing master; it is not free in
+process-spawn terms, which is what a sub-250 ms open budget notices.
+
+### Reversal conditions
+
+A transport that multiplexes independent streams, which removes head-of-line blocking and with it
+the reason for the threshold.
+
+---
+
+## A-CACHECAP — Content above 8 MiB is read but never cached (2026-09-23)
+
+**Decision.** The client does not write content larger than **8 MiB** into the local cache. The
+tree entry still exists, the file is still listed and navigable, and opening it fetches it every
+time.
+
+**Rationale.** Opening a multi-gigabyte artifact must not attempt to cache it whole, and "large" is
+not a testable bound. A number is needed, and it is chosen against what the cache is *for*: §5.5 and
+§5.6 describe a projection of source code, and §11.4's prefetch names manifests and recently changed
+files. The largest real source files — generated parsers, vendored bundles, lock files — sit in the
+low single-digit megabytes. 8 MiB clears them with room while excluding the artifacts that would
+dominate disk for content nobody reads twice. Compressed at the budgeted ratio, one file at the cap
+occupies about 4 MiB, so the cap also bounds what a single entry can cost.
+
+**The consequence, stated rather than buried: a file above the cap is never available offline.** It
+is reported as unavailable rather than shown empty, but a developer expecting a 20 MiB generated
+file on a plane will not find it. That is the trade this number makes, and F012's offline editing
+inherits it — the cap is the answer to "what can be edited offline at all".
+
+**Rejected — no cap, cache everything read.** Simplest, and one clone of a repository with large
+binaries fills the disk with content the fourteen-day window will not reclaim for two weeks.
+
+**Rejected — a total-size budget with LRU eviction.** A better policy in the abstract, and it
+contradicts §5.5, which specifies time-based retention, and A-WORKSPACE, which declined quotas on
+the grounds that the developer's disk is theirs to manage. Changing that is a change to those
+decisions, not a threshold choice.
+
+**Rejected — derive the cap from free disk.** Makes behaviour depend on the machine, so the same
+action caches on one laptop and not another, and no test can assert either.
+
+### Reversal conditions
+
+Evidence that real workspaces routinely hold source files above the cap, or the arrival of a
+size-based budget in §5.5, which would replace this mechanism rather than tune it.
+
+---
+
+## A-DEADLINE — Interaction-path requests state their own limit (2026-09-23)
+
+**Decision.** A request on the interaction path carries an explicit timeout derived from the §1.4
+budget rather than taking the transport's 30 second default. The first instance is the hash
+confirmation that precedes serving cached content, which uses **2 seconds**; on expiry the wait
+ends, the developer is told the content could not be verified, and the cached copy is offered marked
+unverified.
+
+**Rationale.** The transport's default is sized for a request whose failure is an *error*. A
+confirmation's failure is a *fallback*, and thirty seconds of a window that cannot be dismissed is
+indistinguishable from the hang that showing the verification state exists to prevent.
+
+2 seconds is eight times §1.4's 250 ms uncached target. Tighter values were considered and rejected
+on a specific ground: a limit near the budget itself would expire routinely on ordinary
+transcontinental latency under load, so the "unverified" marker would appear during normal operation
+and developers would learn to ignore it — which costs more than the wait it saved. The marker has to
+mean something.
+
+**Rejected — take the transport default.** Free, and it makes a wedged engine look like a broken
+application for half a minute.
+
+**Rejected — set the limit equal to the interaction budget.** Correct as an expectation, wrong as a
+deadline: budgets are p99 targets and deadlines must tolerate the tail the budget excludes.
+
+**Rejected — no limit, with a cancel control.** Puts the work on the developer for a condition the
+system can detect itself.
+
+### Reversal conditions
+
+Measured confirmation round trips whose p99 approaches the limit, which would mean the limit is
+being set by the network rather than by the interface.
 
 ---
 

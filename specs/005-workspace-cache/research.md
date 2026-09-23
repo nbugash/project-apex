@@ -14,7 +14,14 @@ entirely technical selection and shape.
 
 ## The SQLite driver
 
-**Decision.** `rusqlite`, with the `bundled` and `fts5` features.
+**Decision.** `rusqlite`, with the `bundled` feature.
+
+> **Corrected during implementation (T007).** This entry originally said "the `bundled` and `fts5`
+> features". `fts5` is not a rusqlite cargo feature and the build refuses it by name. FTS5 is
+> compiled into the SQLite that `bundled` builds — verified by creating the §5.2 virtual table
+> against an in-memory connection before relying on it. The reasoning below is unchanged and is in
+> fact strengthened: FTS5 availability is a property of the bundled build rather than something a
+> feature flag requests, which is exactly why linking against a system SQLite would be a gamble.
 
 **Rationale.** Principle VIII names `rusqlite` explicitly as an example of a framework type that
 must stay inside adapters, which is a decision already taken in everything but the manifest.

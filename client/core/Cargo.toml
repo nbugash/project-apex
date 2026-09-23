@@ -41,6 +41,19 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 bytes = "1"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+# The projection (§5.2). `bundled` because FTS5 is a compile-time option in SQLite: a system
+# libsqlite3 built without it turns the schema's CREATE VIRTUAL TABLE into a runtime error on a
+# user's machine and nowhere else. Bundling makes the SQLite build a property of our artifact.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Content blobs, Zstd level 3 (§5.6).
+zstd = "0.13"
+# Cache validity is a hash comparison (FR-019) and runs on the interaction path for every open,
+# so the assembly/SHA-NI backends matter. build.rs keeps its own hand-rolled digest for a
+# different reason -- a build script cannot depend on a crate the build is producing.
+sha2 = "0.10"
+# WorkspaceProvider must be `dyn`: FR-001 requires that consumers cannot tell a local provider
+# from a remote one, so the concrete type is chosen at runtime. Native AFIT is not dyn-compatible.
+async-trait = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
