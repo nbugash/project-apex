@@ -61,22 +61,22 @@ this phase owns the mechanism.
 
 ### Shared wire types
 
-- [ ] T009 Define the workspace wire types in `protocol/src/wire.rs` per [data-model.md](./data-model.md) and [contracts/workspace-methods.md](./contracts/workspace-methods.md): `RegisterParams`/`RegisterResult`, `ReadDirectoryParams` (with `cursor`, `limit`)/`ReadDirectoryResult` (with `nextCursor`), `StatParams`/`StatResult`, `ReadFileParams`/`ReadFileResult`, and `FsEntryWire`. Serde-only, no logic — this crate links into both binaries
-- [ ] T010 [P] Add the §4.4 application error codes as named constants in `protocol/src/wire.rs`: `WORKSPACE_NOT_REGISTERED` (-32001), `PATH_REFUSED` (-32002), `NOT_FOUND` (-32003), `PAYLOAD_TOO_LARGE` (-32007), `WORKSPACE_GONE` (-32009). Both ends must agree on these and neither may write the integer inline
+- [X] T009 Define the workspace wire types in `protocol/src/wire.rs` per [data-model.md](./data-model.md) and [contracts/workspace-methods.md](./contracts/workspace-methods.md): `RegisterParams`/`RegisterResult`, `ReadDirectoryParams` (with `cursor`, `limit`)/`ReadDirectoryResult` (with `nextCursor`), `StatParams`/`StatResult`, `ReadFileParams`/`ReadFileResult`, and `FsEntryWire`. Serde-only, no logic — this crate links into both binaries
+- [X] T010 [P] Add the §4.4 application error codes as named constants in `protocol/src/wire.rs`: `WORKSPACE_NOT_REGISTERED` (-32001), `PATH_REFUSED` (-32002), `NOT_FOUND` (-32003), `PAYLOAD_TOO_LARGE` (-32007), `WORKSPACE_GONE` (-32009). Both ends must agree on these and neither may write the integer inline
 
 ### Client domain
 
-- [ ] T011 [P] Implement `WorkspaceId`, `Workspace`, `Location`, `FileId` and `Sha256` in `client/core/src/domain/workspace.rs` per [data-model.md](./data-model.md). `Sha256` renders lowercase hex on the wire and is constructed from bytes, never from a hand-written string
-- [ ] T012 Implement `RelPath` in `client/core/src/domain/workspace.rs` with lexical validation on construction: no `..` component, not absolute, normalised to a leading `/` with no trailing slash except the root. Include the unit tests for the rejection cases — this is the client half of FR-008, and its own docs must say it is not what makes the system safe
-- [ ] T013 Implement `FsEntry`, `FsMeta`, `ByteRange`, `FileChunk`, `Page` and `DirPage` in `client/core/src/domain/workspace.rs`. `FileChunk.sha256` is documented as the **whole file's** hash, never the range's (FR-021)
-- [ ] T014 [P] Implement `CacheEntry`, `Validity`, `Presentation`, `MaintenancePhase` and `RetentionWindow` in `client/core/src/domain/cache.rs` per [data-model.md](./data-model.md). `Validity` has exactly one constructor, taking two hashes — there must be no path by which git status can reach it (FR-020, §5.3)
+- [X] T011 [P] Implement `WorkspaceId`, `Workspace`, `Location`, `FileId` and `Sha256` in `client/core/src/domain/workspace.rs` per [data-model.md](./data-model.md). `Sha256` renders lowercase hex on the wire and is constructed from bytes, never from a hand-written string
+- [X] T012 Implement `RelPath` in `client/core/src/domain/workspace.rs` with lexical validation on construction: no `..` component, not absolute, normalised to a leading `/` with no trailing slash except the root. Include the unit tests for the rejection cases — this is the client half of FR-008, and its own docs must say it is not what makes the system safe
+- [X] T013 Implement `FsEntry`, `FsMeta`, `ByteRange`, `FileChunk`, `Page` and `DirPage` in `client/core/src/domain/workspace.rs`. `FileChunk.sha256` is documented as the **whole file's** hash, never the range's (FR-021)
+- [X] T014 [P] Implement `CacheEntry`, `Validity`, `Presentation`, `MaintenancePhase` and `RetentionWindow` in `client/core/src/domain/cache.rs` per [data-model.md](./data-model.md). `Validity` has exactly one constructor, taking two hashes — there must be no path by which git status can reach it (FR-020, §5.3)
 
 ### Client ports
 
-- [ ] T015 [P] Define the `WorkspaceProvider` port in `client/core/src/application/ports/workspace_provider.rs` with `#[async_trait]` and the full §6.1 method set, plus `ProviderError` with variants `NotFound`, `Refused`, `UnknownWorkspace`, `WorkspaceGone`, `Offline`, `TooLarge`, `Transport` and `Unsupported { owner }`. **`UnknownWorkspace` and `WorkspaceGone` are separate variants, not one with a flag** — they lead to opposite responses (re-register versus tell the developer), and a flag is something a caller can forget to read. Signatures from [design.md](./design.md)
-- [ ] T016 [P] Define the `WorkspaceCache` port in `client/core/src/application/ports/workspace_cache.rs`. **`put_content` and `touch` return `StoreOutcome`, not `Result`** — a `Result` invites `?`, and `?` is how FR-034 gets violated by reflex rather than by decision. Document that on the trait
-- [ ] T017 [P] Define the `BulkTransfer` port in `client/core/src/application/ports/bulk_transfer.rs`, returning bytes with no integrity claim: the caller compares against the hash from `stat`
-- [ ] T018 [P] Define the `Clock` port in `client/core/src/application/ports/clock.rs` and implement `SystemClock` in `client/core/src/adapters/outbound/system_clock.rs`
+- [X] T015 [P] Define the `WorkspaceProvider` port in `client/core/src/application/ports/workspace_provider.rs` with `#[async_trait]` and the full §6.1 method set, plus `ProviderError` with variants `NotFound`, `Refused`, `UnknownWorkspace`, `WorkspaceGone`, `Offline`, `TooLarge`, `Transport` and `Unsupported { owner }`. **`UnknownWorkspace` and `WorkspaceGone` are separate variants, not one with a flag** — they lead to opposite responses (re-register versus tell the developer), and a flag is something a caller can forget to read. Signatures from [design.md](./design.md)
+- [X] T016 [P] Define the `WorkspaceCache` port in `client/core/src/application/ports/workspace_cache.rs`. **`put_content` and `touch` return `StoreOutcome`, not `Result`** — a `Result` invites `?`, and `?` is how FR-034 gets violated by reflex rather than by decision. Document that on the trait
+- [X] T017 [P] Define the `BulkTransfer` port in `client/core/src/application/ports/bulk_transfer.rs`, returning bytes with no integrity claim: the caller compares against the hash from `stat`
+- [X] T018 [P] Define the `Clock` port in `client/core/src/application/ports/clock.rs` and implement `SystemClock` in `client/core/src/adapters/outbound/system_clock.rs`
 
 ### Engine — path safety first (fail-first, Principle VII)
 

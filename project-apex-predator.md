@@ -507,6 +507,14 @@ would increment `protocolVersion`; adding the three optional fields did not.
 `encoding` is `utf8` or `base64`. Binary files are legal and are returned base64-encoded within
 the frame limit, or fetched over SFTP when larger.
 
+**Field names in the tables above are written camelCase for readability; the wire carries
+snake_case.** `workspaceId` is `workspace_id` in a frame, `relativePath` is `relative_path`,
+`nextCursor` is `next_cursor`. The two ends share one definition of these messages in the
+`protocol` crate, so they cannot disagree with each other — but a third party implementing this
+protocol from the tables alone would send names the engine does not recognise, which is why the
+mapping is stated rather than left to be inferred. F002 established the convention with
+`clientVersion` as `client_version`; this section now says so.
+
 `writeFile` carries `baseSha256` — the hash the client believed current when it began editing.
 The engine rejects a mismatch with `-32004` rather than overwriting. A write is not complete
 until its response arrives; the client MUST NOT report a save as successful on send.
