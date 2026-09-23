@@ -499,10 +499,18 @@ must.
 `workspace/readDirectory` is **paged**. `limit` defaults to and is capped at 1000 entries, and
 `nextCursor` is present exactly when more entries follow. Entries are ordered
 `(type DESC, name ASC)` — directories first, then by name, byte-wise on the UTF-8 encoding — and
-**that ordering is part of the contract**, because the cursor is the last `name` returned. A page
-request therefore needs no server-side iterator, survives a restart, and can never duplicate or
-skip a stable entry the way an offset would. Changing the ordering later is a breaking change and
-would increment `protocolVersion`; adding the three optional fields did not.
+**that ordering is part of the contract**, because the cursor is derived from it. A page request
+therefore needs no server-side iterator, survives a restart, and can never duplicate or skip a
+stable entry the way an offset would. Changing the ordering later is a breaking change and would
+increment `protocolVersion`; adding the three optional fields did not.
+
+`nextCursor` is an **opaque token**, not a bare filename, and a client MUST treat it as opaque:
+pass back what was received and compare it against nothing. It encodes the whole ordering key,
+because encoding only the name is wrong the moment a directory and a file interleave — with
+directories `a` and `z` and a file `b` the listing is `a, z, b`, and a name-only cursor resuming
+after `z` finds no later *name* and drops `b` entirely. That defect is invisible to any test whose
+fixture holds entries of a single type, which is how it survived until an implementation exercised
+a mixed directory.
 
 `encoding` is `utf8` or `base64`. Binary files are legal and are returned base64-encoded within
 the frame limit, or fetched over SFTP when larger.

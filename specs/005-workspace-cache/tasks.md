@@ -129,13 +129,13 @@ listings requested equals the number of folders actually expanded, not the numbe
 ### Tests for User Story 1
 
 - [ ] T037 [P] [US1] Write `client/core/tests/workspace_tree.rs` covering US1 scenarios 1–4 against a recording fake transport: opening fetches exactly one listing; an unexpanded folder has fetched none; collapse-and-re-expand fetches none; expanding ten folders of a hundred-thousand-entry tree fetches ten. **Count calls at the fake, never grep a log** — a log-shape change would silently pass a test that greps
-- [ ] T038 [P] [US1] Write `engine/tests/read_directory.rs` against a real temp tree: shallow listing only, the contractual `(type DESC, name ASC)` ordering, paging at the 1000 limit, cursor resumption after the last name, and that a page request never recurses
+- [X] T038 [P] [US1] Write `engine/tests/read_directory.rs` against a real temp tree: shallow listing only, the contractual `(type DESC, name ASC)` ordering, paging at the 1000 limit, cursor resumption after the last name, and that a page request never recurses
 - [ ] T039 [P] [US1] Write `tests/e2e/workspace-tree.spec.ts` driving the real interface: open a workspace, expand folders, assert the tree renders and captures land in `reports/screenshots/${OS}/F003/`
 
 ### Implementation for User Story 1
 
-- [ ] T040 [US1] Implement the `ReadDirectory` use case in `engine/src/application/use_cases/workspace.rs`: resolve through `ResolvedPath`, list immediate children only, sort `(type DESC, name ASC)`, page at `limit` (default and max 1000), and return `nextCursor` exactly when more follow
-- [ ] T041 [US1] Wire `workspace/readDirectory` into `engine/src/adapters/inbound/rpc.rs`, mapping refusals to `-32002`, missing paths to `-32003` and unknown workspaces to `-32001`
+- [X] T040 [US1] Implement the `ReadDirectory` use case in `engine/src/application/use_cases/workspace.rs`: resolve through `ResolvedPath`, list immediate children only, sort `(type DESC, name ASC)`, page at `limit` (default and max 1000), and return `nextCursor` exactly when more follow
+- [X] T041 [US1] Wire `workspace/readDirectory` into `engine/src/adapters/inbound/rpc.rs`, mapping refusals to `-32002`, missing paths to `-32003` and unknown workspaces to `-32001`
 - [ ] T042 [US1] Implement `RemoteWorkspaceProvider::read_directory` in `client/core/src/adapters/outbound/remote_workspace.rs`. **One provider call issues at most one protocol request** (R1) — no fan-out, no retry, no prefetch, which is what makes SC-002 measure what it claims to
 - [ ] T043 [US1] Implement `list_children` and `put_listing` in `client/core/src/adapters/outbound/sqlite/mod.rs`. `put_listing` replaces a parent's children atomically and preserves `file_id` for entries that remain **under the same name**, so their cached content survives with them. **It must not claim to handle renames** — a re-listing sees one name gone and another present, with no identity linking them, so the vanished entry's content cascades away and the file is re-cached on next open (FR-022a). The entry stays listed throughout (FR-022b). See [contracts/cache.md](./contracts/cache.md) C9
 - [ ] T044 [US1] Implement `CachedWorkspace::read_directory` in `client/core/src/application/use_cases/cached_workspace.rs`: consult the projection first, issue exactly one shallow request on a miss, persist, return (FR-014, FR-015, FR-016, §10.1)
@@ -165,8 +165,8 @@ served — then reopen an unchanged file and confirm nothing was transferred.
 
 ### Implementation for User Story 2
 
-- [ ] T052 [US2] Implement the `Stat` and `ReadFile` use cases in `engine/src/application/use_cases/workspace.rs`: `stat` hashes the file with `sha2` and omits `sha256` for a directory; `read_file` serves ranges and refuses anything above 512 KiB
-- [ ] T053 [US2] Wire `workspace/stat` and `workspace/readFile` into `engine/src/adapters/inbound/rpc.rs` with base64 content and `encoding: "base64"` always — there is no utf8 path (FR-003)
+- [X] T052 [US2] Implement the `Stat` and `ReadFile` use cases in `engine/src/application/use_cases/workspace.rs`: `stat` hashes the file with `sha2` and omits `sha256` for a directory; `read_file` serves ranges and refuses anything above 512 KiB
+- [X] T053 [US2] Wire `workspace/stat` and `workspace/readFile` into `engine/src/adapters/inbound/rpc.rs` with base64 content and `encoding: "base64"` always — there is no utf8 path (FR-003)
 - [ ] T054 [US2] Implement `RemoteWorkspaceProvider::stat` and `::read_file` in `client/core/src/adapters/outbound/remote_workspace.rs`, routing reads above the threshold to `BulkTransfer` rather than chunking them through the channel (FR-025, A-BULK, §4.6)
 - [ ] T055 [US2] Implement the bulk adapter in `client/core/src/adapters/outbound/bulk/mod.rs` as a second `ssh` invocation on the existing control master. **It must pass `ControlMaster=no`** — F002 learned that a bulk invocation which becomes the master backgrounds itself holding the inherited stdout pipe and then waits forever for an EOF that cannot arrive
 - [ ] T056 [US2] Implement `lookup` and `put_content` in `client/core/src/adapters/outbound/sqlite/mod.rs`: the §5.4 join for lookup; for writes, **hash first and compress second** (§5.6, C1), refuse content above the 8 MiB cap with `StoreOutcome::NotEligible`, and set `is_cached` and `last_accessed_at` in the same transaction as the blob (invariants 3 and 9)
@@ -194,7 +194,7 @@ confirm each reads back its own content.
 ### Tests for User Story 3
 
 - [ ] T061 [P] [US3] Write `client/core/tests/workspace_registry.rs` against a real database file: two workspaces with identical display names each read back their own content with zero cross-reads (US3.1, FR-010, SC-007); re-opening attaches rather than duplicating (FR-011, US3.2); deleting removes content **and** tree (FR-012, US3.3); and **the projection survives a restart** — close the cache, reopen it from the same path, and confirm the tree and content are still there (FR-017). The last is the only assertion that a persisted store is actually persisted, and nothing else in the suite would fail if it were opened in memory
-- [ ] T062 [P] [US3] Write `engine/tests/register.rs`: re-registering the same id against the same path is idempotent; against a different path is an error; a path that is not a directory or is unreadable is refused at registration, naming the workspace rather than a file inside it
+- [X] T062 [P] [US3] Write `engine/tests/register.rs`: re-registering the same id against the same path is idempotent; against a different path is an error; a path that is not a directory or is unreadable is refused at registration, naming the workspace rather than a file inside it
 
 ### Implementation for User Story 3
 

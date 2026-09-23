@@ -111,3 +111,204 @@ impl RequestRefusal {
         }
     }
 }
+
+// ---- The read path (§4.8). Every one starts at `resolve_request`, which is the only way to
+// obtain a `ResolvedPath` — so the containment check cannot be skipped. ----
+
+use apex_protocol::wire::{EntryKind, FsEntryWire, MAX_DIRECTORY_PAGE, MAX_INLINE_READ};
+
+/// One page of a directory's immediate children.
+///
+/// Shallow, ordered `(type DESC, name ASC)` byte-wise on UTF-8, and paged. The ordering is
+/// contractual because the cursor is the last name returned, so a page request needs no
+/// server-side iterator and can never duplicate or skip a stable entry.
+pub fn read_directory(
+    fs: &dyn FileSystem,
+    path: &ResolvedPath,
+    cursor: Option<&str>,
+    limit: Option<u32>,
+) -> Result<(Vec<FsEntryWire>, Option<String>), std::io::Error> {
+    let mut items: Vec<FsEntryWire> = fs
+        .read_dir(path.as_path())?
+        .into_iter()
+        .map(|e| FsEntryWire {
+            name: e.name,
+            kind: if e.is_directory {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            },
+            size: e.size,
+            modified: e.modified,
+        })
+        .collect();
+
+    items.sort_by(|a, b| {
+        let dir = |e: &FsEntryWire| matches!(e.kind, EntryKind::Directory);
+        dir(b)
+            .cmp(&dir(a))
+            .then_with(|| a.name.as_bytes().cmp(b.name.as_bytes()))
+    });
+
+    if let Some(after) = cursor {
+        // "Strictly after this token, in this order." Resumable with no server state, and a
+        // cursor whose entry has since been deleted resumes where that entry would have sorted
+        // rather than failing.
+        //
+        // The token encodes the **whole** ordering key, not just the name. Comparing on the name
+        // alone is subtly wrong the moment a directory and a file interleave: with directories
+        // `a` and `z` and a file `b`, the listing is `a, z, b`, and a name-only cursor after `z`
+        // finds no later name and drops `b` entirely. That bug is invisible in any fixture whose
+        // entries are all the same type, which is exactly what the first test fixture was.
+        let at = items
+            .iter()
+            .position(|e| page_cursor(e).as_str() > after)
+            .unwrap_or(items.len());
+        items.drain(..at);
+    }
+
+    let limit = limit.unwrap_or(MAX_DIRECTORY_PAGE).min(MAX_DIRECTORY_PAGE) as usize;
+    let more = items.len() > limit;
+    items.truncate(limit);
+    let next = more.then(|| items.last().map(page_cursor)).flatten();
+    Ok((items, next))
+}
+
+/// The pagination cursor for an entry: an opaque token that sorts exactly as the listing does.
+///
+/// `0` for directories and `1` for files, so a plain string comparison reproduces
+/// `(type DESC, name ASC)`. The separator is a unit separator, which cannot occur in a filename
+/// this engine will list — `read_dir` drops names that are not valid UTF-8, and a `\x1f` in a
+/// name would sort within its own type group rather than across it.
+pub fn page_cursor(e: &FsEntryWire) -> String {
+    let group = if matches!(e.kind, EntryKind::Directory) {
+        '0'
+    } else {
+        '1'
+    };
+    format!("{group}\u{1f}{}", e.name)
+}
+
+/// Metadata, with the whole file's digest.
+///
+/// The digest is the sole input to cache validity (§5.3), and it is absent for a directory:
+/// there is nothing to hash and no caller that needs it.
+pub fn stat(
+    fs: &dyn FileSystem,
+    path: &ResolvedPath,
+) -> Result<apex_protocol::wire::StatResult, std::io::Error> {
+    let m = fs.metadata(path.as_path())?;
+    let sha256 = if m.is_directory {
+        None
+    } else {
+        // Hashing costs a read of the file. The client only stats what it may cache, and
+        // A-CACHECAP bounds that, so this is bounded too.
+        let bytes = fs.read_range(path.as_path(), 0, u64::MAX)?;
+        Some(hex_digest(&bytes))
+    };
+    Ok(apex_protocol::wire::StatResult {
+        kind: if m.is_directory {
+            EntryKind::Directory
+        } else {
+            EntryKind::File
+        },
+        size: m.size,
+        modified: m.modified,
+        sha256,
+    })
+}
+
+/// Why a read could not be served inline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadRefusal {
+    /// Above A-BULKSIZE's threshold. The caller routes to the bulk path instead of the engine
+    /// truncating silently, because a silent truncation is a corrupt file the caller cannot see.
+    TooLarge { total_size: u64 },
+}
+
+/// A ranged read, refused above the inline threshold.
+pub fn read_file(
+    fs: &dyn FileSystem,
+    path: &ResolvedPath,
+    offset: Option<u64>,
+    length: Option<u64>,
+) -> Result<Result<apex_protocol::wire::ReadFileResult, ReadRefusal>, std::io::Error> {
+    let m = fs.metadata(path.as_path())?;
+    let offset = offset.unwrap_or(0);
+    let requested = length.unwrap_or_else(|| m.size.saturating_sub(offset));
+    if requested > MAX_INLINE_READ {
+        return Ok(Err(ReadRefusal::TooLarge { total_size: m.size }));
+    }
+
+    let bytes = fs.read_range(path.as_path(), offset, requested)?;
+    // The digest describes the WHOLE file, never the returned range: a caller assembling several
+    // ranges compares it across them, and a change means the file moved underneath the read.
+    let whole = fs.read_range(path.as_path(), 0, u64::MAX)?;
+    Ok(Ok(apex_protocol::wire::ReadFileResult {
+        content: base64_encode(&bytes),
+        // Always base64. There is no utf8 path: assuming text corrupts binary content silently,
+        // and a method that sometimes returns text makes every caller branch on it.
+        encoding: "base64".into(),
+        sha256: hex_digest(&whole),
+        total_size: m.size,
+    }))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(bytes);
+    format!("{:x}", h.finalize())
+}
+
+/// Base64, without a dependency for sixteen lines of table lookup.
+fn base64_encode(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18 & 63) as usize] as char);
+        out.push(T[(n >> 12 & 63) as usize] as char);
+        out.push(if c.len() > 1 {
+            T[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_matches_the_known_vectors() {
+        // RFC 4648 §10. A hand-rolled encoder with no test is a silent corruption waiting to
+        // happen, and it would corrupt exactly the binary content FR-003 exists to protect.
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        // Bytes with the high bit set: the case a text-assuming encoder mangles.
+        assert_eq!(base64_encode(&[0xff, 0xfe, 0xfd]), "//79");
+        assert_eq!(base64_encode(&[0x00, 0x00, 0x00]), "AAAA");
+    }
+
+    #[test]
+    fn the_digest_is_the_known_sha256() {
+        assert_eq!(
+            hex_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+}

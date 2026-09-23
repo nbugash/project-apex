@@ -20,10 +20,10 @@ versioning rule, adding optional parameters and result fields does **not** incre
 |---|---|---|---|
 | param | `workspaceId` | string | yes |
 | param | `relativePath` | string | yes |
-| param | `cursor` | string | **no — new** |
+| param | `cursor` | string (opaque token) | **no — new** |
 | param | `limit` | integer | **no — new** |
 | result | `items[]` | `{name, type, size, modified}` | yes |
-| result | `nextCursor` | string | **no — new** |
+| result | `nextCursor` | string (opaque token) | **no — new** |
 
 ### Guarantees
 
@@ -34,7 +34,13 @@ versioning rule, adding optional parameters and result fields does **not** incre
    **The ordering is part of the contract because the cursor depends on it.** Changing it later is
    a breaking change and *would* increment `protocolVersion`.
 3. **Paged.** At most `limit` entries, default and maximum 1000 (FR-024). `nextCursor` is present
-   exactly when more entries follow, and is the `name` of the last entry returned.
+   exactly when more entries follow, and is an **opaque token** derived from the last entry
+   returned. A client passes it back unchanged and compares it against nothing.
+
+   It encodes the whole ordering key rather than just the name. A name-only cursor breaks as soon
+   as a directory and a file interleave: with directories `a` and `z` and a file `b` the listing is
+   `a, z, b`, and resuming after `z` finds no later *name*, dropping `b`. Found by implementation,
+   because every fixture that could detect it needs entries of more than one type.
 4. **Resumable without server state.** A request carrying `cursor` returns the entries that sort
    strictly after it. The engine keeps no iterator, so a page may be requested at any time, in any
    order, after any restart.

@@ -4,6 +4,7 @@
 //! input into use-case input and results and errors back; it holds no business rules
 //! (Principle VIII). Behaviour is F002's, unchanged by the move.
 
+use crate::application::use_cases::workspace;
 use crate::handshake;
 use crate::session::{self, SessionRegistry};
 use apex_protocol::framing::FrameCodec;
@@ -103,6 +104,119 @@ pub fn dispatch(
                         let (code, message) =
                             crate::application::use_cases::workspace::RequestRefusal::Root(e)
                                 .wire();
+                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "workspace/readDirectory" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::ReadDirectoryParams>(params) {
+                Ok(req) => match workspace::resolve_request(
+                    roots,
+                    fs,
+                    &req.workspace_id.0,
+                    &req.relative_path,
+                ) {
+                    Ok(path) => {
+                        match workspace::read_directory(fs, &path, req.cursor.as_deref(), req.limit)
+                        {
+                            Ok((items, next_cursor)) => reply_or_nothing(encode_result(
+                                codec,
+                                &id,
+                                &apex_protocol::wire::ReadDirectoryResult { items, next_cursor },
+                            )),
+                            Err(e) => reply_or_nothing(encode_error(
+                                codec,
+                                &id,
+                                apex_protocol::wire::codes::NOT_FOUND,
+                                &e.to_string(),
+                            )),
+                        }
+                    }
+                    Err(refusal) => {
+                        let (code, message) = refusal.wire();
+                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "workspace/stat" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::StatParams>(params) {
+                Ok(req) => match workspace::resolve_request(
+                    roots,
+                    fs,
+                    &req.workspace_id.0,
+                    &req.relative_path,
+                ) {
+                    Ok(path) => match workspace::stat(fs, &path) {
+                        Ok(result) => reply_or_nothing(encode_result(codec, &id, &result)),
+                        Err(e) => reply_or_nothing(encode_error(
+                            codec,
+                            &id,
+                            apex_protocol::wire::codes::NOT_FOUND,
+                            &e.to_string(),
+                        )),
+                    },
+                    Err(refusal) => {
+                        let (code, message) = refusal.wire();
+                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "workspace/readFile" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::ReadFileParams>(params) {
+                Ok(req) => match workspace::resolve_request(
+                    roots,
+                    fs,
+                    &req.workspace_id.0,
+                    &req.relative_path,
+                ) {
+                    Ok(path) => match workspace::read_file(fs, &path, req.offset, req.length) {
+                        Ok(Ok(result)) => reply_or_nothing(encode_result(codec, &id, &result)),
+                        // Refused rather than truncated: a silent truncation is a corrupt file
+                        // the caller cannot see. The client routes to the bulk path instead.
+                        Ok(Err(workspace::ReadRefusal::TooLarge { total_size })) => {
+                            reply_or_nothing(encode_error(
+                                codec,
+                                &id,
+                                INVALID_PARAMS,
+                                &format!(
+                                    "{total_size} bytes exceeds the inline read limit; use the \
+                                     bulk path (A-BULKSIZE)"
+                                ),
+                            ))
+                        }
+                        Err(e) => reply_or_nothing(encode_error(
+                            codec,
+                            &id,
+                            apex_protocol::wire::codes::NOT_FOUND,
+                            &e.to_string(),
+                        )),
+                    },
+                    Err(refusal) => {
+                        let (code, message) = refusal.wire();
                         reply_or_nothing(encode_error(codec, &id, code, &message))
                     }
                 },
@@ -298,7 +412,7 @@ mod tests {
             &roots,
             &fs,
             &codec,
-            r#"{"jsonrpc":"2.0","id":"9","method":"workspace/readFile","params":{}}"#,
+            r#"{"jsonrpc":"2.0","id":"9","method":"workspace/writeFile","params":{}}"#,
         ) else {
             panic!("expected a reply")
         };
@@ -308,7 +422,7 @@ mod tests {
             v["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("workspace/readFile"),
+                .contains("workspace/writeFile"),
             "the refusal must name what was asked for"
         );
     }

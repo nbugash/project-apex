@@ -165,17 +165,27 @@ impl WorkspaceProvider for FakeWorkspace {
             })
             .collect();
         items.sort_by(FsEntry::listing_order);
+        // The same opaque token the engine produces, so the double cannot disagree with the
+        // thing it stands in for. A fake with its own pagination scheme is a fake that hides
+        // paging bugs.
+        let token = |e: &FsEntry| {
+            let group = if matches!(e.kind, EntryKind::Directory) {
+                '0'
+            } else {
+                '1'
+            };
+            format!("{group}\u{1f}{}", e.name)
+        };
         if let Some(after) = &page.cursor {
             let at = items
                 .iter()
-                .position(|e| &e.name == after)
-                .map(|i| i + 1)
-                .unwrap_or(0);
+                .position(|e| token(e).as_str() > after.as_str())
+                .unwrap_or(items.len());
             items.drain(..at);
         }
         let more = items.len() > page.limit as usize;
         items.truncate(page.limit as usize);
-        let next_cursor = more.then(|| items.last().map(|e| e.name.clone())).flatten();
+        let next_cursor = more.then(|| items.last().map(token)).flatten();
         Ok(DirPage { items, next_cursor })
     }
 
