@@ -304,6 +304,64 @@ mod tests {
         assert_eq!(base64_encode(&[0x00, 0x00, 0x00]), "AAAA");
     }
 
+    fn entry(name: &str, dir: bool) -> FsEntryWire {
+        FsEntryWire {
+            name: name.into(),
+            kind: if dir {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            },
+            size: 0,
+            modified: 0,
+        }
+    }
+
+    #[test]
+    fn the_cursor_sorts_exactly_as_the_listing_does() {
+        // Directories before files, then byte-wise by name. A plain string comparison on the
+        // token must reproduce that, because the token IS how a page boundary is found.
+        let mut tokens: Vec<String> = [
+            entry("b.rs", false),
+            entry("Z", true),
+            entry("a.rs", false),
+            entry("a", true),
+        ]
+        .iter()
+        .map(page_cursor)
+        .collect();
+        tokens.sort();
+        let names: Vec<&str> = tokens.iter().map(|t| &t[2..]).collect();
+        assert_eq!(
+            names,
+            vec!["Z", "a", "a.rs", "b.rs"],
+            "sorting the tokens must give the listing order; if it did not, a page would resume \
+             in a different place than it left off"
+        );
+    }
+
+    #[test]
+    fn a_directory_token_always_precedes_a_file_token() {
+        // The case a name-only cursor got wrong: a file whose name sorts before a directory's.
+        let dir = page_cursor(&entry("zzz", true));
+        let file = page_cursor(&entry("aaa", false));
+        assert!(
+            dir < file,
+            "a file named `aaa` must still come after a directory named `zzz`, or paging across \
+             the type boundary loses entries"
+        );
+    }
+
+    #[test]
+    fn tokens_are_distinct_for_a_directory_and_a_file_of_the_same_name() {
+        // A directory and a file can share a name on some filesystems. If their tokens
+        // collided, one would be skipped when resuming.
+        assert_ne!(
+            page_cursor(&entry("same", true)),
+            page_cursor(&entry("same", false))
+        );
+    }
+
     #[test]
     fn the_digest_is_the_known_sha256() {
         assert_eq!(

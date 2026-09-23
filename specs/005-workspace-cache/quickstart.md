@@ -70,7 +70,7 @@ C1–C9 in [contracts/cache.md](./contracts/cache.md), against both the real SQL
 in-memory fake, so a guarantee cannot be satisfied by one and not the other.
 
 Two of C1–C9 are worth watching: **C3**, which fills the disk and asserts the read still returns
-bytes (FR-034), and **C9**, which asserts that `put_listing` does *not* claim to recognise renames.
+bytes (FR-034), and **C9**, which asserts that `put_listing` does _not_ claim to recognise renames.
 
 ---
 
@@ -83,13 +83,13 @@ cargo test -p apex-engine --test read_directory
 
 What it proves:
 
-| Scenario | Assertion |
-|---|---|
-| US1.1 | Opening a workspace issues **exactly one** `workspace/readDirectory` |
-| US1.2 | An unexpanded folder has issued none |
-| US1.3 | Collapse and re-expand issues none |
-| US1.4 | Expanding ten folders of a hundred-thousand-file tree issues ten |
-| US1.5 | The tree is keyboard-focusable, shows the design system's ring, and expands from the keyboard |
+| Scenario | Assertion                                                                                     |
+| -------- | --------------------------------------------------------------------------------------------- |
+| US1.1    | Opening a workspace issues **exactly one** `workspace/readDirectory`                          |
+| US1.2    | An unexpanded folder has issued none                                                          |
+| US1.3    | Collapse and re-expand issues none                                                            |
+| US1.4    | Expanding ten folders of a hundred-thousand-file tree issues ten                              |
+| US1.5    | The tree is keyboard-focusable, shows the design system's ring, and expands from the keyboard |
 
 The count comes from a recording fake transport, not from a log. A test that greps a log for
 request lines passes when the logging changes shape; a test that counts calls does not.
@@ -109,21 +109,21 @@ cargo test -p apex-shell --test cache_validity
 cargo test -p apex-engine --test read_file
 ```
 
-| Scenario | Assertion |
-|---|---|
-| US2.1 | Matching hash: zero content bytes transferred |
-| US2.2 | Changed hash: fresh content fetched, cache replaced |
-| US2.5 | File marked `MODIFIED` in git, content unchanged: **served from cache** |
-| US2.6 | File larger than one message: arrives in ranges, first range returned before the last |
-| US2.7 | A rename the projection is **told about**: same `file_id`, same blob, zero bytes transferred |
-| US2.8 | A rename only **observed** in a re-listing: content dropped, file still listed, no error |
-| US2.9 | Rendered without colour, verifying/unverified/possibly-stale/current stay distinguishable |
+| Scenario | Assertion                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------- |
+| US2.1    | Matching hash: zero content bytes transferred                                                |
+| US2.2    | Changed hash: fresh content fetched, cache replaced                                          |
+| US2.5    | File marked `MODIFIED` in git, content unchanged: **served from cache**                      |
+| US2.6    | File larger than one message: arrives in ranges, first range returned before the last        |
+| US2.7    | A rename the projection is **told about**: same `file_id`, same blob, zero bytes transferred |
+| US2.8    | A rename only **observed** in a re-listing: content dropped, file still listed, no error     |
+| US2.9    | Rendered without colour, verifying/unverified/possibly-stale/current stay distinguishable    |
 
 US2.5 is the one worth watching run. It is the scenario that fails if anyone ever wires git status
 into validity, and §5.3 says that mistake was already made once in this project's history.
 
 US2.7 and US2.8 are a pair and only mean something together. The first proves the opaque `file_id`
-does what A-B5 bought it for; the second proves nothing *claims* it works where it cannot. A
+does what A-B5 bought it for; the second proves nothing _claims_ it works where it cannot. A
 re-listing sees one name gone and another present with nothing linking them, so the content is
 refetched and the file stays in the tree. An implementation that quietly dropped the file, or one
 that pretended to match renames by hashing every entry, fails one of the two.
@@ -136,11 +136,11 @@ that pretended to match renames by hashing every entry, fails one of the two.
 cargo test -p apex-shell --test cache_verification
 ```
 
-| Assertion | Requirement |
-|---|---|
-| `Verifying` is published before the stat is issued and stays published until it resolves | FR-021b |
+| Assertion                                                                                 | Requirement      |
+| ----------------------------------------------------------------------------------------- | ---------------- |
+| `Verifying` is published before the stat is issued and stays published until it resolves  | FR-021b          |
 | No bytes reach the caller before confirmation, across every ordering the fake can produce | FR-021a, SC-004a |
-| A fake engine that never answers ends the wait at the limit and yields `Unverified` | FR-021c, SC-004b |
+| A fake engine that never answers ends the wait at the limit and yields `Unverified`       | FR-021c, SC-004b |
 
 The wedged-engine case uses the fake's "never answer" switch and a fake clock, so it completes in
 microseconds rather than in two seconds of real time. A test that actually sleeps for the timeout
@@ -198,21 +198,21 @@ cargo test -p apex-shell --test cache_maintenance
 Runs against a **real database file** in a temp directory, because the invariants being checked are
 about SQLite's behaviour and a fake would be asserting our own beliefs about it.
 
-| Assertion | Requirement |
-|---|---|
-| Content aged past fourteen days is removed; every `files` row survives | FR-026, FR-027, SC-008 |
-| Zero evictions occur while a workspace is open | FR-026a, SC-008a |
-| An evicted file re-opens with no error surfaced | FR-029 |
-| A v0 database migrates to v1 with content preserved | FR-018, SC-013 |
-| A migration killed mid-step leaves the **old** version, intact and readable | FR-018c, M2 |
-| A migration that fails deterministically discards and rebuilds, and says so | FR-018b, SC-013b |
-| Progress is published at least once per second — asserted on **count and spacing** | FR-018a, SC-013a |
-| Rendered without colour, migrating/rebuilding/evicting stay distinguishable (US4.8) | FR-039, SC-016 |
+| Assertion                                                                           | Requirement            |
+| ----------------------------------------------------------------------------------- | ---------------------- |
+| Content aged past fourteen days is removed; every `files` row survives              | FR-026, FR-027, SC-008 |
+| Zero evictions occur while a workspace is open                                      | FR-026a, SC-008a       |
+| An evicted file re-opens with no error surfaced                                     | FR-029                 |
+| A v0 database migrates to v1 with content preserved                                 | FR-018, SC-013         |
+| A migration killed mid-step leaves the **old** version, intact and readable         | FR-018c, M2            |
+| A migration that fails deterministically discards and rebuilds, and says so         | FR-018b, SC-013b       |
+| Progress is published at least once per second — asserted on **count and spacing**  | FR-018a, SC-013a       |
+| Rendered without colour, migrating/rebuilding/evicting stay distinguishable (US4.8) | FR-039, SC-016         |
 
 Ageing uses a fake clock. The interrupted-migration case opens the file, begins a step and drops
 the connection without committing, which is what a kill looks like to SQLite.
 
-The last row is the one that regressed twice during specification: an assertion that *a* progress
+The last row is the one that regressed twice during specification: an assertion that _a_ progress
 message was sent passes for an upgrade that then hangs silently. The test counts reports and
 measures the gaps between them.
 
@@ -230,7 +230,7 @@ The connection source is a fake set to disconnected. Assertions: path search ret
 produces a stated reason rather than an empty document.
 
 "Zero requests attempted" is counted at the transport fake. Asserting only that the search
-*succeeded* would pass for an implementation that tried the network, timed out, and fell back.
+_succeeded_ would pass for an implementation that tried the network, timed out, and fell back.
 
 `fts_sync` is the one to watch. `files_fts` is an **external-content** FTS5 table, which SQLite does
 not maintain on its own — the index is kept in step by three triggers that this feature had to add
@@ -272,11 +272,11 @@ npm run e2e
 
 Linux only, per A-E2E. Three new specs:
 
-| Spec | Covers |
-|---|---|
-| `tests/e2e/workspace-tree.spec.ts` | US1 through the real interface |
+| Spec                                   | Covers                                                             |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| `tests/e2e/workspace-tree.spec.ts`     | US1 through the real interface                                     |
 | `tests/e2e/cache-verification.spec.ts` | FR-021b's indicator is visible while a confirmation is outstanding |
-| `tests/e2e/cache-maintenance.spec.ts` | FR-018a's migration state is visible during an upgrade |
+| `tests/e2e/cache-maintenance.spec.ts`  | FR-018a's migration state is visible during an upgrade             |
 
 Screenshots land in `reports/screenshots/${OS}/F003/` — the **feature map identity**, not the spec
 directory number `005`. The segment is derived from the git branch by `tests/e2e/wdio.conf.ts`.
@@ -320,6 +320,56 @@ hung forever waiting for an EOF that could not arrive. The bulk fetcher makes th
 and carries the same `ControlMaster=no`.
 
 Excluded from the default suite because it needs a real `sshd`, which SC-014 forbids requiring.
+
+---
+
+## Validation record
+
+Executed 2026-09-23 on the development machine (Linux, no display).
+
+| Check                                                             | Result                                                                 |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `cargo test --workspace`                                          | **421 passed, 0 failed, 2 ignored** (the opt-in `sshd` pair)           |
+| `npm run test:unit`                                               | **42 passed**                                                          |
+| `cargo clippy --workspace --all-targets -- -D warnings`           | clean                                                                  |
+| `cargo fmt --all -- --check`                                      | clean                                                                  |
+| `npm run lint:ds`                                                 | no design-system violations                                            |
+| `npm run ds:sync`                                                 | 121 design tokens, 70 layout tokens, **no undefined token references** |
+| `npm run build`                                                   | frontend builds                                                        |
+| `cargo test -p apex-shell --test workspace_budget -- --nocapture` | all three budgets met, values below                                    |
+| `npm run e2e`                                                     | **could not run — needs a display**                                    |
+| `npm run gate:fidelity`                                           | **could not run — needs a display**                                    |
+
+### The measured values (A-NFR: printed, not merely compared)
+
+```
+sidebar expand (cached)    p99 =     80 us   budget   1000 us      12x headroom
+sidebar expand (uncached)  p99 =  16128 us   budget 250000 us      15x headroom
+compression ratio         36.6 %            budget   50.0 %       (162334 of 443719 bytes)
+```
+
+p99 over 200 samples, each expanding a different folder so nothing is answered from a warm row
+cache a developer browsing a tree would not have. The compression figure is measured over this
+repository's own Rust sources: generated text compresses far better than code and would make the
+budget meaningless.
+
+### What could not be verified here, and why
+
+Both browser-driven gates need a display. `tauri-driver` delegates to the platform WebDriver and
+initialises GTK, so it panics in `gtk::rt::init` before a session exists; the fidelity gate
+launches the shell for the same reason. **The three end-to-end specs in this feature are written
+but unexecuted** — they are deliverables, not evidence, until they run on a machine with a
+display or in CI.
+
+One failure on the way there was real and is fixed: the application panicked at startup when the
+data directory did not exist, so the driver was waiting for a process that had already died. It
+now creates the directory, and falls back to an in-memory projection if the location cannot hold
+a database at all. The launch log shows maintenance running `Checking`, `Migrating { from: 0, to:
+1 }`, `Evicting`, `Ready`.
+
+A second was a near miss worth recording: `npm run gate:fidelity | tail -12` reported `EXIT=0`,
+which was `tail`'s exit code rather than the gate's. Read the gate's own status, not the
+pipeline's — a pipe swallows the thing you are checking.
 
 ---
 
