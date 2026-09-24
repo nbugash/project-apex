@@ -966,8 +966,10 @@ tasks it started.
   directory, decided for F000 `app-shell`. spec.md's Assumptions now attribute it there rather than
   to F002, which owns session continuity across *engine* re-execution — a different thing.
 - A-STATE enumerates its payload as "window geometry, region layout, open document references and
-  focus". Task identities are not in it. Extending it is cheap, as the assumption says, but it is
-  an edit to an F000 decision record that this feature depends on.
+  focus". Task identities are not in it. They are added by **A-STATE2**, which supersedes A-STATE
+  rather than editing it — Principle III forbids changing a record in place, and the two decisions
+  have different owners: A-STATE is F000's, about a shell's own state, and A-STATE2 is F010's,
+  about work running somewhere else.
 
 **And the failure that remains is now bounded by a method rather than by a timer.** This document
 previously recorded that a client whose stored state was lost entirely could not reach its running

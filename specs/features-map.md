@@ -52,13 +52,13 @@ an intention to do it.
   - [X] workspace/onFileEvent emission with event coalescing
   - [X] Client cache invalidation and open-file refresh
   - [X] Bulk invalidateAll handling for large changes
-- [ ] **F010 execution-terminals** [P] (depends: F000, F003, F004)
+- [ ] **F010 execution-terminals** [P] (depends: F000, F004)
   - Spec: specs/007-execution-terminals
   - [ ] Task spawn with pty, working directory and environment
   - [ ] Stdout and stderr streaming notifications
   - [ ] Stdin, resize and terminate control path
   - [ ] Xterm.js panel integration with ANSI handling
-  - [ ] Exit reporting and task cleanup on disconnect
+  - [ ] Exit reporting, task cleanup on workspace close, and survival across a disconnection (A-TASKLIFE)
 - [ ] **F005 ec2-lifecycle** [P] (depends: F000, F001)
   - Spec: not yet specified
   - [ ] Instance wake and stop via the AWS SDK

@@ -4,7 +4,8 @@
 
 One outbound port the engine acquires. It is a **capability, not a technology** (Principle VIII):
 `TaskRunner`, not `PtyRunner`. It reuses the `Clock` port F004 added
-(`engine/src/application/ports/clock.rs`) and adds no second notion of time.
+(`engine/src/application/ports/clock.rs`), **widened** here to `Send + Sync` with a `sleep_until`
+method, and adds no second notion of time.
 
 This document states signatures and the guarantees a signature cannot carry. **There are no bodies
 here and none are implied** — the adapter is `engine/src/adapters/outbound/pty_runner.rs` and
@@ -47,7 +48,7 @@ a build in them.
 | Signalling the process **group** (FR-006a, FR-018) | Refusing a live identity (FR-031c), releasing a dead one (FR-023) |
 | `waitpid`, and caching the status once collected | Building the wire notification from a chunk (task-events.md) |
 | — | Enumerating live tasks and which workspace owns each (`execution/list`, SC-023) |
-| — | Selecting a workspace's tasks and timing the stop escalation (`workspace/close`, FR-024) |
+| — | Selecting a workspace's tasks and **choosing** the stop escalation's deadline (`workspace/close`, FR-024). The five-second policy is application code; the **waiting** is the escalation thread's, an adapter, because a use case that sleeps blocks the dispatch thread (design.md CONFLICT 8) |
 | Nothing else | Everything else |
 
 Three entries are worth naming because they look like adapter work and are not.
@@ -321,7 +322,7 @@ the environment (guarantee T10, FR-005a, SC-025).
 | T3 | With `Shape::Pty`, `read` yields `Stream::Stdout` and never `Stream::Stderr`. The merge happened in the kernel; the port does not choose it and cannot undo it | FR-008, A-TASKSTREAM, SC-028 |
 | T4 | `Ended` is returned only after every byte the process wrote has been returned. A process that exits with bytes in the buffer yields those bytes first | FR-022, SC-011 |
 | T5 | Bytes are returned exactly as written — no translation, no normalisation, no UTF-8 validation. The port has no opinion about what a byte means | FR-009, SC-003 |
-| T6 | `read` never blocks longer than `timeout`. A chunk due in 40 ms is flushed in 40 ms, whatever the process is doing | FR-011, SC-001 |
+| T6 | `read` never blocks longer than `timeout`. A chunk due at the 20 ms time bound is flushed at 20 ms, whatever the process is doing | FR-011, SC-001, plan.md *Chunk time bound* |
 | T7 | Not reading is the only backpressure. The port never buffers on the caller's behalf, never drops, and never signals the producer to slow down | FR-013, SC-021 |
 | T8 | `signal` reaches the process group, so every descendant receives it at any depth | FR-006a, FR-018, SC-027 |
 | T9 | `reap` is idempotent and non-blocking, and reports `Exit::Signal` for a signal death rather than an encoded code — carrying **whichever** signal the kernel delivered, including ones this feature never sends | FR-020, FR-021, SC-010 |
@@ -492,7 +493,9 @@ a real process produces rarely and a test must produce every run.
 - **`Shape::Pty` yielding only `Stream::Stdout`.** SC-028's first half is then a unit test; its
   second half — `isatty` reporting true — is not, and needs a real process (below).
 
-`FakeClock` is F004's, unchanged. The chunker's time bound is driven by `advance(Millis)` and
+`FakeClock` is F004's, moved from `Cell<Millis>` to a `Mutex` plus a `Condvar` so it can be
+shared with the thread doing the waiting — a `Cell`-backed fake is actively `!Sync`. The
+chunker's time bound is driven by `advance(Millis)` and
 never by elapsed real time, and `FakeRunner::read` advances it by its `timeout` when the script is
 empty — the same coupling F004's `FakeWatcher` established, and for the same reason: without it
 every volume test is wall-clock-dependent and slow, and a slow test is a test that gets marked

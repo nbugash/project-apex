@@ -16,7 +16,7 @@ restated. Request and response shapes live in [contracts/](./contracts/); the `T
 signatures below are [contracts/runner-port.md](./contracts/runner-port.md)'s, matched rather than
 redesigned.
 
-Eight places where this design could not satisfy two documents at once are marked **[CONFLICT n]** and
+Nine places where this design could not satisfy two documents at once are marked **[CONFLICT n]** and
 collected at the end of *Error Handling & Validation*. Each states the reading taken and what is
 owed to which document.
 
@@ -41,7 +41,7 @@ engine/src/
 │                                        #   Shape, Stream, TaskSignal, EnvOverrides
 ├── application/
 │   ├── ports/
-│   │   ├── clock.rs                     # existing (F004): Clock, Millis — reused, not extended
+│   │   ├── clock.rs                     # F004's, WIDENED here: Send + Sync, + sleep_until
 │   │   ├── roots.rs                     # + deregister, which workspace/close needs [CONFLICT 6]
 │   │   └── task_runner.rs               # NEW: TaskRunner, TaskOutput, TaskControl,
 │   │                                    #   SpawnRequest, SpawnedTask, ReadOutcome, Exit,
@@ -195,7 +195,7 @@ classDiagram
 | `FakeRunner` | struct (test adapter) | Scripted output, settable exits, provokable spawn failures, a recorded stdin buffer and signal log — with no process |
 | `TaskOutput` | trait (port half) | The reading half. `Send`, deliberately not `Sync`: one thread owns one descriptor |
 | `TaskControl` | trait (port half) | The controlling half. `Send + Sync` behind an `Arc`, so a keystroke never waits behind a read (T12, T13) |
-| `Clock` | trait (port) | F004's, unchanged. The chunker's time bound and the stop escalation both read it rather than the wall clock |
+| `Clock` | trait (port) | F004's, **widened** here to `Send + Sync` with `sleep_until` (CONFLICT 8). The chunker's time bound and the escalation thread both read it rather than the wall clock, and the chunker reads it on N reader threads while the stop path reads it on the dispatch thread, which is why `Sync` is required |
 | `Chunker` | struct (pure) | The 64 KiB size bound, the 20 ms time bound, and order within one task |
 | `RetainedOutput` | struct (pure) | The 4 MiB per-task bound, FIFO, and the ending awaiting delivery |
 | `TaskSet` | struct (domain) | The engine's live tasks. Refuses a live id; releases a delivered one |
@@ -326,7 +326,9 @@ fn AttachTask::execute(&self, ws: &WorkspaceId, id: &TaskId) -> Result<Attachmen
     postcondition: the response is written before the first replayed chunk, and the replay
                    precedes anything produced since (FR-031b, SC-019)
     postcondition: no side effect on the process — it does not resize, write or signal
-    raises:        AttachRefusal::{NotRegistered, RootGone, NotThisWorkspace, NoSuchTask}
+    raises:        AttachRefusal::{NotRegistered, NotThisWorkspace, NoSuchTask} — no RootGone:
+                   attaching resolves no root, so a deleted workspace root must not stop a
+                   developer watching a task that is still running (task-methods.md, FR-031b)
 
 fn ListTasks::execute(&self, ws: Option<&WorkspaceId>) -> Result<Vec<TaskSummary>, ListRefusal>
     postcondition: a pure read; touches TaskRunner zero times (runner-port.md)
@@ -863,7 +865,57 @@ counter over an `Instant` in the first place.
 This is a change to an F004 port, so it is **foundational work**, and both this document and
 `runner-port.md` previously asserted the port was reused unchanged. It is not.
 
-**[CONFLICT 7] — the signal number to name mapping had nowhere to live.** (Filed here rather than after 6 because it is a consequence of CONFLICT 3 immediately above, and splitting them would separate a cause from its effect.) `Exit::Signal(i32)`
+**Who owns the wait, precisely.** The five-second *policy* stays in the use case, which is what
+keeps Principle VIII's dividing line honest: `StopTask` sends `SIGTERM` and **registers a
+deadline**, and it does not sleep. The escalation thread owns only the waiting and the second
+signal. So a use-case test asserts that a deadline was registered at `now + 5 s`, and a thread
+test asserts that a task alive at its deadline is signalled — neither needs the other, and neither
+needs a real clock. Any task that still describes the escalation as "two `signal` calls with a
+`Clock` wait between them" inside the use case describes the shape this resolution replaced.
+
+**What the thread blocks on when it has nothing to wait for.** `sleep_until` cannot express "block
+until a deadline is registered", and an empty set has no deadline. The thread therefore waits on
+the deadline set's own condvar, which `TaskService` notifies on registration, and uses
+`sleep_until` only once it holds a deadline. Without this the very first stop of a run parks
+behind a thread that was never woken. Because every deadline is `now + 5 s`, a later registration
+is never earlier than the one being waited on, so only the empty-set and idle cases need the
+notification.
+
+**The boundary is `>=`.** A task still alive when `now >= deadline` is signalled. At exactly
+5 000 ms the kill has happened, not is about to.
+
+**The production clock does not exist yet, and the widened trait will not compile without it.**
+The engine's only `impl Clock` is a private `struct SystemClock` inside
+`adapters/outbound/inotify_watcher.rs`, handed out by `factory()` paired with a watcher. It moves
+to `adapters/outbound/system_clock.rs` as a public type implementing `sleep_until`, shared as
+`Arc<dyn Clock>` rather than `Box`, and is wired to the chunker, `TaskService` and the escalation
+thread at composition. Moving it also takes a type that has nothing to do with inotify out of the
+file `inotify_confinement.rs` guards.
+
+**[CONFLICT 9] — the send queue would have removed the backpressure it sits in front of.**
+CONFLICT 8's sibling, and the more dangerous of the two. §4.6 needs an engine-side priority queue,
+and `client/core`'s `sendq.rs` — the model architecture.md points at — is two **unbounded**
+`VecDeque`s with a non-blocking `push`. Today a reader thread blocks inside `FrameWriter::write`
+when the client is not draining, the pseudo-terminal's buffer fills behind it, and the process
+blocks in `write`. That chain is FR-013's entire mechanism, and research.md describes it as
+backpressure working "by the absence of a mechanism".
+
+Interposing an unbounded queue breaks every link. `push` returns at once, so the reader never
+blocks; the pty never fills, so the process never slows; `RetainedOutput` drains to zero on every
+write, so `Admission` is never `AtBound`; and a 50 MiB build accumulates in engine memory while
+FR-013a's chosen bound is satisfied on paper. SC-021 measures bytes held at the retention point
+and would read zero, and the mutation written for it mutates the reader, so neither can see it.
+
+**Resolution.** A chunk is **held** from the moment the reader produces it until `FrameWriter` has
+written it, and the two stages are one budget: `held = retained + queued`. The reader stops
+reading when `held` reaches plan.md's 4 MiB, not when the retention buffer alone does. The
+Background class is bounded by that budget and `push` blocks the calling reader thread once it is
+reached — which is the same blocking that `FrameWriter::write` used to provide, moved one step
+earlier and now deliberate. The Interactive class is **never** bounded and never blocks: it is
+small, it is the traffic the queue exists to protect, and a blocked keystroke is the failure the
+whole arrangement is built to avoid.
+
+**[CONFLICT 7] — the signal number to name mapping had nowhere to live.** (Filed here rather than after 6 because it is a consequence of CONFLICT 3 above, and splitting them would separate a cause from its effect.) `Exit::Signal(i32)`
 carries whatever the kernel delivered and the wire carries a name, so something must hold the
 table. It cannot be `task.rs`, which may name neither a syscall nor a signal number, and it must
 not be `pty_runner.rs`, which would put a protocol spelling inside the pty adapter. It belongs in
@@ -930,5 +982,5 @@ feature outlives the engine process.
 | Wire types (`RunTaskParams` … `WorkspaceCloseParams`) | `protocol/src/wire.rs` | Shared so a field name that differs between the two ends fails at compile time rather than at the far end, where the evidence is worst |
 | `TaskControl` handles | `TaskService` in `task_threads.rs` | `Arc<dyn TaskControl>` per live task, dropped on release. The only thing holding a descriptor outside the reader thread |
 | Panel scrollback | the webview's `terminals.svelte.ts` | 10 000 lines per terminal, webview memory, goes when the panel goes. Not persisted by this feature |
-| Task identities across a **client** restart | A-STATE's JSON file (F000 `app-shell`) | **Not there today** — A-STATE's payload is window geometry, region layout, open document references and focus, so FR-031d requires extending an F000 decision record. A client that has lost them entirely recovers through `execution/list` (SC-023) |
+| Task identities across a **client** restart | A-STATE's JSON file (F000 `app-shell`) | **Added by A-STATE2** — A-STATE's own payload is window geometry, region layout, open document references and focus; A-STATE2 supersedes it and carries the task identities FR-031d needs. A-STATE is not edited (Principle III). A client that has lost them entirely recovers through `execution/list` (SC-023) |
 | Task identities across an **engine** restart | nothing | They do not survive (A-TASKEXEC). A re-execution terminates them and names them in `unpreserved`; a crash leaves the processes running and unreachable, which §15.2 states rather than recovers |

@@ -248,7 +248,11 @@ the task never stopped and no output was lost.
   `unpreserved` list (A-TASKEXEC); an engine *crash* leaves the processes running and unreachable,
   which §15.2 now states rather than claims to recover.
 - **Two panels on one task.** Whether a task has one viewer or many is a scope question.
-- **A task started in a directory that is deleted while it runs.**
+- **A task started in a directory that is deleted while it runs.** The task keeps running; the
+  kernel holds its working directory open regardless of the name being gone. It stays listable,
+  attachable and terminable, because none of those resolves a root — only `runTask` does, and it
+  answers `-32009`. Reattaching must not be refused for a deleted root, or a developer could
+  enumerate a live task and kill it but not watch it.
 - **An environment variable carrying a secret.** It is the developer's own instance and their own
   user (A-EC2), but it should not therefore appear in logs.
 
@@ -528,6 +532,11 @@ the task never stopped and no output was lost.
   chunking is exercised across several frames rather than at exactly one boundary.
 - **50 MiB for the interference case (SC-006)** is the order of magnitude a verbose build
   produces, large enough that any per-chunk cost compounds visibly.
+- **2 seconds for the memory limit to fire (SC-026)** is a bound on observation, not on the
+  kernel: the refusal is immediate, and the two seconds allow for the fixture noticing it and
+  reporting it. It is deliberately loose because nothing about the criterion is a latency claim —
+  the criterion is that the allocation is refused at all, and a tight bound would make the test
+  flaky on a loaded box for no gain.
 - **Slowing the process rather than dropping output (FR-013)** is the behaviour a terminal
   already has: a program writing to a terminal nobody is reading from blocks when the buffer
   fills. Adopting it means a build under a slow link takes longer and its transcript stays
@@ -552,9 +561,10 @@ the task never stopped and no output was lost.
 
 - **A client that restarts, rather than reconnecting, remembers the tasks it started.** The
   durable client store is A-STATE's, decided for F000 `app-shell`; F002 owns engine re-execution
-  continuity, which is a different thing. A-STATE enumerates its payload as window geometry,
-  region layout, open document references and focus — task identities are not among them, so this
-  assumption requires extending an F000 decision record rather than relying on one. A client whose
+  continuity, which is a different thing. A-STATE's payload is window geometry, region layout,
+  open document references and focus — task identities are not among them, so this assumption
+  rests on **A-STATE2**, the record that supersedes it and adds them. A-STATE is not edited:
+  Principle III says records are dated and superseded, never changed in place. A client whose
   stored state is lost entirely recovers through `execution/list` (§4.8), which exists for exactly
   this case.
 

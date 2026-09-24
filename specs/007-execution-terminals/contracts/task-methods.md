@@ -248,9 +248,16 @@ Each fails the whole call. No process is started and no identity becomes live.
 | Code | Condition |
 |---|---|
 | `-32001` | Unknown or unregistered `workspaceId` — **or** a `workspaceId` that does not own the named task (§4.8). Both are the client's state having diverged from the engine's |
-| `-32009` | Registered, and the root no longer exists |
 | `-32006` | No live identity `taskId` — never started, or already released (guarantee 6) |
 | `-32601` | This engine predates `execution/attach`. The client redeploys (§3.8, A-BOOT) |
+
+`attach` does **not** answer `-32009`, for the reason `execution/list` and `workspace/close` do not:
+neither finding a task, nor watching one, nor ending one may be blocked by the disappearance of a
+directory. The task is already running and its working directory was resolved when it spawned, so
+attaching reads no root. Answering `-32009` here would leave a developer whose workspace root was
+deleted able to enumerate a live task and kill it but not watch it, which defeats FR-031b's
+unqualified "MUST be able to reattach" for an edge case spec.md lists by name. `runTask` still
+answers `-32009`, because starting a task does resolve a root.
 | `-32602` | `taskId` absent or not a string |
 
 ---
@@ -608,9 +615,9 @@ connection returns
 Four properties make this work without a discovery protocol for the ordinary case:
 
 1. **The client usually already holds the identities**, because it chose them (§4.8, A-TASKLIFE).
-   A client that restarted rather than reconnected reads them from its durable store — **A-STATE's**
-   (F000 `app-shell`), whose payload does not today include task identities, so A-STATE is
-   extended rather than merely relied upon (spec Assumptions, FR-031d).
+   A client that restarted rather than reconnected reads them from its durable store — A-STATE's
+   file (F000 `app-shell`), carrying the task identities **A-STATE2** adds to that payload.
+   A-STATE2 supersedes A-STATE rather than editing it (spec Assumptions, FR-031d).
 2. **A client that has lost them enumerates** (`execution/list`, SC-023). This is the exception,
    not the step: a client with its identities that lists first has spent a round trip learning
    what it knew.

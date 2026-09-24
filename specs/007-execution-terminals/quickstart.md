@@ -125,6 +125,11 @@ at the second. If a number other than zero appears after `failed:`, the run fail
 
 ---
 
+> **Scenario numbering.** Rows numbered beyond the spec's own count for a story — US2.6, US3.5
+> to US3.7, US5.6 to US5.8 — are this guide's additions, not scenarios in `spec.md`. Lettered rows
+> (US1.2a, US2.3a, US4.2a, US5.6a) are variants of a spec scenario. `spec.md` has 5 scenarios for
+> US2, 4 for US3 and 5 for US5; anything above those numbers is checked here and accepted there.
+
 ## 2. US1 — run a command and watch it work
 
 **Set up**: a workspace registered against a real temp directory (no host). The `FakeRunner`
