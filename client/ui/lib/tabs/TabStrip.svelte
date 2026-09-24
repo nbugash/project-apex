@@ -14,6 +14,12 @@
     /// Marked on the tab it concerns rather than by taking focus: reporting a background tab
     /// by pulling the developer to it would be the interruption FR-024 forbids, arriving
     /// through the requirement meant to inform them.
+    ///
+    /// Rendered as **dimming**, the same treatment the tree gives a stale region, because it
+    /// is the same fact: what you are being shown may have moved on. Not a marker — the
+    /// change is almost always something the developer did seconds ago in the shell beside
+    /// this window, so they need the interface to stop implying currency, not to be alerted
+    /// about their own `git checkout`.
     changedOnHost?: string[];
   }
   let {
@@ -67,7 +73,15 @@
       <div
         class="tab"
         class:active={doc.id === focusedId}
+        class:stale={changedOnHost.includes(doc.id)}
         data-tab={doc.id}
+        data-testid={changedOnHost.includes(doc.id) ? 'tab-changed' : undefined}
+        title={changedOnHost.includes(doc.id)
+          ? 'Changed on the host since it was read'
+          : undefined}
+        aria-description={changedOnHost.includes(doc.id)
+          ? 'Changed on the host since it was read'
+          : undefined}
         role="tab"
         tabindex={doc.id === focusedId ? 0 : -1}
         aria-selected={doc.id === focusedId}
@@ -79,20 +93,7 @@
         onkeydown={(e) => key(e, doc.id)}
       >
         <span class="label">{doc.display_name}</span>
-        {#if changedOnHost.includes(doc.id)}
-          <!-- A ring, not the filled dot. The prototype's filled dot means unsaved *local*
-               changes; this means changed *on the host*. One affordance for both would make
-               them indistinguishable exactly when the difference matters — a file edited
-               locally and changed remotely is the case where a developer most needs to know
-               which. Recorded as an interim deviation in spec.md, pending designer sign-off.
-               The title is what carries the meaning without colour (FR-039). -->
-          <span
-            class="changed"
-            data-testid="tab-changed"
-            title="Changed on the host since it was read"
-            aria-label="Changed on the host"
-          ></span>
-        {/if}
+
         <button
           class="close"
           aria-label={`Close ${doc.display_name}`}
@@ -113,14 +114,14 @@
 </div>
 
 <style>
-  .changed {
-    flex: none;
-    width: var(--vk-tab-dot);
-    height: var(--vk-tab-dot);
-    border-radius: 50%;
-    /* Same footprint as the prototype's dirty dot, hollow rather than filled, so the two are
-       distinguishable by shape as well as meaning. No new token. */
-    border: 1px solid var(--color-accent-300);
+  /* The same dimming the tree gives a stale row — "dimmed rows are stale, they are never
+     waited on". One vocabulary for "this may have moved on", on both surfaces. It composes
+     with the dirty dot rather than competing with it: a tab can be dimmed *and* carry the
+     dot, which is the case where a developer most needs both facts, and they arrive on
+     different channels. The title and aria-description are what carry the meaning when
+     colour and contrast are gone (FR-039). */
+  .tab.stale .label {
+    opacity: 0.62;
   }
 
   .tabbar {

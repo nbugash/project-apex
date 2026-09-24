@@ -93,7 +93,7 @@ at the second. If a number other than zero appears after `failed:`, the run fail
 
 ---
 
-## 2. US1 — a colleague's change arrives without being asked for
+## 2. US1 — a change the interface did not make arrives without being asked for
 
 **Set up**: a workspace registered against a real temp directory (no host), the `FakeFileWatcher`
 for the application-level assertions and the real adapter for the Linux-only ones, `FakeClock` for

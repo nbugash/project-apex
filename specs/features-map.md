@@ -52,6 +52,13 @@ an intention to do it.
   - [X] workspace/onFileEvent emission with event coalescing
   - [X] Client cache invalidation and open-file refresh
   - [X] Bulk invalidateAll handling for large changes
+- [ ] **F010 execution-terminals** [P] (depends: F000, F003)
+  - Spec: not yet specified
+  - [ ] Task spawn with pty, working directory and environment
+  - [ ] Stdout and stderr streaming notifications
+  - [ ] Stdin, resize and terminate control path
+  - [ ] Xterm.js panel integration with ANSI handling
+  - [ ] Exit reporting and task cleanup on disconnect
 - [ ] **F005 ec2-lifecycle** [P] (depends: F000, F001)
   - Spec: not yet specified
   - [ ] Instance wake and stop via the AWS SDK
@@ -87,13 +94,6 @@ an intention to do it.
   - [ ] C and C++: clangd with compile_commands discovery
   - [ ] Zig: zls
   - [ ] Elixir: Lexical with mix project resolution
-- [ ] **F010 execution-terminals** [P] (depends: F000, F003)
-  - Spec: not yet specified
-  - [ ] Task spawn with pty, working directory and environment
-  - [ ] Stdout and stderr streaming notifications
-  - [ ] Stdin, resize and terminate control path
-  - [ ] Xterm.js panel integration with ANSI handling
-  - [ ] Exit reporting and task cleanup on disconnect
 - [ ] **F011 git-integration** [P] (depends: F000, F003)
   - Spec: not yet specified
   - [ ] Engine-side porcelain v2 parsing and watch triggers

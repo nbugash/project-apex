@@ -30,13 +30,16 @@ flowchart LR
     client -->|workspace/watch, workspace/unwatch| engine[ide-engine on the host]
     engine -->|workspace/onFileEvent, workspace/invalidateAll| client
     engine -->|inotify| hostfs[(Host filesystem)]
-    colleague[Colleague, build, git] -->|writes| hostfs
+    shell[Developer's shell, build, formatter, watcher] -->|writes| hostfs
     client --> projection[(SQLite projection)]
 ```
 
-The developer is not the only writer, which is the whole reason the feature exists: a
-colleague's push, a build, or a branch switch changes the workspace with no client action to
-hang an update on.
+**The interface is not the only writer on the machine it is showing.** Instances are
+single-tenant (A-EC2), so the other writer is never another person — it is the developer's own
+shell on the same host, a build they started, a formatter running on save, or a watcher still
+going from an hour ago. A `git checkout` in that shell rewrites a thousand files with no client
+action to hang an update on, which is why the observer has to be on the host rather than in the
+client.
 
 ## Component Architecture
 

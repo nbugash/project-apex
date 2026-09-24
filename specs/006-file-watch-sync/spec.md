@@ -100,18 +100,32 @@ is. Content validity remains a hash comparison (§5.3), and this feature never m
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - See a colleague's change without asking for it (Priority: P1)
+### User Story 1 - See a change the interface did not make (Priority: P1)
 
-A developer has a repository open. Someone else — a colleague pushing to the same checkout, a
-build writing an artifact, a script generating code — changes a file on the remote host. The tree
-and the affected file reflect it without the developer refreshing anything.
+A developer has a repository open and a shell on the same host. Something other than the
+interface changes a file there — a `git pull` or `git checkout` they ran, a build writing
+generated code, a formatter rewriting a file on save, a watcher still running from an hour ago.
+The tree and the affected file reflect it without the developer refreshing anything.
+
+**Who the other writer is.** Not another person: instances are single-tenant, one per developer,
+and sharing them was rejected in A-EC2. The other writer is the developer's own shell, their own
+build, or a process they started. A colleague's work reaches the host only when the developer
+pulls it, so a colleague is upstream of the *content* and never of the *trigger*. What makes this
+a feature rather than a nicety is that the interface is not the only thing writing to the machine
+it is showing.
 
 **Why this priority**: This is the feature. Without it the projection is only ever as fresh as the
 last thing the developer happened to open, and a cache that silently serves yesterday's tree is
 worse than no cache — it is confidently wrong.
 
-**Independent Test**: Open a workspace, change a file on the host by other means, and confirm the
-interface reflects it within the stated interval with no developer action.
+**Independent Test**: Open a workspace, change a file on the host by any means other than the
+interface, and confirm it is reflected within the stated interval with no developer action.
+
+**Note on exercising it today**: nothing that currently ships writes to that filesystem. F010
+(execution terminals) and F006 (the editor's write path) are unbuilt, so in-product the only
+writer is the developer's own separate SSH session. The suites drive the watcher directly. This
+is a sequencing fact, not a gap: invalidation has to exist before the writers do, or the first
+write produces a projection that is confidently wrong.
 
 **Acceptance Scenarios**:
 
@@ -430,30 +444,37 @@ longer being reported.
 
 ## Design deviations
 
-Principle I requires a deviation from the prototype to be recorded here, in writing, before
-implementation. One is recorded, and one is not a deviation at all.
+Principle I requires a deviation from the prototype to be recorded here before implementation.
+After working through what the feature actually reports, there is **no deviation**: both states
+reuse treatments the prototype already defines.
 
-**A stale tree region is dimmed.** Not a deviation. The prototype already renders staleness that
-way — "Dimmed rows are stale — computed for v1482, mapped forward through anchors. They are never
-waited on." — so the treatment is taken rather than invented, and no new token is introduced. The
-accompanying line of text is what makes the state reachable without colour, which FR-039 requires
-and `lint:ds` cannot see.
+**A stale tree region is dimmed.** The prototype renders staleness that way — "Dimmed rows are
+stale — computed for v1482, mapped forward through anchors. They are never waited on." The
+treatment is taken, not invented, and no new token is introduced. The accompanying line of text
+is what makes the state reachable without colour, which FR-039 requires and `lint:ds` cannot see.
 
-**A changed-on-host tab marker needs its own affordance.** This is the deviation. The prototype
-binds the tab's 6px dot to `t.dirty → var(--color-accent)`, meaning *unsaved local changes*.
-FR-023a needs a marker for *changed on the host*, which is a different fact with a different
-remedy: one is resolved by saving, the other by re-reading. One dot for both would make the two
-indistinguishable at exactly the moment the difference matters — a file that is both edited
-locally and changed remotely is the case where a developer most needs to know which is which.
+**A tab whose file changed on the host is dimmed the same way.** It is the same fact on a
+different surface: what you are being shown may have moved on.
 
-**Interim decision, pending designer confirmation.** The changed-on-host marker is the same 6px
-dot rendered as a **ring** — the accent colour as a border with a transparent centre — so it
-occupies the same space, needs no new token, and is distinguishable from the filled dot without
-relying on hue. Where a tab is both dirty and changed, the ring is drawn around the filled dot.
+An earlier draft added a second marker to the tab — a ring beside the dirty dot — on the reading
+that "changed on the host" is a distinct state needing a distinct affordance. That was wrong
+twice over.
 
-This is engineering's reading of the prototype's vocabulary, not a designer's approval. It is
-recorded as such so that the decision is visible rather than absorbed, and so replacing it costs
-one component rather than an archaeology of what was assumed.
+The prototype's vocabulary is narrower than that draft assumed. A tab carries exactly one state
+axis, the filled accent dot bound to `t.dirty`, meaning the buffer differs from disk. A tree row
+carries a separate axis, the `M`/`A` letter with the file icon tinted to match, meaning disk
+differs from git HEAD. Adding a second tab marker put a new meaning into a space the prototype
+gives one.
+
+And it misread what the developer needs. Instances are single-tenant (A-EC2), so a change on the
+host is almost always something the developer did seconds earlier in the shell beside this
+window — a `git checkout`, a build, a formatter. They do not need alerting about their own
+command. They need the interface to stop implying that what it shows is current, which is
+staleness, and the prototype already says staleness by dimming.
+
+Dimming also composes where a marker would collide: a tab can be dimmed **and** carry the dirty
+dot, which is exactly the case where both facts matter — edited locally, and changed underneath
+— and the two arrive on different channels rather than fighting for one.
 
 ## Success Criteria *(mandatory)*
 

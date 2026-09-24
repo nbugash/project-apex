@@ -95,10 +95,10 @@ migration. Every user story depends on all of it.
 
 ---
 
-## Phase 3: User Story 1 — See a colleague's change without asking for it (P1) 🎯 MVP
+## Phase 3: User Story 1 — See a change the interface did not make (P1) 🎯 MVP
 
-**Goal**: a change made on the host to a folder the developer has expanded appears in the tree
-without them asking.
+**Goal**: a change made on the host by anything other than the interface — the developer's own
+shell, a build, a formatter — appears in the tree without them asking.
 
 **Independent test**: expand a folder, create and delete a file in it on the host, and watch the
 tree update, with no remote host and no network.

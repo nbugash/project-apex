@@ -19,15 +19,15 @@ describe('the new states do not depend on colour', () => {
     expect(typeof text).toBe('string');
   });
 
-  it('gives the changed-tab marker an accessible name', async () => {
-    // The marker is a ring, and a ring with no name is a decoration. Its name is what a screen
-    // reader reads and what survives greyscale.
-    const named = await browser.execute(() =>
+  it('gives a dimmed tab a description as well as the dimming', async () => {
+    // Dimming is a contrast signal and nothing else. The description is what a screen reader
+    // reads and what survives greyscale — without it the state is carried by opacity alone.
+    const described = await browser.execute(() =>
       Array.from(document.querySelectorAll('[data-testid="tab-changed"]')).every(
-        (el) => (el.getAttribute('aria-label') ?? '').length > 0,
+        (el) => (el.getAttribute('aria-description') ?? '').length > 0,
       ),
     );
-    expect(named).toBe(true);
+    expect(described).toBe(true);
   });
 
   it('keeps every tree row reachable by keyboard', async () => {
