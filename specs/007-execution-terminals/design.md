@@ -241,7 +241,7 @@ trait TaskControl: Send + Sync {                // Arc-shared with the dispatch 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), ControlError>
         postcondition: the process observes the new size; Ok and no effect for Shape::Pipes
     fn signal(&self, signal: TaskSignal) -> Result<(), ControlError>
-        postcondition: delivered to the process GROUP, not the pid (T8, FR-018, SC-027);
+        postcondition: delivered to the process GROUP, not the pid (T8, FR-018; SC-012 counts the direct children, SC-027 arbitrary depth);
                        takes effect while this task's reader is blocked in read (T13)
     fn reap(&self) -> Option<Exit>
         postcondition: non-blocking; idempotent — the status is cached, so every caller after

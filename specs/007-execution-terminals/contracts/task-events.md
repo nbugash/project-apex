@@ -269,7 +269,7 @@ Stated as a table because every row is a way an implementation has gone wrong be
 | That an `onStdout` frame for a `pty: true` task may hold what the process wrote to either descriptor (guarantee 4) | That `onStderr` will ever arrive for it, or that a silent error stream means no errors (SC-028) |
 | That a pause in frames means the link or the 4 MiB bound is holding the process (guarantee 11) | That output was dropped, or that the task is hung. There is no drop, so there is no marker |
 | That the first `retained` bytes after an attach are the replay (guarantee 13) | That any individual frame announces itself as replayed — none does, and none should |
-| That `onExit` means the task ended and its output is complete (guarantee 7) | That the process's children ended — only `terminate` on the group does that (FR-018, SC-027) |
+| That `onExit` means the task ended and its output is complete (guarantee 7) | That the process's children ended — only `terminate` on the group does that (FR-018, SC-012 for the direct children, SC-027 at arbitrary depth) |
 | That `signal` present means a signal death (guarantee 9) | An exit code from it. Neither by reading `128 + n`, which the wire no longer carries, nor by computing one for a panel to show |
 | That the name in `signal` is the signal that actually killed the task (guarantee 9) | That it is one of the three `execution/terminate` accepts — `SIGSEGV`, `SIGPIPE`, `SIGHUP` and an out-of-memory `SIGKILL` all arrive here and none can be sent |
 | That `exit_code: 0` means the command reported success | That the build is correct — an exit code is the process's claim, not the engine's |
@@ -353,7 +353,7 @@ reported "build failed" from the exit and then rendered the last chunk would sho
 before its cause; SC-011 asserts zero lines lost across every exercised case, and ordering is what
 makes that true rather than lucky.
 
-**An exit by signal** (FR-021, SC-010, SC-012). The developer pressed Ctrl-C in a `pty: true`
+**An exit by signal** (FR-021, SC-010). The developer pressed Ctrl-C in a `pty: true`
 panel, the line discipline delivered `SIGINT` to the foreground process group, and the process did
 not catch it.
 
@@ -430,7 +430,9 @@ that took longer.
 fixed in plan.md (FR-029a) — the palette (FR-030: the three semantic hues the design system
 defines come from tokens, the remaining ANSI colours from the terminal library's own palette as a
 recorded exception, A-TERMPALETTE, which is what the narrowed SC-016 measures) and staying
-responsive under load (FR-028) are the client's, and the panel is an inbound adapter in
+responsive under load (FR-028, measured panel-side by SC-030, which SC-006 does not cover:
+a panel can starve while the transport stays healthy) are the client's, and the panel is an
+inbound adapter in
 `client/ui/lib/terminal/`. The engine does not know what a colour is.
 
 **A notification for a task the engine could not start.** FR-004 and SC-015 put that failure in
