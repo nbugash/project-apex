@@ -68,10 +68,12 @@ though it were a notification. Noted, not fixed here: no client sends one.)
 
 **Fixed Quantities**: Four requirements say a value must be "a stated quantity fixed in the plan"
 — FR-006b (resource limits), FR-013a (the amount buffered before a process is slowed), FR-029a
-(the panel's retained history) — and research.md says the same of the chunker's two bounds. They
-are fixed here, with the reasoning, because a number chosen during implementation is a number
-nobody reviewed. The table carries more than those five: a quantity found to be missing while the
-contracts were written is fixed here too, on the same grounds.
+(the panel's retained history) and **FR-011**, which binds the chunker's two bounds by way of
+research.md's *Chunking, ordering, and what is pure*, as data-model.md's *Quantities the plan
+fixes* states. The fourth used to go unnamed here, which left this preamble listing three and then
+counting five. They are fixed below, with the reasoning, because a number chosen during
+implementation is a number nobody reviewed. The table carries more than those five: a quantity
+found to be missing while the contracts were written is fixed here too, on the same grounds.
 
 | Quantity | Value | Why this value |
 |---|---|---|
@@ -118,7 +120,7 @@ The gate says re-check after design, and design moved four of these rows.
 |---|---|---|---|
 | **I. Design Fidelity** | Pass | **Pass, narrowed** | The row claimed the library's "default palette is a violation like any other raw value". Design found the system defines three of the sixteen colours a terminal renders, so satisfying that claim meant inventing thirteen — the act this principle exists to prevent. **A-TERMPALETTE** records the library's palette as the accepted source for what the system does not define, and SC-016 was narrowed to match. The principle holds; the row's absolute reading did not. |
 | **II. One Source of Truth** | Blocking | **Pass** | Three methods added (`attach`, `list`, `workspace/close`), plus the encoding, arity, exit-shape, signal-typing and optionality statements the existing rows needed to be implementable. Nine §4.8 edits in total, and §4.6 rewritten to state its rule per direction. |
-| **III. Decisions Recorded** | Pass | **Pass, two more** | **A-TASKSTREAM** (Phase 0) and **A-TASKEXEC** and **A-TERMPALETTE** (Phase 1 and 2). Appendix A holds 40 records. Each carries rejected alternatives and a reversal condition — A-TASKEXEC and A-TERMPALETTE did
+| **III. Decisions Recorded** | Pass | **Pass, two more** | **A-TASKSTREAM** (Phase 0) and **A-TASKEXEC** and **A-TERMPALETTE** (Phase 1 and 2). Appendix A held 40 records at that point. Each carries rejected alternatives and a reversal condition — A-TASKEXEC and A-TERMPALETTE did
 not when this row first claimed it, and the claim was caught by analysis rather than by the gate
 it was written into. Two more were added after: **A-STATE2**, superseding A-STATE because task
 identities must join the client's durable payload and Principle III forbids editing a record in
@@ -141,7 +143,7 @@ close anything.
 
 ```text
 specs/007-execution-terminals/
-├── spec.md              # 43 FRs, 28 SCs, 5 stories, 2 decisions recorded in Appendix A
+├── spec.md              # 43 FRs, 30 SCs, 5 stories, 7 decisions recorded in Appendix A
 ├── plan.md              # This file
 ├── research.md          # Phase 0 output
 ├── data-model.md        # Phase 1 output
@@ -176,8 +178,9 @@ engine/src/
     └── outbound/
         ├── pty_runner.rs            # NEW: the ONLY file naming the pty mechanism
         ├── task_threads.rs          # NEW: a reader per task, writing through the send queue
-        └── send_queue.rs            # NEW: engine-side priority queue (§4.6), interactive
-                                     #      ahead of bulk; FrameWriter becomes its drain
+        └── send_queue.rs            # NEW: engine-side priority queue (§4.6), A-PRI's
+                                     #      `Interactive` ahead of `Background`; FrameWriter
+                                     #      becomes its drain
 
 client/core/src/
 ├── application/

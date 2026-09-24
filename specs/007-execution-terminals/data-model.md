@@ -897,10 +897,11 @@ itself.
 client that lost its identities, not an engine that lost its task set: it can only enumerate what
 the engine holds, and after a crash the engine holds nothing. SC-023's "leaves zero running tasks
 unreachable" therefore holds for a restarted **client** against a surviving engine, which is the
-case it describes, and not for a surviving client against a restarted engine. The residue is
-FR-025's prohibition breached by a crash — recorded in §15.2 as the honest statement rather than
-resolved, because resolving it needs the map to outlive the process and nothing in the system does
-that today.
+case it describes, and not for a surviving client against a restarted engine. The residue is the case
+FR-025 now **excludes** in as many words — an engine crash, citing §15.2 — rather than a breach of
+it, because a MUST that three artefacts admit is broken teaches a reader to discount every other
+MUST. It is recorded rather than resolved: resolving it needs the map to outlive the process, and
+nothing in the system does that today.
 
 ### The engine's own update path, which is now decided
 
@@ -1042,7 +1043,7 @@ Things a test should be able to break and find something wrong.
 | 14 | Replayed output arrives on the notification matching its own stream, so a `pty: false` task's stderr does not become stdout across a detachment | The replay reads each chunk's `OutputStream` | FR-008a, SC-019, SC-028 |
 | 15 | A task that ended while detached still reports how, to whoever reattaches or lists | `RetainedOutput::ending` outlives the process; `attach` and `list` both carry it | FR-031b, SC-020 |
 | 16 | Terminating a task leaves zero of its processes running, at any depth | The signal goes to the process group, not the pid | FR-018, SC-012, SC-027 |
-| 17 | Terminating an already-exited task succeeds | The set still holds it until release; a released id is a no-op, not an error | FR-019 |
+| 17 | Terminating a task that has exited but whose exit has not been delivered succeeds | The set still holds it until release (`terminate` guarantee 6); once released the id names nothing and is **`-32006`**, which is the error table in contracts/task-methods.md and §4.4's narrowed "Task not found". The window FR-019 protects is the race with the engine's own delivery, not the whole of time | FR-019, FR-023 |
 | 18 | `execution/list` returns every task the set holds and zero released ones, and an omitted `workspaceId` returns every workspace's | `TaskSet::list` reads the map it is | FR-031d, SC-023 |
 | 19 | Closing a workspace leaves zero of its tasks running, and closes no other workspace's | `drain_for_workspace`, then terminate each | FR-024, SC-013 |
 | 20 | An engine re-execution leaves zero tasks running and names every one of them in `unpreserved` | `drain_all` before the `exec`; the drained ids are the list | A-TASKEXEC, FR-025, §15.3 |

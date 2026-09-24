@@ -344,7 +344,17 @@ the task never stopped and no output was lost.
   delivered, and MUST NOT be reusable while still live.
 - **FR-024**: Closing a workspace MUST terminate its tasks (§7.3).
 - **FR-025**: The system MUST NOT leave a process running that nothing is watching and nothing
-  can reach.
+  can reach, **except across an engine crash**, which §15.2 states the system does not survive:
+  the task map is engine memory, so a crashed engine loses every identity it held while the
+  processes it started keep running, reachable by pid and by nothing the protocol exposes. This
+  was formerly unqualified, and §15.2, `data-model.md` and `architecture.md` all state that a
+  crash does exactly what it forbids — an unqualified MUST that three artefacts admit is broken
+  teaches a reader to discount every other MUST, which is why it is qualified here in the same
+  shape FR-008 and FR-020 were. The exclusion is bounded and not open: a dropped connection is
+  survivable and the task reattachable (FR-031, FR-031b), a re-execution terminates the tasks
+  first and names them (A-TASKEXEC), and closing a workspace terminates its own (FR-024). What
+  closing the remaining case needs is the map outliving the process, which nothing in the system
+  does today.
 
 **The panel**
 
@@ -355,7 +365,11 @@ the task never stopped and no output was lost.
   arrives faster than it can be read, measured as SC-030 states. "Responsive" alone was not
   implementable: every other performance claim in this feature carries a bound and this one carried
   none, so no implementation could fail it.
-- **FR-029**: The panel MUST state when a task has ended and how, rather than simply stopping.
+- **FR-029**: The panel MUST state when a task has ended and how, rather than simply stopping,
+  and that state MUST NOT be conveyed by **colour alone** — a second channel is required, per
+  Principle I's accessibility floor. The colour rule bound this feature only through a polish
+  task, which left the one requirement it actually constrains silent about it; carrying it here
+  makes it visible in the requirement set rather than in a checklist a reader has to go and find.
 - **FR-029a**: The panel MUST retain a bounded history the developer can scroll back through, and
   the bound MUST be **a stated quantity fixed in the plan** rather than a judgement made per
   panel. "Keep a reasonable amount" is neither implementable nor testable, and an unbounded one
@@ -441,7 +455,11 @@ the task never stopped and no output was lost.
   distinguishable from an exit in 100%.
 - **SC-011**: Output produced before an exit is delivered before the exit report, with zero lines
   lost, across every exercised case.
-- **SC-012**: Terminating a task leaves zero of its processes running, including children.
+- **SC-012**: Terminating a task leaves zero of the named process and its **direct** children
+  running — the first two levels, the command and what it itself spawned. Narrowed from "including
+  children" at any depth, which is SC-027's claim and not a second one: the two criteria measured
+  one property under two numbers and mapped to the same test, and a criterion that measures
+  nothing another does not is a count of coverage rather than coverage.
 - **SC-013**: Closing a workspace leaves zero of its tasks running.
 - **SC-014**: After a hundred start-and-exit cycles, the number of live task identities and of
   running processes returns to its starting value.
@@ -477,7 +495,11 @@ the task never stopped and no output was lost.
   behaviour — most abort, but one that handles the failure may legitimately continue. The purpose
   the limit serves is that a runaway cannot take the instance down, not that it dies; a mechanism
   that guarantees the kill is a cgroup, which A-TASKLIMIT records as unavailable until F005.
-- **SC-027**: Stopping a task leaves zero of the processes it spawned running, at any depth.
+- **SC-027**: Stopping a task leaves zero of the processes it spawned running at **arbitrary
+  depth** — grandchildren and below, not only the direct children SC-012 counts. The pair is now
+  separable by a case: an implementation that signals the named process rather than the group, or
+  a fixture only one level deep, satisfies SC-012 and fails this. That case is quickstart §10's
+  second mutation, which was already written against the deeper claim.
 - **SC-028**: A task given a terminal reports `isatty` true and delivers zero bytes on the error
   stream, in 100% of exercised cases; the same task without one reports false and delivers its
   error output separately, in 100%.

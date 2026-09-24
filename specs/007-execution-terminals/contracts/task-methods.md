@@ -233,8 +233,11 @@ Each fails the whole call. No process is started and no identity becomes live.
    not keep. Many viewers on one task remains a scope question spec.md leaves open, and it is the
    answer that would make the two diverge.
 8. **`pid` is returned for a task that has exited.** It is the id the process had. §15.2's PID
-   mapping is what makes reattachment after an engine restart possible at all, and a client that
-   cannot see the pid of a task it is being told about cannot reconcile with the host.
+   mapping is what makes reattachment across a **disconnection** possible at all — and only a
+   disconnection: §15.2 was narrowed to say that the map is engine memory and dies with the
+   process, so a disconnection is survivable and a crash is not, and A-TASKEXEC adds that tasks do
+   not survive a re-execution either. A client that cannot see the pid of a task it is being told
+   about cannot reconcile with the host.
 9. **Attaching neither starts, stops, resizes nor writes.** It has no side effect on the process.
    In particular it does not resize the pseudo-terminal to the reattaching panel's dimensions;
    that is a `resizePty` the client sends itself, and a client that forgets to leaves the process
@@ -366,12 +369,14 @@ of a directory.
 A workspace method, specified here because its entire obligation is executional: FR-024 and
 SC-013 are this feature's, and §4.8 added the row on 2026-09-24 for them.
 
-**§4.8 fixes the row, the tasks and the watches, and leaves three questions unanswered**: when
+**§4.8 fixes the row, the tasks and the watches, and left three questions unanswered**: when
 the response is written relative to the ends it causes, whether a second close is an error, and
-whether the registration survives. Guarantees 3, 8 and 7 answer them, and they are this
-contract's decisions filling a catalogue silence rather than readings of a statement — the same
-status `execution/list`'s element shape has. Each carries the alternative it rejected, so a
-reader who disagrees can see what they are disagreeing with.
+whether the registration survives. They are answered by **A-WSCLOSE** in Appendix A, and
+guarantees 3, 7 and 8 are this contract implementing that record rather than deciding anything of
+its own. They were taken while this document was written, which left three decisions carrying
+rejected alternatives outside Appendix A — a Principle III breach caught by analysis — and the
+record closes it. The rejected alternative each guarantee names below is A-WSCLOSE's, restated
+where the reader meets the rule.
 
 ### Guarantees
 
@@ -385,7 +390,7 @@ reader who disagrees can see what they are disagreeing with.
    enough that a developer who asked is not left waiting. This is the engine choosing a signal
    because no client named one — it is not `execution/terminate`, where FR-017 requires the
    caller to state the signal and the engine to send that one and no other.
-3. **The response is written after the last of those tasks has ended**, so SC-013's scan is
+3. **The response is written after the last of those tasks has ended** (A-WSCLOSE), so SC-013's scan is
    checkable against the response rather than against a later moment nobody defined. The wait is
    bounded by guarantee 2's escalation — about five seconds in the worst case, for all the
    workspace's tasks together rather than five seconds each, because the escalation runs per task
@@ -408,11 +413,11 @@ reader who disagrees can see what they are disagreeing with.
    unexpected.
 6. **It releases the workspace's watches** (§4.8) — F004's `WatchSet` for that workspace, emptied
    as the drop would empty it. That half is F004's contract, not this one's.
-7. **It deregisters the workspace.** It is `workspace/register`'s counterpart, and a registration
+7. **It deregisters the workspace** (A-WSCLOSE). It is `workspace/register`'s counterpart, and a registration
    that survived a close would leave an id that resolves to a root the client has said it is done
    with. A later call naming that id is `-32001`, and the client's remedy is the one `-32001`
    always carries: register it again.
-8. **Closing twice is `-32001`, and that is not the `terminate` case.** `execution/terminate` on
+8. **Closing twice is `-32001`, and that is not the `terminate` case** (A-WSCLOSE). `execution/terminate` on
    an already-exited task succeeds (FR-019) because the client was racing an end the **engine**
    decided; a workspace never closes itself, so a second close is a client bug and reporting it
    is a service rather than a punishment. The two rules differ because the races differ, and a

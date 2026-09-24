@@ -73,7 +73,7 @@ without a process, and the real process is reserved for the questions only a ker
 
 | Stand-in | Replaces | Lives in | What it must not be asked to do |
 |---|---|---|---|
-| `FakeTaskRunner` | The pseudo-terminal and the process | `engine/tests/common/` | Decide anything. It is handed bytes to emit and an exit to report, so a 50 MiB burst is a loop, not a build |
+| `FakeRunner` | The pseudo-terminal and the process | `engine/tests/common/` | Decide anything. It is handed bytes to emit and an exit to report, so a 50 MiB burst is a loop, not a build |
 | `FakeClock` (engine `Clock` port) | Elapsed time | `engine/tests/common/fake_clock.rs`, already there for F004 | Be replaced by `sleep`. The chunker's time bound is a value it is told, not a wait |
 | `apex-mock-daemon` | The remote `sshd` and its link | `client/core/tests/mock_daemon/` | Understand a request body. It answers framing and timing only — `delay=250,drop=20`, `stall=<ms>`, `close-mid-frame`, and `notify=<ms>` for a server-originated frame |
 | Recording fake transport | The wire, when the question is "how many" | `client/core/tests/common/` | Be substituted by a log grep. A log-shape change silently passes a grep and silently fails nothing |
@@ -92,8 +92,9 @@ rather than each test inventing one:
   something stops the group;
 - one that writes a 4 MiB line with no newline in it, and one that writes 50 MiB as fast as it can;
 - one that writes a known non-UTF-8 byte sequence;
-- one that allocates until it is stopped, aborting when an allocation fails rather than carrying
-  on (see *Known gaps* 4);
+- one that allocates until an allocation is **refused**, reporting the refusal and its timestamp
+  on its own output before it does anything else — that report is SC-026's observable, and
+  whether the fixture then aborts is its own policy and not the criterion (see *Known gaps* 2);
 - one that crashes on demand — a null dereference, not an exit code — so the core-dump check in §9
   has a real crash to find no dump for.
 
@@ -126,7 +127,7 @@ at the second. If a number other than zero appears after `failed:`, the run fail
 
 ## 2. US1 — run a command and watch it work
 
-**Set up**: a workspace registered against a real temp directory (no host). The `FakeTaskRunner`
+**Set up**: a workspace registered against a real temp directory (no host). The `FakeRunner`
 for everything the chunker decides, `FakeClock` for the time bound, and a locally spawned real
 process under a real pty for the three questions a fake cannot answer — `isatty`, merged streams,
 and colour surviving the journey.
@@ -157,6 +158,28 @@ separate pipe for errors passes every positive assertion here and fails only the
 US1.4 reads the working directory **from the process**, not from the engine's record of it. The
 record is what the engine intended; the process is what happened.
 
+**The sequences US1.3 and SC-002 exercise**, named here because the criterion reads "for each
+exercised sequence" and no inventory existed anywhere — which makes it satisfiable with one
+sequence, and a criterion satisfiable with one sequence measures the harness's ambition rather
+than the renderer. Five at minimum, each with its **own** hand-written expected grid:
+
+1. **SGR colour** — foreground, background, bold and reset, covering the three hues the design
+   system defines and at least one slot the library supplies (A-TERMPALETTE, SC-016).
+2. **Cursor addressing** — `CUP` to an absolute row and column, then a write, so a character lands
+   where no sequential write would put it.
+3. **Erase in line** — `EL` after a partial write, so cells that held characters read as blank
+   rather than keeping what was there.
+4. **Carriage-return redraw** — the progress-bar case: a line, a `\r`, then a **shorter** line
+   written over it. The expected grid must show the **tail of the first line still present**,
+   because `\r` returns the cursor and the shorter write overwrites only the cells it reaches; a
+   grid that assumes the row was cleared is asserting a terminal nobody has. This is the sequence
+   a developer sees every day and the one an append-only implementation gets wrong silently.
+5. **A scroll region** — `DECSTBM` set, then enough lines to scroll it, so rows inside the region
+   move and rows outside it do not.
+
+The grids are authored as fixtures rather than captured from a run: a grid recorded from the
+implementation under test is that implementation agreeing with itself.
+
 ---
 
 ## 3. US2 — type back, and mean it
@@ -170,6 +193,7 @@ cargo test -p apex-engine --test task_input
 cargo test -p apex-engine --test task_signals
 cargo test -p apex-engine --test task_resize -- --nocapture
 cargo test -p apex-engine --test task_process_group
+cargo test -p apex-engine --test task_terminate_exited
 npm run e2e                        # tests/e2e/terminal.spec.ts, Linux, per A-E2E
 ```
 
@@ -178,10 +202,10 @@ npm run e2e                        # tests/e2e/terminal.spec.ts, Linux, per A-E2
 | US2.1 | Write a string containing control bytes and a non-UTF-8 sequence to a task's input | The echo fixture returns the identical bytes; compared as bytes, not as a string |
 | US2.2 | Send an interrupt to a running task, and let the fixture handle it and keep running | The signal fixture reports catching **`SIGINT`** — the signal plan.md fixes, named rather than numbered on the wire (§4.8); its recorded input contains **zero** `0x03` bytes; and it is **still running afterwards**, because `SIGINT` does not escalate |
 | US2.3 | Resize the panel, 100 times, to alternating dimensions | The window-size fixture reports each new size; latency measured and printed, see §8 |
-| US2.3a | Start a task with `cols` and `rows` supplied, and read the size before any resize is sent | The fixture reports those dimensions at startup. They are `runTask` parameters rather than a resize (§4.8), because a process reads its terminal width before a client has had the opportunity to change it. Omitting them is a separate case with no expected value to assert — *Known gaps* 3 |
+| US2.3a | Start a task with `cols` and `rows` supplied, and read the size before any resize is sent | The fixture reports those dimensions at startup. They are `runTask` parameters rather than a resize (§4.8), because a process reads its terminal width before a client has had the opportunity to change it. Omitting them is no longer a case with no expected value: the terminal is created **80 × 24** (§4.8, plan.md's *Fixed Quantities*), and the same fixture started without either dimension must report exactly that |
 | US2.3b | Send `execution/resizePty` to a task started with `pty: false` | Nothing happens and nothing is reported: a notification has no way to refuse, so the engine ignores it silently (§4.8). The assertion is that the task keeps running and emits no error frame |
 | US2.4 | Run a fixture that asks whether it is attached to a terminal | It reports yes, and it colours its output without being asked to |
-| US2.5 | Ask to stop a task, and ask again after it has gone | Both requests succeed (FR-019); the second is not an error for racing an exit |
+| US2.5 | Ask to stop a task, and ask again after it has gone but **before** its exit has been delivered | Both requests succeed (FR-019); the second is not an error for racing an exit. Once the exit has been delivered the identity is released and a further stop is `-32006` — the two are different moments, and a check that does not separate them passes for an implementation with no `-32006` at all |
 | US2.6 | Stop a task whose fixture ignores the first signal, asking for `SIGTERM` | The fixture reports catching **`SIGTERM`** and survives it; it is gone after **5 s**, killed by `SIGKILL`. Both go to the process **group**, so its children go with it |
 
 US2.6 is assertable end to end, and it was not when this guide was first written. The
@@ -207,7 +231,7 @@ dies cannot tell the two rules apart, and an implementation that escalates every
 
 ## 4. US3 — know how it ended
 
-**Set up**: `FakeTaskRunner` for the reporting shape and the identity lifecycle, real processes
+**Set up**: `FakeRunner` for the reporting shape and the identity lifecycle, real processes
 for the process-tree and workspace-close counts, because "zero running" is a claim about the
 operating system.
 
@@ -249,7 +273,7 @@ sentence, and the client that has to branch on it is left guessing.
 
 ## 5. US4 — a build must not freeze the editor
 
-**Set up**: `FakeTaskRunner` driving 50 MiB through the real chunker and the real `FrameWriter`
+**Set up**: `FakeRunner` driving 50 MiB through the real chunker and the real `FrameWriter`
 F004 built, `FakeClock` for the time bound, and the recording transport counting and timing what
 crosses the boundary. No process: the question is what the queue does, and §4.6 is about the
 queue.
@@ -332,13 +356,13 @@ that nothing watches and nothing can reach.
 
 ## 7. Every success criterion
 
-All 28. Each row names the command and the **observable** — the thing you look at, not the thing
+All 30. Each row names the command and the **observable** — the thing you look at, not the thing
 the code intends.
 
 | SC | Claim | Command | Observable |
 |---|---|---|---|
 | SC-001 | Output in the panel within 500 ms | `cargo test -p apex-engine --test task_latency -- --nocapture` | **Printed** p99 in ms over ≥100 writes, harness delay excluded (§8) |
-| SC-002 | The cell grid matches a hand-written expected grid, 100% of exercised cases | `npm run e2e` (`terminal-ansi.spec.ts`), `npm run gate:fidelity` | Characters, foreground and background colour and cursor position after each scripted sequence, compared cell by cell against a grid written by hand for that sequence |
+| SC-002 | The cell grid matches a hand-written expected grid, 100% of exercised cases | `npm run e2e` (`terminal-ansi.spec.ts`), `npm run gate:fidelity` | Characters, foreground and background colour and cursor position after each scripted sequence, compared cell by cell against a grid written by hand for that sequence. **The exercised set is the five sequences §2 enumerates** — SGR colour, cursor addressing, erase-in-line, carriage-return redraw and a scroll region — and a run that covers fewer is a partial run, not a pass |
 | SC-003 | Byte-for-byte, non-UTF-8 included, zero substitutions | `cargo test -p apex-engine --test task_binary_output`, `cargo test -p apex-shell --test observe_task` | Digest of the bytes the fixture wrote equals the digest of the bytes decoded from `data`, which is base64 (§4.8), at the client's inbound adapter; zero U+FFFD anywhere in the delivered bytes |
 | SC-004 | Order preserved, 100% of exercised cases | `cargo test -p apex-engine --lib output`, `cargo test -p apex-engine --test task_ordering` | A monotonically numbered fixture stream reassembles with zero gaps and zero transpositions |
 | SC-005 | A 4 MiB line delivered whole, each chunk within the frame cap | `cargo test -p apex-engine --test task_chunking -- --nocapture` | **Printed** total bytes and largest chunk: total exactly 4 MiB, largest at or under the **64 KiB** raw bound the source exports, zero truncation — and the frame carrying it under §4.1's 1 MiB once base64 has inflated it by 4/3 |
@@ -348,13 +372,13 @@ the code intends.
 | SC-009 | Resize observed within 500 ms | `cargo test -p apex-engine --test task_resize -- --nocapture` | **Printed** p99 over ≥100 resizes, from the notification leaving the boundary to the fixture reporting the new size (§8) |
 | SC-010 | Exit code reported 100%; signal death distinguishable 100% | `cargo test -p apex-engine --test task_lifecycle` | Two distinct reported states across both fixtures, not one field carrying a convention |
 | SC-011 | Output before an exit delivered before the exit, zero lost | `cargo test -p apex-engine --test task_ordering` | Index of the final chunk < index of the exit at the outbound sink, across 100 runs; delivered byte count equals written |
-| SC-012 | Terminating leaves zero processes, children included | `cargo test -p apex-engine --test task_process_group` | `/proc` scan of the task's process group after termination: zero survivors |
+| SC-012 | Terminating leaves zero of the named process and its **direct** children | `cargo test -p apex-engine --test task_process_group` | `/proc` scan of the task's process group after termination: zero survivors at the first two levels. The arbitrary-depth claim is SC-027's, and the two are deliberately not the same assertion |
 | SC-013 | Closing a workspace leaves zero tasks running | `cargo test -p apex-engine --test task_workspace_close` | The same scan, for every task of that workspace, after a `workspace/close` request (§4.8) — with a task in a second workspace left running, so a total shutdown cannot pass as a scoped one |
 | SC-014 | 100 cycles return identity and process counts to start | `cargo test -p apex-engine --test task_leak` | Live-identity count and child-process count read before and after the loop, both identical |
 | SC-015 | An unstartable command is a start failure 100%, a task exit in zero | `cargo test -p apex-engine --test task_start_failure` | **`-32011`** on the `runTask` response — not `-32003`, which is reserved for paths inside a workspace; **zero** `execution/onExit` frames carrying that id |
 | SC-029 | A running task's effective uid equals the engine's | `cargo test -p apex-engine --test task_identity -- --nocapture` | Both uids printed, not compared silently. Zero tasks running as another user. Skipped rather than passed where `/proc` is restricted, and the skip appears in the validation record |
 | SC-016 | Panel chrome and the three defined hues resolve to tokens; the rest to the library's palette (A-TERMPALETTE) | `npm run lint:ds`, `npm run test:unit -- tests/unit/terminal-palette.test.ts`, `npm run e2e` (`terminal-tokens.spec.ts`) | Source: lint passes. Rendered: the computed colour of the success, error and warning slots equals the extracted token value, and the remaining thirteen ANSI slots equal the library's default — asserted as the library's default rather than left unasserted, so a hand-typed hex that happens to look right still fails. The assertion is on computed style because the library's palette lives in a dependency `lint:ds` cannot see — see §11 |
-| SC-017 | The suite runs with no remote host and no network | `make no-network` | The Rust suite passes with no interfaces; the target states its own degraded fallback where user namespaces are unavailable |
+| SC-017 | The suite runs with no remote host and no network | `make no-network` | The Rust suite passes with no interfaces — **and the record names which of the target's two modes ran**. The `unshare -rn` mode is the check; the source-scan fallback where user namespaces are unavailable is a **skip**, not a pass, because F010 adds no network literal for a grep to find and the fallback therefore passes whatever the code does (T128) |
 | SC-018 | A task survives a drop 100%, zero terminated by the drop alone | `cargo test -p apex-engine --test task_detach` | Process alive after the transport closes; exits attributable to the close counted, and the count is 0 |
 | SC-019 | Reattach receives every missed byte, in order, first | `cargo test -p apex-engine --test task_reattach` | The response's `retained` count equals what was written while detached, and those bytes arrive as ordinary notifications **after** the response, in order, each on the stream it would have used live (§4.8); the first post-attach chunk's index is the last pre-drop index plus one |
 | SC-020 | An exit while detached is reported on reattach, 100% | `cargo test -p apex-engine --test task_reattach` | The attach result carries `running: false` and exactly one of `exitCode` / `signal`; the retained output is replayed, and the exit is delivered after it |
@@ -363,18 +387,22 @@ the code intends.
 | SC-023 | A restarted client reaches every task it started, zero unreachable | `cargo test -p apex-shell --test task_restart`, `cargo test -p apex-shell --test session_migration`, `cargo test -p apex-engine --test task_list` | Every identity in the reloaded store attaches; and with the store discarded entirely, `execution/list` enumerates every task the engine holds and each one attaches by the id it returned |
 | SC-024 | Retained history within its bound across 50 MiB | `npm run test:unit -- tests/unit/terminal-history.test.ts`, `npm run perf:budget` | **Printed** lines and bytes retained by the panel after the burst, against **10 000 lines** — the bound the source exports, roughly 2 MB at a typical line |
 | SC-025 | Environment in zero log lines and zero crash reports | `cargo test -p apex-engine --test task_env_redaction` | A sentinel value appears in no captured log line and no crash payload, including on the start-failure path — **and** a task that segfaults leaves zero core files, because a dump is a crash report carrying the whole environment and `RLIMIT_CORE` is 0 (FR-005a) |
-| SC-026 | A process over its memory limit dies within 2 s; engine survives 100% | `cargo test -p apex-engine --test task_limits -- --nocapture` | **Printed** interval from the crossing allocation to the exit notification, against 2 000 ms, with the task bounded at **16 GiB** of address space — soft **and** hard, since a process may raise a soft limit to the hard one; the engine answers a subsequent request. Read *Known gaps* 4 before believing this one |
-| SC-027 | Stopping leaves zero spawned processes, at any depth | `cargo test -p apex-engine --test task_process_group` | `/proc` scan across three generations of the fixture's tree: zero survivors at every depth |
+| SC-026 | A process over its memory limit is **denied the allocation** within 2 s; engine survives 100% | `cargo test -p apex-engine --test task_limits -- --nocapture` | **Printed** interval from the allocation being requested to the fixture reporting it **denied**, against 2 000 ms, with the task bounded at **16 GiB** of address space — soft **and** hard, since a process may raise a soft limit to the hard one; the engine answers a subsequent request. The observable is the denial the fixture reports, **never an exit notification**: `RLIMIT_AS` fails an allocation and kills nothing, so measuring to an exit measures `fixture_alloc`'s abort policy and fails a correct implementation whose task handles `ENOMEM`. Read *Known gaps* 2 before believing this one |
+| SC-027 | Stopping leaves zero spawned processes at **arbitrary depth** | `cargo test -p apex-engine --test task_process_group` | `/proc` scan across three generations of `fixture_tree`: zero survivors below the direct children SC-012 counts. An implementation that signals the named process rather than the group passes SC-012's row and fails this one, which is what makes the pair two criteria rather than one |
 | SC-028 | With a pty: `isatty` true, zero stderr bytes; without: false and separated | `cargo test -p apex-engine --test task_streams` | Fixture prints its own `isatty` verdict; `onStderr` byte count is 0 in the pty case, non-zero and separable in the other |
+| SC-030 | The panel answers a keystroke within §1.4's budget through 50 MiB | `npm run perf:budget` (`tests/perf/terminal-keystroke.spec.ts`) | **Printed** p99 over ≥100 keystrokes, measured **panel-side** at the interface boundary with harness delay excluded, against §1.4's 250 ms, while a task emits 50 MiB (§8). Distinct from SC-006, which measures the same budget at the **transport** boundary: a panel can starve while the transport stays healthy, and it is the panel the developer is typing into |
 
 ---
 
-## 8. The measurements (A-NFR binds all six)
+## 8. The measurements (A-NFR binds all eight)
 
-Six criteria are performance or volume claims: **SC-001** (500 ms to the panel), **SC-005** (a
-4 MiB line), **SC-006** (the budget under 50 MiB), **SC-009** (500 ms to observe a resize),
-**SC-021**/**SC-024** (bytes held) and **SC-026** (2 seconds to die). For **each** of them A-NFR
-applies in full, and this guide states it once so no measurement quietly drops a clause:
+Eight criteria are performance or volume claims: **SC-001** (500 ms to the panel), **SC-005** (a
+4 MiB line), **SC-006** (the budget under 50 MiB at the transport boundary), **SC-009** (500 ms to
+observe a resize), **SC-021** and **SC-024** (bytes held, one bound each and counted separately),
+**SC-026** (2 seconds to a denied allocation) and **SC-030** (the budget under 50 MiB at the
+panel). The heading said six over a list of seven, which is the arithmetic a reader trusts and
+should not have to check. For **each** of them A-NFR applies in full, and this guide states it
+once so no measurement quietly drops a clause:
 
 - **p99**, not mean and not max.
 - Measured at the **interface/transport boundary**, not wall clock end to end.
@@ -391,7 +419,7 @@ cargo test -p apex-engine --test task_resize    -- --nocapture
 cargo test -p apex-engine --test task_chunking  -- --nocapture
 cargo test -p apex-engine --test task_retention -- --nocapture
 cargo test -p apex-engine --test task_limits    -- --nocapture
-npm run perf:budget
+npm run perf:budget                # tests/perf/terminal-budget.spec.ts and terminal-keystroke.spec.ts
 ```
 
 Expected shape of the output, with the numbers to be filled by the run:
@@ -403,7 +431,8 @@ SC-006  interactive req under burst   p99 = ___ ms      budget 250 ms       (n=_
 SC-009  resize to observed size       p99 = ___ ms      budget 500 ms       (n=___)
 SC-021  bytes held / bytes delivered  held = ___ B      bound 4194304 B     (written=___ B)
 SC-024  panel history after 50 MiB    held = ___ lines  bound 10000 lines   (___ B)
-SC-026  over-limit to exit reported   p99 = ___ ms      budget 2000 ms      (n=___, limit 16 GiB)
+SC-026  request to denied allocation  p99 = ___ ms      budget 2000 ms      (n=___, limit 16 GiB)
+SC-030  keystroke answered at panel   p99 = ___ ms      budget 250 ms       (n=___, burst=50 MiB)
 ```
 
 **SC-001's measurement point has to be stated, because it is the one that can be measured wrongly
@@ -424,7 +453,7 @@ the chunk size, which is the moment the assertion stopped meaning anything — F
 this and it applies four times over here. Note that 64 KiB **is** `65536`, so the literal now
 looks right, which makes this the easiest of the four to get wrong and the hardest to notice.
 
-**And the values now exist.** plan.md's *Fixed Quantities* table states twelve of them, with the
+**And the values now exist.** plan.md's *Fixed Quantities* table states thirteen of them, with the
 reasoning for each. The four this section depends on are the chunker's size bound (**64 KiB** raw),
 the chunker's time bound (**20 ms**), the amount buffered before a process is slowed (**4 MiB** per
 task) and the panel's retained history (**10 000 lines**). Every `bound` column above is now
@@ -456,7 +485,7 @@ check is decoration.
 | **A task terminated by a disconnection alone** (SC-018) | The task's process still present after the transport closes, plus a count of exits attributable to the close | The engine must still be running when the transport closes — if the harness kills the engine, everything dies and the check fails for F020's reason instead of F010's. And there must be a task with **no** reason of its own to exit during the window |
 | **A second process under a live identity** (SC-022) | Process count under the identity's group before and after the refused `runTask` | The first task must still be **running** at the moment of the second call. Against a task that has exited, reuse is legitimate (FR-023) and the refusal would be the bug. Assert on the process count, not on the error: an implementation that spawns and then reports an error passes an error-only assertion |
 | **A task's environment in a log line** (SC-025) | A sentinel value grepped across every captured log line and crash payload for the run | The environment must contain a value that could only have come from the environment, and the task must be exercised on **both** paths — started successfully, and failed to start. The failure path is where the request is most likely to be logged whole |
-| **A core file left by a task that crashed** (SC-025, FR-005a) | A scan of the task's working directory and of the host's configured dump location after a task segfaults | The fixture must actually **crash** rather than exit non-zero, and the host must be one that would otherwise write a dump — read `ulimit -c` before the run and record it, because on a host whose limit is already zero this check passes without the engine having done anything. A dump is a crash report carrying the whole environment, which is the thing FR-005a forbids, so `RLIMIT_CORE` is 0 by requirement rather than by taste |
+| **A core file left by a task that crashed** (SC-025, FR-005a) | A scan of the task's working directory and of the host's configured dump location after a task segfaults | The fixture must actually **crash** rather than exit non-zero, **and the harness must raise `ulimit -c` first** — to `unlimited`, or to any non-zero value — so the host would write a dump if the engine did not stop it. `ulimit -c` is 0 by default on many distributions, and there this check passes for free without the engine having done anything. Read it, record it, raise it; where the harness cannot raise it — a hard limit of 0 it may not lift — the check is recorded **SKIPPED** and never PASSED, which is the rule SC-026 already applies in this document, applied to the check that needs it just as much. A dump is a crash report carrying the whole environment, which is the thing FR-005a forbids, so `RLIMIT_CORE` is 0 by requirement rather than by taste |
 | **An exit report carrying both `exitCode` and `signal`, or neither** (SC-010, §4.8) | The decoded `onExit` params for every task in the suite, asserted on which field is **present** rather than on its value, and on `signal` being a **name** rather than a number | Both fixtures must run in the same suite — one exiting with a code, one killed by a signal. A client reading `exitCode` from a signalled death gets `null` or `0` depending on the serialiser, and both of those read as success, so an assertion on values cannot see the bug that an assertion on presence catches. A numeric `signal` is the same class of defect one layer down: `9` is a valid integer on any platform and means something different on each |
 | **A task surviving an engine re-execution unwatched** (A-TASKEXEC) | Process count for each task's group after `session/restart`, **and** each id's presence in `session/onRestart`'s `unpreserved` list | The tasks must be running at the moment the restart is requested, and the check must count **processes** as well as read the notification. An implementation that names an id in `unpreserved` and leaves its process running produces exactly the outcome A-TASKEXEC exists to prevent — a build still burning CPU that nothing can reach — and passes any assertion written against the list alone |
 
@@ -466,7 +495,7 @@ check is decoration.
 
 This project's practice: break the thing deliberately, confirm the test fails, revert. Per A-TEST,
 a check guarding a property that would otherwise be invisible is verified by breaking the property.
-Seven worth running here, the first four at minimum.
+Eight worth running here, the first four at minimum.
 
 | Mutation | Test that must fail | What it is really testing |
 |---|---|---|
@@ -477,6 +506,7 @@ Seven worth running here, the first four at minimum.
 | **Make `runTask` attach when the identity is live** — the alternative research.md rejected | `task_reattach`'s SC-022 assertion | Whether the assertion counts **processes** or reads the response. This mutation returns a perfectly plausible success, so a test that trusts the envelope reports a clean pass over two builds running under one identity |
 | **Encode output as a lossy UTF-8 string** on the way to the wire, instead of base64 | `task_binary_output`'s SC-003 assertion | Whether the fixture writes a byte sequence that is not valid UTF-8. With ASCII-only fixtures every substitution is a no-op and the criterion is vacuous |
 | **Set the memory limit soft only**, leaving the hard limit where the host put it | `task_limits`' SC-026 assertion | Whether the limit is a limit. A process may raise its own soft limit as far as the hard one, so a soft-only ceiling is advisory and a runaway simply lifts it. Nothing fails until a real runaway arrives, which is the one occasion nobody is watching a test — this is why plan.md states both |
+| **Make the runner `setuid` to another user** between fork and exec, so the task runs as somebody the engine is not | `task_identity`'s SC-029 assertion | Whether SC-029 has a falsifier at all. A task's uid equals the engine's **by construction** under `fork`/`exec`, so nothing short of a deliberate `setuid` can make the criterion fail — and it was the only one of the thirty appearing in neither §9's negative checks nor this table. A criterion nothing can break is a criterion nothing is measuring. The mutation needs a harness permitted to change uid (root, or `CAP_SETUID`); where the host refuses, say so and record SC-029 as **unfalsified on this host** rather than as a mutation that passed |
 
 Run each as: apply the mutation, run the named target, confirm it fails with the assertion you
 expected rather than a compile error, revert, confirm green.
@@ -525,9 +555,9 @@ nobody produced is the failure mode A-TEST names — confidence that has not bee
 | `make test` | |
 | `make gate` | |
 | `make no-network` (SC-017) | |
-| The seven printed measurements (§8) | |
+| The eight printed measurements (§8) | |
 | The nine negative checks (§9), each with its fixture condition confirmed present | |
-| The seven mutations (§10), each failing then reverted | |
+| The eight mutations (§10), each failing then reverted | |
 
 ---
 
@@ -562,9 +592,12 @@ Stated here rather than discovered by a reviewer.
 
 4. **SC-017's network check depends on the host, and must not be read too strictly.**
    `make no-network` uses `unshare -rn` where unprivileged user namespaces are available and
-   degrades to a source scan where they are not, which is weaker and says so. Note that F010's
-   suite deliberately spawns real local processes: that is not a network dependency, and a future
-   tightening of this check that forbids spawning would fail this feature for the wrong reason.
+   degrades to a source scan where they are not. The fallback is not merely weaker — for this
+   feature it cannot fail: it greps for network literals and F010 adds none, so it reports success
+   whatever the code does. **The record must name which mode ran, and the grep mode is a skip
+   rather than a pass** (T128). Note also that F010's suite deliberately spawns real local
+   processes: that is not a network dependency, and a future tightening of this check that forbids
+   spawning would fail this feature for the wrong reason.
 
 **Six gaps this guide carried are closed, recorded here so nobody re-opens them as though they
 were still live.** The plan stated none of the quantities four criteria needed; it now fixes
@@ -597,11 +630,13 @@ make test \
 
 All green, with the printed numbers from §8 recorded in the pull request per the constitution's
 evidence rule, the nine negative checks in §9 each confirmed to have the fixture condition that
-lets them fail, and the seven mutations in §10 each confirmed to fail before being reverted. A
+lets them fail, and the eight mutations in §10 each confirmed to fail before being reverted. A
 claim that something passes is accompanied by the command and its output, or it is not a claim.
 
 What blocked this list no longer does: plan.md's *Fixed Quantities* states every number §8
-measures against, so each printed value now has a bound beside it and each gate can fail. What is
-still owed is smaller, and it is in *Known gaps* — a `pty: true` task started without `cols` and
-`rows` has a size nobody chose, and SC-026's limit bounds address space rather than resident
-memory, which decides what "terminated" can honestly mean in that one measurement.
+measures against, so each printed value now has a bound beside it and each gate can fail; and the
+un-sized pseudo-terminal is closed everywhere — `cols` and `rows` omitted default to **80 × 24**,
+in §4.8, in plan.md's *Fixed Quantities* and in the use case (T053). What is still owed is smaller
+and is in *Known gaps*: SC-026's limit bounds address space, so what it can honestly assert is the
+**denied allocation** and not a death, which is how the criterion, this section's §7 row and §8's
+measurement now all read.

@@ -283,7 +283,7 @@ A second record was written afterwards, by the reconciliation that applied the e
 is named here because it changes what §15.3 promises a running task rather than anything this
 phase decided: **A-TASKEXEC** — an engine re-execution terminates every running task and names it
 in `session/onRestart`'s `unpreserved` list, rejecting the alternative of carrying the
-pseudo-terminal descriptors across the `exec` by clearing `FD_CLOEXEC`. Appendix A now holds 39
+pseudo-terminal descriptors across the `exec` by clearing `FD_CLOEXEC`. Appendix A now holds 42
 records.
 
 The system specification needed three edits. Five landed:

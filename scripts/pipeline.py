@@ -45,7 +45,7 @@ ANALYSIS_INPUTS = ("spec.md", "plan.md")
 
 MAX_ANALYSIS_PASSES = 6
 
-TASK_LINE = re.compile(r"^- \[([ Xx])\] (T\d+)\b(.*)$", re.M)
+TASK_LINE = re.compile(r"^- \[([ Xx])\] (T\d+[a-z]?)\b(.*)$", re.M)
 CHECKBOX_LINE = re.compile(r"^\s*- \[[ Xx]\]", re.M)
 PATH_TOKEN = re.compile(r"[A-Za-z0-9_.@${}-]+(?:/[A-Za-z0-9_.@${}-]+)+")
 MD_LINK_TARGET = re.compile(r"\]\([^)]*\)")

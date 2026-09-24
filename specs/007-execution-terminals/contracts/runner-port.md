@@ -377,9 +377,16 @@ impl ResourceLimits {
 ```
 
 **What they catch** (A-TASKLIMIT): the single runaway — a test with an allocation bug, a
-development server that leaks, a tool that never frees. The process dies at its ceiling in seconds
-and nothing else notices, which is what SC-026 measures: terminated within 2 seconds, engine
-survives in 100% of exercised cases.
+development server that leaks, a tool that never frees. The process is **refused further address
+space at its ceiling**, in seconds and without anything else noticing, which is what SC-026
+measures: the allocation **denied** within 2 seconds of being requested, and the engine surviving
+in 100% of exercised cases. The observable is the denied allocation and its timestamp, **reported
+by the fixture**, not an exit notification. `RLIMIT_AS` fails an allocation and kills nothing;
+what the process does next — abort, retry, carry on — is the program's own policy, so measuring to
+an exit would measure `fixture_alloc`'s abort policy and would fail a correct implementation whose
+task happens to handle `ENOMEM`. The purpose the limit serves is that a runaway cannot take the
+instance down, not that it dies; the mechanism that guarantees a kill is a cgroup, which
+A-TASKLIMIT records as unavailable until F005.
 
 **What they do not catch, stated because a reader will otherwise assume they do:**
 
@@ -397,12 +404,13 @@ survives in 100% of exercised cases.
   user as every task it starts, so setting it for a task bounds the developer's entire session
   including the engine. A limit that can starve the engine is not a limit that protects it. A
   fork bomb remains a tree problem, owed with the rest.
-- **Disk, at any granularity.** `RLIMIT_FSIZE` is not set, because plan.md fixes no value for it
-  and FR-006b forbids this document inventing one. So neither a single enormous file nor a tree
-  writing ten thousand small ones is bounded, and a task can fill the volume. §5.5 and §16
-  accept an unquota'd disk under single tenancy — "a developer filling their own disk" — which
-  covers the consequence, and plan.md's *File size* row now declines the limit explicitly, with
-  the reason: the limit caps a single file, and a build legitimately writes large ones.
+- **Disk, at any granularity.** `RLIMIT_FSIZE` is not set, because plan.md's *File size* row
+  **declines** it rather than fixing a value — the limit caps a **single file** and a build
+  legitimately writes large ones, so any value low enough to stop a runaway log breaks real
+  output — and FR-006b forbids this document inventing one where the plan has not. So neither a
+  single enormous file nor a tree writing ten thousand small ones is bounded, and a task can fill
+  the volume. §5.5 and §16 accept an unquota'd disk under single tenancy — "a developer filling
+  their own disk" — which covers the consequence.
 - **Anything about the pseudo-terminal's kernel buffer.** That buffer is what slows a producer
   when nobody reads (T7, research.md, *Backpressure comes for free*), and no limit here changes
   its size or its behaviour.
@@ -527,7 +535,7 @@ which workspace a task belongs to, which is why FR-024's "closing a workspace te
 tasks" is a use-case rule applied through `TaskControl::signal` rather than anything the port
 offers. §4.8 gained `workspace/close` on 2026-09-24, so the frame that triggers that rule now
 exists; what it needs from the port did not change, and *What `execution/list` and
-`workspace/close` need* below says why.
+`workspace/close` need* above says why.
 
 **The client.** `LocalTaskProvider` returns `Unsupported` for every task method in v1, and no
 local pseudo-terminal ships. §13.2 was amended on 2026-09-24 to say so in the system specification:

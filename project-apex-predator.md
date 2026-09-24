@@ -2901,8 +2901,11 @@ What bounds that threat depends on the shape of the runaway, and on the size of 
 
 §1 puts the instance at 16 vCPU and 128 GB. At that size the realistic runaway is a **single
 process** — a test with an allocation bug, a development server that leaks, a tool that never
-frees. A per-process limit fits that exactly: the process dies at its ceiling in seconds and
-nothing else notices.
+frees. A per-process limit fits that exactly: the process is **refused further address space at
+its ceiling**, in seconds and without anything else noticing. What it does then is its own — most
+abort, and one that handles the failure may legitimately carry on. The limit denies the
+allocation; it does not kill, and SC-026 measures the denial for that reason. The protection is
+that the runaway cannot take the instance down, not that it dies.
 
 The case a per-process limit cannot catch is a **tree** that collectively exhausts while every
 member stays under its own ceiling — sixty-four compilers at three gigabytes each is a hundred

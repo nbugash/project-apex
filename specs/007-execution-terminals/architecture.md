@@ -112,7 +112,7 @@ flowchart TD
 
 | Component | Responsibility | Entities owned |
 |-----------|----------------|----------------|
-| `rpc::dispatch` (engine inbound adapter) | Route the seven `execution/*` rows and `workspace/close`; **reach the method match for a frame with no `id`**, which it cannot do today | none |
+| `rpc::dispatch` (engine inbound adapter) | Route the **six inbound** of §4.8's nine `execution/*` rows — `runTask`, `attach`, `list`, `writeStdin`, `resizePty`, `terminate`; the other three are notifications the engine emits and reach no dispatch — and `workspace/close`; **reach the method match for a frame with no `id`**, which it cannot do today | none |
 | `StartTask` / `AttachTask` / `ListTasks` / `WriteInput` / `Resize` / `Stop` / `CloseWorkspace` (engine use cases) | Refuse a live identity (`-32010`), resolve and contain `cwd`, merge the environment, choose 80 x 24 when the client named no size, time the `SIGTERM`-to-`SIGKILL` escalation, release a delivered identity | `TaskSet` |
 | `TaskSet` (engine domain) | The engine's live tasks, keyed engine-wide rather than per workspace; start, get, release, list, drain per workspace, drain all | `Task`, `TaskId` |
 | `TaskRunner` (engine port) | Spawning a process as a **capability**, yielding a pid and the two halves of it | `ResourceLimits` |
@@ -121,7 +121,7 @@ flowchart TD
 | reader thread, one per task (`task_threads.rs`) | Block on one descriptor with the chunker's remaining time as its timeout; hand bytes up; stop reading at the bound | none |
 | Chunker and retention (`application/output.rs`, pure) | The 64 KiB and 20 ms bounds, per-task ordering, the 4 MiB retention bound, the decision to stop reading, and what an attachment is still owed | `OutputChunk`, `RetainedOutput`, `ExitStatus` |
 | `Clock` (engine port, F004's) | Time, so the time bound is driven by `advance` and never by the wall clock | none |
-| Outbound priority queue (engine, **new**) | Two classes on the engine's outbound path, interactive ahead of task output, so §4.6 holds in the direction F010 floods | none |
+| Outbound priority queue (engine, **new**) | A-PRI's two classes on the engine's outbound path, `Interactive` ahead of `Background`, a task's output being `Background`, so §4.6 holds in the direction F010 floods | none |
 | `FrameWriter` (engine, F004's) | One frame under the lock, then release | none |
 | `SessionRegistry` (engine) | Carries F010's terminated task identities in `unpreserved` across a re-execution | none |
 | `ObserveTask` (client use case) | Chunk to panel, exit to panel, and what a reconnection is told (FR-032) | none |
@@ -181,8 +181,9 @@ lifetimes rather than networks, and they are not the same as anything else's:
   (A-TASKEXEC, §15.3).
 - It **does survive an engine crash, unreachable** — still running, still in its own process group,
   reachable by pid and by nothing the protocol exposes. §15.2 states this rather than claiming
-  recovery, and `execution/list` does not close it: enumeration reports what the engine holds, and
-  after a crash the engine holds nothing.
+  recovery, FR-025 excludes it by name rather than forbidding what the system admits it does, and
+  `execution/list` does not close it: enumeration reports what the engine holds, and after a crash
+  the engine holds nothing.
 
 There is no new network boundary, no new port, no new process on the developer's machine, and
 nothing persisted anywhere: every entity in data-model.md is engine memory and dies with the engine
