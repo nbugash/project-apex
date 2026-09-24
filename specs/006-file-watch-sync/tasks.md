@@ -146,9 +146,9 @@ invalidation, a stale tree, no refetch, and interactions still inside budget.
 
 ### Tests for User Story 2
 
-- [ ] T050 [P] [US2] Unit test in `engine/tests/bulk_threshold.rs`: 255 distinct paths in one second yield individual events; 256 yield exactly one `invalidateAll` and **zero** individual events for that window (FR-015, SC-004)
-- [ ] T051 [P] [US2] Unit test in `engine/tests/overflow.rs`: a `RawKind::Overflow` yields `invalidateAll`, because events the kernel dropped are changes nobody would otherwise hear about (W7, A-COALESCE, FR-005)
-- [ ] T052 [P] [US2] Integration test in `client/core/tests/invalidate_all.rs`: a wholesale invalidation marks the tree stale and discards **zero** content blobs (FR-018, SC-006)
+- [X] T050 [P] [US2] Unit test in `engine/tests/bulk_threshold.rs`: 255 distinct paths in one second yield individual events; 256 yield exactly one `invalidateAll` and **zero** individual events for that window (FR-015, SC-004)
+- [X] T051 [P] [US2] Unit test in `engine/tests/overflow.rs`: a `RawKind::Overflow` yields `invalidateAll`, because events the kernel dropped are changes nobody would otherwise hear about (W7, A-COALESCE, FR-005)
+- [X] T052 [P] [US2] Integration test in `client/core/tests/invalidate_all.rs`: a wholesale invalidation marks the tree stale and discards **zero** content blobs (FR-018, SC-006)
 - [ ] T053 [P] [US2] Integration test in `client/core/tests/lazy_requery.rs`: after an invalidation, zero listing requests are issued until the developer navigates (FR-017, SC-012a)
 
 ### Implementation for User Story 2
@@ -176,12 +176,12 @@ without the file being altered underneath them and without focus moving.
 
 ### Tests for User Story 3
 
-- [ ] T061 [P] [US3] Integration test in `client/core/tests/unproven.rs`: an event naming a cached file sets `unproven`, discards zero blobs and triggers zero fetches (FR-019a, SC-006a)
-- [ ] T107 [P] [US3] Test in `client/core/tests/unproven_idempotent.rs`: marking an already-unproven blob changes nothing and causes **zero** second fetches. The hash already disagrees and the file is already unproven ([file-events.md](./contracts/file-events.md) obligation 17, spec edge case)
+- [X] T061 [P] [US3] Integration test in `client/core/tests/unproven.rs`: an event naming a cached file sets `unproven`, discards zero blobs and triggers zero fetches (FR-019a, SC-006a)
+- [X] T107 [P] [US3] Test in `client/core/tests/unproven_idempotent.rs`: marking an already-unproven blob changes nothing and causes **zero** second fetches. The hash already disagrees and the file is already unproven ([file-events.md](./contracts/file-events.md) obligation 17, spec edge case)
 - [ ] T062 [P] [US3] Integration test in `client/core/tests/unproven_offline.rs`: an unproven blob is still served while disconnected, presented as possibly stale (FR-019b, SC-006b)
-- [ ] T063 [P] [US3] Test in `client/core/tests/rename_subtree.rs` asserting the separator boundary: renaming `src` rewrites `src` and everything under `src/`, and leaves `src-generated` **untouched**. Assert on the returned row count, not only on spot checks
+- [X] T063 [P] [US3] Test in `client/core/tests/rename_subtree.rs` asserting the separator boundary: renaming `src` rewrites `src` and everything under `src/`, and leaves `src-generated` **untouched**. Assert on the returned row count, not only on spot checks
 - [ ] T064 [P] [US3] Test in `client/core/tests/rename_subtree_atomic.rs`: a rewrite that fails partway rolls back entirely, leaving a consistent stale projection rather than a half-renamed one
-- [ ] T065 [P] [US3] Test in `client/core/tests/rename_own_row.rs`: the renamed directory's **own** row gets its caller-derived parent, not the `substr` arithmetic that works for its descendants — one formula would set the directory's parent to itself
+- [X] T065 [P] [US3] Test in `client/core/tests/rename_own_row.rs`: the renamed directory's **own** row gets its caller-derived parent, not the `substr` arithmetic that works for its descendants — one formula would set the directory's parent to itself
 
 ### Implementation for User Story 3
 

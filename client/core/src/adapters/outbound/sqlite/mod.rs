@@ -420,7 +420,6 @@ impl WorkspaceCache for SqliteWorkspaceCache {
 
     fn rename_subtree(&self, ws: &WorkspaceId, from: &RelPath, to: &RelPath) -> CacheResult<usize> {
         let from_prefix = format!("{}/", from.as_str());
-        let to_prefix = format!("{}/", to.as_str());
         let to_parent = to.parent().unwrap_or_else(RelPath::root);
         let cut = from.as_str().len();
 
@@ -452,19 +451,24 @@ impl WorkspaceCache for SqliteWorkspaceCache {
             // The trailing separator is the whole safety property. Matching on `from` alone
             // would rewrite `src-generated` when renaming `src`, silently corrupting rows
             // nobody touched.
+            // One formula for both columns, and it took a failing test to see why. The
+            // separator must stay in the remainder rather than being skipped: a descendant's
+            // `parent_path` can be exactly `from`, where skipping it yields the empty string
+            // and the new parent becomes `/syntax/` with a trailing separator -- which no
+            // child ever matches, so the whole subtree becomes unreachable while every row
+            // still looks right.
             let descendants = tx.execute(
                 "UPDATE files
-                    SET relative_path = ?4 || substr(relative_path, ?6),
-                        parent_path   = ?4 || substr(parent_path, ?6)
+                    SET relative_path = ?4 || substr(relative_path, ?5),
+                        parent_path   = ?4 || substr(parent_path, ?5)
                   WHERE workspace_id = ?1
                     AND relative_path > ?2 AND relative_path < ?3",
                 rusqlite::params![
                     &ws.0,
                     &from_prefix,
                     &upper_bound(&from_prefix),
-                    &to_prefix,
-                    from.as_str(),
-                    (cut + 2) as i64, // SQLite substr is 1-based, and skips the separator
+                    to.as_str(),
+                    (cut + 1) as i64, // SQLite substr is 1-based; the separator stays
                 ],
             )?;
 

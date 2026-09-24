@@ -10,7 +10,9 @@ use apex_shell::application::ports::workspace_cache::{
     WorkspaceCache,
 };
 use apex_shell::domain::cache::CacheEntry;
-use apex_shell::domain::workspace::{FileId, FsEntry, RelPath, Sha256, Workspace, WorkspaceId};
+use apex_shell::domain::workspace::{
+    EntryKind, FileId, FsEntry, RelPath, Sha256, Workspace, WorkspaceId,
+};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -363,4 +365,43 @@ impl WorkspaceCache for InMemoryCache {
         *self.version.lock().unwrap() = target;
         Ok(())
     }
+}
+
+/// Seed rows at the given paths, for tests that care about paths rather than content.
+pub fn seed(cache: &InMemoryCache, ws: &WorkspaceId, paths: &[&str]) {
+    let mut rows = cache.rows.lock().unwrap();
+    for path in paths {
+        let parsed = RelPath::parse(path).expect("a seed path is a path");
+        let entry = FsEntry {
+            name: parsed.name().to_string(),
+            kind: if path.ends_with(".rs") || path.ends_with(".txt") {
+                EntryKind::File
+            } else {
+                EntryKind::Directory
+            },
+            size: 1,
+            modified: 0,
+        };
+        let parent = parsed
+            .parent()
+            .unwrap_or_else(RelPath::root)
+            .as_str()
+            .to_string();
+        rows.insert(
+            (ws.0.clone(), parsed.as_str().to_string()),
+            Row::new(entry, &parent),
+        );
+    }
+}
+
+/// Every path this workspace holds, sorted.
+pub fn paths(cache: &InMemoryCache, ws: &WorkspaceId) -> Vec<String> {
+    let rows = cache.rows.lock().unwrap();
+    let mut out: Vec<String> = rows
+        .keys()
+        .filter(|(w, _)| w == &ws.0)
+        .map(|(_, p)| p.clone())
+        .collect();
+    out.sort();
+    out
 }
