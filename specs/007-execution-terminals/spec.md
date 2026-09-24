@@ -351,14 +351,22 @@ the task never stopped and no output was lost.
 - **FR-026**: Each task MUST have its own panel instance (§8.3).
 - **FR-027**: The panel MUST render ANSI colour, cursor movement and screen control rather than
   displaying the escape sequences.
-- **FR-028**: The panel MUST remain responsive while output arrives faster than it can be read.
+- **FR-028**: The panel MUST keep answering input within §1.4's interaction budget while output
+  arrives faster than it can be read, measured as SC-030 states. "Responsive" alone was not
+  implementable: every other performance claim in this feature carries a bound and this one carried
+  none, so no implementation could fail it.
 - **FR-029**: The panel MUST state when a task has ended and how, rather than simply stopping.
 - **FR-029a**: The panel MUST retain a bounded history the developer can scroll back through, and
   the bound MUST be **a stated quantity fixed in the plan** rather than a judgement made per
   panel. "Keep a reasonable amount" is neither implementable nor testable, and an unbounded one
   makes a long build a memory leak on the developer's own machine.
 - **FR-030**: The panel's appearance MUST come from the design system (Principle I), including
-  the colours ANSI names — a terminal's palette is a design decision, not a default.
+  every ANSI colour the design system defines — a terminal's palette is a design decision, not a
+  default. Where the design system defines no token for an ANSI slot, the terminal library's own
+  palette is the recorded source (A-TERMPALETTE) and no component may supply a literal instead.
+  This formerly required *all* the colours ANSI names, which the design system does not define:
+  satisfying it meant inventing thirteen, which is the act Principle I exists to prevent and which
+  A-TERMPALETTE was recorded to stop. Narrowed alongside SC-016 rather than left contradicting it.
 
 **Disconnection**
 
@@ -474,6 +482,11 @@ the task never stopped and no output was lost.
   stream, in 100% of exercised cases; the same task without one reports false and delivers its
   error output separately, in 100%.
 - **SC-017**: The full suite for this feature runs with no remote host and no network.
+- **SC-030**: While a task emits 50 MiB, the panel answers a keystroke within §1.4's interaction
+  budget, p99 over at least 100 samples, measured panel-side at the interface boundary with the
+  harness delay excluded and the measured value printed (A-NFR). Distinct from SC-006, which
+  measures interactive traffic at the transport boundary: a panel can starve while the transport
+  stays healthy, and it is the panel the developer is typing into.
 - **SC-029**: A running task's effective user id equals the engine's, in 100% of exercised cases,
   with zero tasks running as another user. FR-005 required this and no criterion measured it — the
   property read as ambient because A-EC2 makes the instance single-tenant, but "runs as the

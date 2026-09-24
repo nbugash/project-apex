@@ -16,7 +16,7 @@ restated. Request and response shapes live in [contracts/](./contracts/); the `T
 signatures below are [contracts/runner-port.md](./contracts/runner-port.md)'s, matched rather than
 redesigned.
 
-Seven places where this design could not satisfy two documents at once are marked **[CONFLICT n]** and
+Eight places where this design could not satisfy two documents at once are marked **[CONFLICT n]** and
 collected at the end of *Error Handling & Validation*. Each states the reading taken and what is
 owed to which document.
 
@@ -823,6 +823,45 @@ contract is that it follows the restart, and moving it before the `exec` would m
 `unpreserved` indistinguishable from a notice that never arrived. The environment block is bounded
 by `ARG_MAX` and a developer's task count is tens, so the bound is not reached by working. This is
 work F010 owes `session.rs`; A-TASKEXEC does not supply it.
+
+**[CONFLICT 8] — the five-second escalation has no execution vehicle, and the clock cannot be
+shared.** Three artefacts describe `SIGTERM`, a wait, then `SIGKILL`, and nothing names the thread
+or timer that waits. `Clock` is `fn now(&self) -> Millis` and nothing else: there is no sleep, no
+deadline, no scheduler, and plan.md forbids an async runtime. "A `Clock` wait between them" is not
+expressible against that port. Worse, the only reading consistent with a single synchronous
+dispatch thread is that the thread blocks for up to five seconds per stop and per close — so a
+keystroke bound for an unrelated task would queue behind a `workspace/close`, which is FR-012,
+§1.4 and Principle V failing through the mechanism meant to satisfy FR-018.
+
+Compounding it, `Clock` is `Send` and **not `Sync`**, and `FakeClock` is `Cell`-backed and so
+actively `!Sync`. The chunker reads the clock on N reader threads while the stop and close paths
+read it on the dispatch thread; one instance cannot be shared across them, and giving each thread
+its own defeats every test that advances one clock and asserts about work on another.
+
+**Resolution.** The port gains one method and one bound:
+
+```rust
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Millis;
+    /// Block until `deadline` has passed, or until the clock is advanced past it.
+    fn sleep_until(&self, deadline: Millis);
+}
+```
+
+A single **escalation thread** owns a deadline set — one thread for the engine, not one per stop —
+and `sleep_until` is what it waits on. `TaskService` records a deadline when it sends `SIGTERM`,
+the thread wakes, and any task still alive at its deadline is sent `SIGKILL` to its process group.
+The dispatch thread writes the `terminate` response immediately and never waits, which is what
+keeps FR-012 true while FR-017 is satisfied.
+
+`FakeClock` moves from `Cell<Millis>` to a `Mutex<Millis>` with a `Condvar`: `advance` sets the
+value and notifies, `sleep_until` waits until `now >= deadline`. That makes the escalation
+deterministic — a test advances to 4 999 ms and asserts no `SIGKILL`, advances to 5 000 and
+asserts exactly one — with no sleeping and no flake, which is the reason F004 chose a settable
+counter over an `Instant` in the first place.
+
+This is a change to an F004 port, so it is **foundational work**, and both this document and
+`runner-port.md` previously asserted the port was reused unchanged. It is not.
 
 **[CONFLICT 7] — the signal number to name mapping had nowhere to live.** (Filed here rather than after 6 because it is a consequence of CONFLICT 3 immediately above, and splitting them would separate a cause from its effect.) `Exit::Signal(i32)`
 carries whatever the kernel delivered and the wire carries a name, so something must hold the

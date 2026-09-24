@@ -107,7 +107,7 @@ value, not only a verdict. See Appendix A, A-NFR.
 |    |                          lexical, rust-analyzer, zls,       |
 |    |                          clangd                             |
 |    +-- DAP broker ........... delve, lldb-vscode, debugpy        |
-|    +-- Process supervisor ... build/test/run, cgroup-isolated    |
+|    +-- Process supervisor ... build/test/run, per-process limits |
 |    +-- File watcher ......... inotify, scoped                    |
 +------------------------------------------------------------------+
 ```
@@ -1410,8 +1410,13 @@ Three boundaries matter:
 1. **Client to engine.** The engine accepts frames from the client and must not trust them.
    Path containment (§4.7) is enforced engine-side regardless of client-side validation.
 2. **Engine to user code.** Builds and tests run arbitrary code from the repository, as the
-   developer's own user. This is expected — it is what a build is — and is bounded by cgroups
-   and by the instance being developer-owned, not shared.
+   developer's own user. This is expected — it is what a build is. The bound differs by what is
+   running. Language servers run under cgroups (§7.3). **Execution tasks do not**: they are bounded
+   per process by an address-space limit, disabled core dumps and a process group, which stops one
+   runaway and does **not** stop a process tree exhausting the instance collectively (A-TASKLIMIT).
+   The remaining bound is that the instance is developer-owned and not shared (A-EC2). This
+   paragraph previously claimed cgroups bounded everything, which stopped being true when §7.3 was
+   amended and is corrected here rather than left as a security control nothing implements.
 3. **Client to remote content.** The client renders remote-sourced content, including HTML
    previews of remotely served applications.
 
@@ -1792,7 +1797,7 @@ Two, either of which reopens this:
 
 Absent either, this decision is settled and the alternative is not to be re-litigated.
 
-## A-STATE — Interface session state lives outside the workspace cache (2026-09-21)
+## A-STATE — Interface session state lives outside the workspace cache (2026-09-21) — SUPERSEDED by A-STATE2
 
 **Status:** Decided 2026-09-21. Promoted from `specs/001-app-shell/research.md`.
 
@@ -3022,6 +3027,14 @@ during an update the developer did not ask for and does not observe. A terminate
 developer is told about is a smaller harm than a surviving task whose owner and format are
 negotiated across a version boundary.
 
+**Reversal conditions.** Two, either of which is sufficient. First, if the engine ever holds its
+task map outside its own process image — a supervisor process, or a small on-disk record of
+identity-to-pid — then carrying tasks across a re-execution stops requiring descriptors to survive
+an `exec` and the compatibility objection disappears with it. Second, if updates become frequent
+enough that losing a build to one is a routine cost rather than a rare one, the balance inverts:
+this decision is priced on an update being something a developer does occasionally and does not
+watch.
+
 **What this costs, stated plainly.** A developer whose twenty-minute build is running when the
 engine updates loses it. The mitigation is not in this record: an update is a client-initiated
 operation (§3.8), so a client that declines to update while tasks are running would avoid the
@@ -3051,12 +3064,84 @@ system does not define is smaller than either, reversible in one file once the r
 the deciding point — it is the only one of the three that leaves a visible marker saying a
 decision is still outstanding.
 
+**Reversal conditions.** One, and it is expected rather than hypothetical: the design system
+gaining a sixteen-colour ANSI ramp. When it does, `palette.ts` maps every slot to a token, SC-016
+widens back to its original wording, and this record is superseded rather than amended. A second,
+weaker condition: if a second surface ever needs ANSI colours — a diff viewer rendering coloured
+output, a log panel — the cost of not having the ramp is paid twice, and the argument for treating
+it as owed rather than urgent weakens accordingly.
+
 **The consequence, stated plainly.** SC-016 was written as "zero raw colour values" and has been
 narrowed: it now measures that the three hues the system defines are taken from tokens, and
 records the library's default palette as the accepted source for the rest. A criterion asserting
 zero raw values while thirteen of sixteen colours have no token to use is unmeetable, and the
 failure mode of an unmeetable criterion is that somebody satisfies it by inventing the tokens —
 which is the outcome this record exists to prevent.
+
+## A-STATE2 — The durable client store also carries task identities (2026-09-24)
+
+**Supersedes A-STATE (2026-09-21)**, which is otherwise unchanged and remains the record of why a
+durable client store exists and what shape it takes.
+
+**Decision.** The client's durable store carries, in addition to A-STATE's window geometry, region
+layout, open document references and focus, the **identities of tasks this client started** and the
+workspace each belongs to. Nothing else about a task is stored: no output, no environment, no
+command.
+
+**Rationale.** A-TASKLIFE makes a task outlive the connection that started it, and `execution/attach`
+reaches one by an identity the client must already know. A client that restarts therefore needs its
+identities to have survived the restart, and A-STATE's enumerated payload does not include them —
+so F010 either extends that payload or reattachment works only for a client that never closed.
+
+Recorded as a new record rather than an edit to A-STATE because Principle III says records are
+dated and superseded, never edited in place, and because the two decisions have different owners:
+A-STATE is F000's, made about a shell's own state, and this is F010's, made about work running
+somewhere else.
+
+**Why not more than the identities.** Storing a task's command would put a credential passed in
+argv on disk, which FR-005a's accepted boundary does not extend to; storing output would make the
+store grow without bound for a client that never returns. The identity is the smallest thing that
+restores reachability, and `execution/list` covers the client that has lost even that.
+
+**Reversal conditions.** If task identities ever become discoverable without client state — which
+`execution/list` already makes true for a client that can enumerate — the stored copy becomes an
+optimisation rather than a requirement, and a client that prefers not to persist anything could
+drop it. It is kept because enumeration costs a round trip at startup and the stored identity does
+not.
+
+## A-WSCLOSE — What closing a workspace means, precisely (2026-09-24)
+
+**Decision.** Three answers to questions §4.8's `workspace/close` row leaves open. The response is
+written **after** the last of that workspace's tasks has ended. Closing **deregisters** the
+workspace, being `workspace/register`'s counterpart. A second close of an already-closed workspace
+is **`-32001`**, not an idempotent success.
+
+**Rationale.** Each closes a genuine alternative, which is why they belong here rather than in a
+contract. Recorded late: they were taken while `contracts/task-methods.md` was written, and stating
+them there left three decisions with rejected alternatives outside Appendix A, which Principle III
+does not allow.
+
+Writing the response after the tasks have ended is what makes SC-013 checkable at a moment somebody
+defined. The alternative — answering immediately and ending the tasks behind the response — leaves
+"closing a workspace leaves zero of its tasks running" true only eventually, with no stated bound,
+and a test for it would be a sleep. The wait is bounded by the same five-second escalation a stop
+uses and runs concurrently across the workspace's tasks, so closing ten tasks costs five seconds,
+not fifty.
+
+Deregistering follows from being `register`'s counterpart: a close that left the id registered
+would leave the engine holding a canonicalised root for a workspace the client has finished with,
+and the client would have no way to say so.
+
+Refusing a second close departs from FR-019, where terminating an already-terminated task succeeds.
+The two look alike and are not. FR-019's race is a client racing an end **the engine decided** — the
+task exited on its own — and reporting that as a failure would make a correct client look broken.
+A workspace never closes itself, so a second close means the client has lost track of its own
+state, and telling it so is a service.
+
+**Reversal conditions.** If a client is ever expected to close a workspace it may not have opened —
+a supervisor tidying up after a crash, say — then refusing the second close becomes the unhelpful
+answer and idempotent success becomes right. Under A-EC2's single tenancy and one client per
+engine, no such caller exists.
 
 # Appendix B — Open Items
 

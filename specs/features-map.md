@@ -52,7 +52,7 @@ an intention to do it.
   - [X] workspace/onFileEvent emission with event coalescing
   - [X] Client cache invalidation and open-file refresh
   - [X] Bulk invalidateAll handling for large changes
-- [ ] **F010 execution-terminals** [P] (depends: F000, F003)
+- [ ] **F010 execution-terminals** [P] (depends: F000, F003, F004)
   - Spec: specs/007-execution-terminals
   - [ ] Task spawn with pty, working directory and environment
   - [ ] Stdout and stderr streaming notifications

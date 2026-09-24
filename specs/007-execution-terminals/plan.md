@@ -118,7 +118,12 @@ The gate says re-check after design, and design moved four of these rows.
 |---|---|---|---|
 | **I. Design Fidelity** | Pass | **Pass, narrowed** | The row claimed the library's "default palette is a violation like any other raw value". Design found the system defines three of the sixteen colours a terminal renders, so satisfying that claim meant inventing thirteen — the act this principle exists to prevent. **A-TERMPALETTE** records the library's palette as the accepted source for what the system does not define, and SC-016 was narrowed to match. The principle holds; the row's absolute reading did not. |
 | **II. One Source of Truth** | Blocking | **Pass** | Three methods added (`attach`, `list`, `workspace/close`), plus the encoding, arity, exit-shape, signal-typing and optionality statements the existing rows needed to be implementable. Nine §4.8 edits in total, and §4.6 rewritten to state its rule per direction. |
-| **III. Decisions Recorded** | Pass | **Pass, two more** | **A-TASKSTREAM** (Phase 0) and **A-TASKEXEC** and **A-TERMPALETTE** (Phase 1 and 2). Appendix A holds 40 records. Each carries rejected alternatives and a reversal condition. |
+| **III. Decisions Recorded** | Pass | **Pass, two more** | **A-TASKSTREAM** (Phase 0) and **A-TASKEXEC** and **A-TERMPALETTE** (Phase 1 and 2). Appendix A holds 40 records. Each carries rejected alternatives and a reversal condition — A-TASKEXEC and A-TERMPALETTE did
+not when this row first claimed it, and the claim was caught by analysis rather than by the gate
+it was written into. Two more were added after: **A-STATE2**, superseding A-STATE because task
+identities must join the client's durable payload and Principle III forbids editing a record in
+place, and **A-WSCLOSE**, because three `workspace/close` decisions with stated rejected
+alternatives had been recorded in a contract rather than in Appendix A. |
 | **V. Interaction Budget** | Pass | **Pass, and the claim was wrong** | The row credited F004's frame writer as the seam this measures. It is the serialisation seam; priority is a different property that happens to live in the same place, and a mutex provides the first while precluding the second. F010 builds `send_queue.rs`. Recorded above. |
 | **VIII. Ports and Adapters** | Pass | **Pass, sharpened** | The port splits into `TaskOutput` and `TaskControl` so a keystroke never waits behind a blocked read. Design found that split defeated by a single map-wide mutex over the task set, which satisfies every document as written — per-task locks are now stated, with control handles reachable without the map lock. |
 
@@ -200,7 +205,14 @@ tests/e2e/
 └── terminal.spec.ts                 # NEW: run, type, resize, exit, reattach
 ```
 
-Two additions to existing files that are easy to miss because they are not new files.
+Three additions to existing files that are easy to miss because they are not new files.
+`application/ports/clock.rs` gains `Send + Sync` and a `sleep_until(deadline)` method: the
+five-second escalation has no way to wait against a port whose only method is `now()`, and the
+chunker reads the clock on N reader threads while the stop path reads it on the dispatch thread,
+which a `Send`-not-`Sync` port cannot support. `FakeClock` moves from `Cell` to a `Mutex` plus a
+`Condvar` so the wait stays deterministic. A single escalation thread owns the deadline set, so
+the dispatch thread answers `terminate` immediately and never blocks — blocking it for five
+seconds per stop is FR-012 failing through the mechanism meant to satisfy FR-017.
 `application/ports/roots.rs` gains `deregister`: `WorkspaceRoots` offers `register` and `resolve`
 only, so `workspace/close` cannot actually close anything and a second close cannot answer
 `-32001` rather than succeeding silently. And `session.rs` gains a second environment variable
