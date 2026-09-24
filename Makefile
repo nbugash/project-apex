@@ -57,8 +57,8 @@ clean: ## Remove build output
 next: ## Where the next feature stands and what to run (F=F005 for a specific one)
 	@python3 scripts/pipeline.py next $(F)
 
-verify: ## Run the deterministic checks for a feature's current phase
-	@python3 scripts/pipeline.py verify $(F)
+verify: ## Checks for a feature's current phase; PHASE=propagation for the amendment check
+	@python3 scripts/pipeline.py verify $(F) $(if $(PHASE),--phase $(PHASE),)
 
 pipeline: ## Drive phases to the next human gate; add EXECUTE=1 to actually invoke claude
 	@python3 scripts/pipeline.py run $(F) $(if $(EXECUTE),--execute,)

@@ -91,6 +91,47 @@ and output directories are not edits. `edited_paths()` drops link targets, `./`-
 paths, `specs/` paths, templated directories and anything without a file extension, and
 `pipeline_test.py` pins both of those cases so the loosening cannot come back.
 
+## The propagation check
+
+```
+make verify F=F004 PHASE=propagation
+```
+
+Amending a requirement has a blast radius: every artifact that cites it. Across four analysis
+passes of one feature this was the single largest source of findings — ten of twenty-nine,
+recurring in three separate passes — and not one of them was a thinking error. Each was the same
+bookkeeping miss: a requirement changed, and a document written before the change still described
+the old one.
+
+The radius is computable, so the driver computes it. For every requirement the feature's `spec.md`
+defines, and every section and Appendix A record the **system specification** defines, it asks when
+that text last changed and when each citing artifact was last written. An artifact written before a
+requirement it cites last changed is reported.
+
+Watching the system specification is the more important half. The recurring failure was an
+amendment to `§4.8` leaving a feature's own contracts and data model describing the previous wire
+format — which a check reading only the feature's `spec.md` misses entirely.
+
+It uses git history, not file mtimes. An mtime is reset by a checkout and by a fresh clone, so an
+mtime-based answer is confidently wrong on precisely the machine that did not author the change.
+
+Three limits, stated because a checker you cannot predict is a checker you stop reading:
+
+- **Within one commit it sees nothing.** If the amendment and the stale artifact land together,
+  there is no ordering to compare. This is why it is most useful on a feature branch with granular
+  commits, and says little about a squash-merged feature.
+- **It finds stale citations, not missing ones.** An artifact that *should* now cite a new
+  requirement and does not is invisible to it; only artifacts that already mention something can be
+  found behind it.
+- **Commit times have one-second granularity.** An amendment and its propagation committed in the
+  same second read as simultaneous and are treated as propagated — the right default, since
+  same-second commits are one piece of work.
+
+For a feature already marked complete the findings are printed as notes and the command still
+succeeds. A shipped feature was written against the specification as it stood; later amendments are
+the next feature's problem, and reporting them as failures is how a checker teaches people to
+ignore it.
+
 ## What it does not do
 
 It does not decide that a feature is finished, write the map, open a pull request, or

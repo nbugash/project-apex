@@ -50,6 +50,15 @@ CHECKBOX_LINE = re.compile(r"^\s*- \[[ Xx]\]", re.M)
 PATH_TOKEN = re.compile(r"[A-Za-z0-9_.@${}-]+(?:/[A-Za-z0-9_.@${}-]+)+")
 MD_LINK_TARGET = re.compile(r"\]\([^)]*\)")
 PASS_HEADING = re.compile(r"^## Pass (\d+)", re.M)
+# `- **FR-013a**: ...` — where a requirement is DEFINED, as opposed to cited.
+REQ_DEFINITION = re.compile(r"^- \*\*((?:FR|SC)-\d+[a-z]?)\*\*", re.M)
+# A citation anywhere: FR-001 must not match inside FR-001a.
+REQ_ID = re.compile(r"\b((?:FR|SC)-\d+[a-z]?)(?![0-9A-Za-z])")
+# The system specification's own citable units: a section number, or an
+# Appendix A decision record. A feature's artifacts cite these constantly, and
+# amending one is the change most likely to strand them.
+SYSTEM_ID = re.compile(r"§\d+(?:\.\d+)*|\bA-[A-Z][A-Z0-9]{1,15}\b")
+SYSTEM_SPEC = "project-apex-predator.md"
 VERDICT = re.compile(r"^VERDICT:\s*(\S+)", re.M)
 
 
@@ -337,6 +346,158 @@ def check_implement(directory: Path) -> list[str]:
     return []
 
 
+# --- propagation ----------------------------------------------------------
+# Amending a requirement has a blast radius: every artifact that mentions it.
+# Across four analysis passes of F004 this was the single largest source of
+# findings -- ten of twenty-nine, recurring in three separate passes -- and
+# every one of them was a bookkeeping miss rather than a thinking error. The
+# radius is computable, so it is computed here instead of remembered.
+
+
+def _git_epoch(args: list[str]) -> int | None:
+    """Commit time of the most recent commit matching args, or None."""
+    done = subprocess.run(
+        [*("git", "log", "-1", "--format=%ct"), *args],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    out = done.stdout.strip()
+    return int(out) if out.isdigit() else None
+
+
+def _uncommitted(path: Path) -> bool:
+    done = subprocess.run(
+        ["git", "status", "--porcelain", "--", str(path)],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return bool(done.stdout.strip())
+
+
+def mentions(text: str, req: str) -> bool:
+    """Cited, not merely prefixed.
+
+    The two id shapes need different guards, and using one for both is a bug
+    this check already made once. `FR-013` must not match inside `FR-013a`, so
+    no alphanumeric may follow. `§4.8` must not match inside `§4.8.1`, so no
+    digit may follow, with or without a dot between -- but a dot alone is
+    ordinary sentence punctuation and must still count as a citation.
+    """
+    guard = r"(?!\.?\d)" if req.startswith("§") else r"(?![0-9A-Za-z])"
+    return re.search(re.escape(req) + guard, text) is not None
+
+
+def dependent_artifacts(directory: Path) -> list[Path]:
+    """Every markdown artifact in the feature that could cite a requirement.
+
+    spec.md is excluded because it is the source, not a dependent.
+    """
+    found = sorted(directory.glob("*.md")) + sorted(directory.glob("contracts/*.md"))
+    return [p for p in found if p.name != "spec.md"]
+
+
+def last_changed(spec: Path, pattern: re.Pattern[str] = REQ_ID) -> dict[str, int]:
+    """When each requirement's text was last edited, by commit time.
+
+    Walks spec.md's own commits and matches on the changed lines in Python
+    rather than handing a pattern to git. Git's pickaxe takes POSIX ERE, and
+    `re.escape("FR-001")` produces `FR\\-001`, whose meaning there is undefined
+    -- the first version of this check silently matched nothing and reported a
+    clean result, which is the worst failure available to a checker.
+    """
+    listing = subprocess.run(
+        ["git", "log", "--format=%ct %H", "--", str(spec)],
+        capture_output=True, text=True, cwd=ROOT,
+    ).stdout.split("\n")
+
+    changed: dict[str, int] = {}
+    for line in listing:
+        if not line.strip():
+            continue
+        epoch_text, _, sha = line.partition(" ")
+        if not epoch_text.isdigit():
+            continue
+        epoch = int(epoch_text)
+        diff = subprocess.run(
+            ["git", "show", "--format=", "--unified=0", sha, "--", str(spec)],
+            capture_output=True, text=True, cwd=ROOT,
+        ).stdout
+        touched = "\n".join(
+            ln for ln in diff.split("\n")
+            if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+        )
+        for req in set(pattern.findall(touched)):
+            # log is newest-first, so the first sighting is the most recent.
+            changed.setdefault(req, epoch)
+    return changed
+
+
+def check_propagation(directory: Path) -> list[str]:
+    """Artifacts last written before a requirement they cite was last changed.
+
+    Uses git history rather than file mtimes. An mtime is reset by a checkout
+    and by a fresh clone, so an mtime-based answer is confidently wrong on
+    exactly the machine that did not author the change.
+    """
+    spec = directory / "spec.md"
+    if not spec.exists() or _git_epoch(["--", str(spec)]) is None:
+        return []
+
+    artifacts = dependent_artifacts(directory)
+    cited: dict[Path, tuple[str, set[str]]] = {}
+    for art in artifacts:
+        cited[art] = (read(art), set())
+
+    changed_at = last_changed(spec)
+    source = {req: "spec.md" for req in changed_at}
+
+    # The system specification is watched too, and it is the more important
+    # half. Across four analysis passes of F004 the recurring failure was an
+    # amendment to §4.8 leaving the feature's own contracts and data model
+    # describing the previous wire format -- a change this check would miss
+    # entirely if it only read the feature's spec.md.
+    system = ROOT / SYSTEM_SPEC
+    if system.exists():
+        from_system = last_changed(system, SYSTEM_ID)
+        changed_at.update(from_system)
+        source.update({req: SYSTEM_SPEC for req in from_system})
+
+    # Requirements the spec defines NOW, plus every id either history has ever
+    # touched. The second half is what catches a citation of something that has
+    # been deleted -- a dangling reference, which is worse than a stale one and
+    # which a check reading only the current spec cannot see.
+    known = set(REQ_DEFINITION.findall(read(spec))) | set(changed_at)
+    for req in known:
+        for _art, (text, hits) in cited.items():
+            if mentions(text, req):
+                hits.add(req)
+
+    problems = []
+    for art, (_, hits) in sorted(cited.items()):
+        if not hits or _uncommitted(art):
+            continue  # being edited now; staleness is not yet a question
+        written = _git_epoch(["--", str(art)])
+        if written is None:
+            continue
+        # Strictly greater: commit times have one-second granularity, so an
+        # amendment and its propagation committed in the same second read as
+        # simultaneous. Treating that as propagated is the right default --
+        # same-second commits are one piece of work -- and it keeps the check
+        # quiet enough to be believed.
+        stale = sorted(r for r in hits if (changed_at.get(r) or 0) > written)
+        if stale:
+            rel = art.relative_to(ROOT)
+            for origin in sorted({source.get(r, "spec.md") for r in stale}):
+                ids = [r for r in stale if source.get(r, "spec.md") == origin]
+                problems.append(
+                    f"{rel} was last written before "
+                    f"{', '.join(ids)} last changed in {origin}"
+                )
+    return problems
+
+
 CHECKS = {
     Phase.SPECIFY: check_specify,
     Phase.CLARIFY: check_clarify,
@@ -345,6 +506,9 @@ CHECKS = {
     Phase.ANALYZE: check_analyze,
     Phase.IMPLEMENT: check_implement,
 }
+
+# Not a phase: propagation is checked on demand, and after any amendment.
+EXTRA_CHECKS = {"propagation": check_propagation}
 
 
 def verify_completed(feature: Feature, phase: Phase) -> list[str]:
@@ -387,10 +551,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if directory is None:
         print(f"{feature.identity}: not specified yet, nothing to verify")
         return 0
-    target = Phase(args.phase) if args.phase else phase
-    checker = CHECKS.get(target)
-    problems = checker(directory) if checker else []
-    label = f"{feature.identity} {target.value}"
+    if args.phase in EXTRA_CHECKS:
+        problems = EXTRA_CHECKS[args.phase](directory)
+        label = f"{feature.identity} {args.phase}"
+        if problems and feature.done and args.phase == "propagation":
+            # A shipped feature was written against the specification as it
+            # stood. Later amendments are the next feature's problem, not a
+            # defect in this one, and reporting them as failures is how a
+            # checker teaches people to ignore it.
+            print(f"{label}: {len(problems)} note(s) — this feature is complete;")
+            print("  the specification moved after it shipped, which is not a defect here")
+            for problem in problems:
+                print(f"  - {problem}")
+            return 0
+    else:
+        target = Phase(args.phase) if args.phase else phase
+        checker = CHECKS.get(target)
+        problems = checker(directory) if checker else []
+        label = f"{feature.identity} {target.value}"
     if problems:
         print(f"{label}: {len(problems)} problem(s)")
         for problem in problems:
@@ -450,7 +628,9 @@ def main() -> int:
 
     ver = sub.add_parser("verify", help="run the checks for a phase")
     ver.add_argument("feature", nargs="?")
-    ver.add_argument("--phase", choices=[p.value for p in CHECKS])
+    ver.add_argument(
+        "--phase", choices=[p.value for p in CHECKS] + sorted(EXTRA_CHECKS)
+    )
     ver.set_defaults(func=cmd_verify)
 
     run = sub.add_parser("run", help="execute phases until a human gate")

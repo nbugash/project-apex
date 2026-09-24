@@ -12,6 +12,7 @@ ignore or quiet enough to be useless.
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -219,6 +220,165 @@ class SpecChecks(unittest.TestCase):
     def test_sessions_outside_the_clarifications_section_do_not_count(self) -> None:
         self.assertEqual(pipeline.clarification_sessions(SPEC), 1)
         self.assertEqual(pipeline.clarification_sessions(SPEC_UNCLARIFIED), 0)
+
+
+class Propagation(unittest.TestCase):
+    """Amend a requirement, and every artifact citing it must be revisited.
+
+    Built on a real temporary git repository rather than mocks, because the
+    check is entirely about what git history says and a mocked history would
+    only prove the mock agrees with itself.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = self.root / "specs" / "001-thing"
+        (self.dir / "contracts").mkdir(parents=True)
+        self.previous_root, pipeline.ROOT = pipeline.ROOT, self.root
+        self.addCleanup(lambda: setattr(pipeline, "ROOT", self.previous_root))
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.com")
+        self.git("config", "user.name", "T")
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    # Commit timestamps have one-second granularity, and a test writes its
+    # whole history in well under a second. Each commit therefore gets an
+    # explicit, increasing date -- otherwise every commit is simultaneous and
+    # "written before" is unanswerable.
+    def commit(self, message: str) -> None:
+        self.clock = getattr(self, "clock", 1_700_000_000) + 60
+        stamp = f"{self.clock} +0000"
+        env = dict(os.environ, GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
+        self.git("add", "-A")
+        subprocess.run(
+            ["git", "commit", "-q", "-m", message],
+            cwd=self.root, check=True, capture_output=True, env=env,
+        )
+
+    SPEC = (
+        "# Spec\n\n## Requirements\n\n"
+        "- **FR-001**: The thing must happen.\n"
+        "- **FR-002**: The other thing must happen.\n"
+    )
+
+    def test_an_artifact_citing_an_amended_requirement_is_flagged(self) -> None:
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "design.md", "Implements FR-001 as described.\n")
+        self.commit("initial")
+
+        write(self.dir / "spec.md", self.SPEC.replace(
+            "The thing must happen.", "The thing must happen, carrying metadata."))
+        self.commit("amend FR-001")
+
+        problems = pipeline.check_propagation(self.dir)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("design.md", problems[0])
+        self.assertIn("FR-001", problems[0])
+
+    def test_an_artifact_citing_an_untouched_requirement_is_not_flagged(self) -> None:
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "design.md", "Implements FR-002 as described.\n")
+        self.commit("initial")
+
+        write(self.dir / "spec.md", self.SPEC.replace(
+            "The thing must happen.", "The thing must happen, carrying metadata."))
+        self.commit("amend FR-001")
+
+        self.assertEqual(pipeline.check_propagation(self.dir), [])
+
+    def test_an_artifact_updated_after_the_amendment_is_not_flagged(self) -> None:
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "design.md", "Implements FR-001 as described.\n")
+        self.commit("initial")
+
+        write(self.dir / "spec.md", self.SPEC.replace(
+            "The thing must happen.", "The thing must happen, carrying metadata."))
+        self.commit("amend FR-001")
+
+        write(self.dir / "design.md", "Implements FR-001, metadata included.\n")
+        self.commit("propagate to design")
+
+        self.assertEqual(pipeline.check_propagation(self.dir), [])
+
+    def test_citation_guards(self) -> None:
+        # A single guard for both id shapes is a bug this check already made:
+        # excluding a trailing dot to separate §4.8 from §4.8.1 also excluded
+        # "FR-001." at the end of an ordinary sentence.
+        self.assertTrue(pipeline.mentions("Shape required by FR-001.", "FR-001"))
+        self.assertFalse(pipeline.mentions("See FR-001a only.", "FR-001"))
+        self.assertTrue(pipeline.mentions("Framing is defined in §4.1.", "§4.1"))
+        self.assertFalse(pipeline.mentions("See §4.8.1 for detail.", "§4.8"))
+        self.assertTrue(pipeline.mentions("Per §4.8 and A-COALESCE.", "A-COALESCE"))
+
+    def test_a_prefix_is_not_a_citation(self) -> None:
+        # FR-001 must not match inside FR-001a. This is the bug that would make
+        # the check fire constantly and therefore be ignored.
+        spec = self.SPEC + "- **FR-001a**: A refinement.\n"
+        write(self.dir / "spec.md", spec)
+        write(self.dir / "design.md", "Implements FR-001a only.\n")
+        self.commit("initial")
+
+        write(self.dir / "spec.md", spec.replace(
+            "The thing must happen.", "Reworded entirely."))
+        self.commit("amend FR-001 alone")
+
+        self.assertEqual(pipeline.check_propagation(self.dir), [])
+
+    def test_contracts_are_dependent_artifacts_too(self) -> None:
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "contracts" / "wire.md", "Shape required by FR-001.\n")
+        self.commit("initial")
+
+        write(self.dir / "spec.md", self.SPEC.replace(
+            "The thing must happen.", "The thing must happen differently."))
+        self.commit("amend FR-001")
+
+        problems = pipeline.check_propagation(self.dir)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("wire.md", problems[0])
+
+    def test_spec_is_not_its_own_dependent(self) -> None:
+        # Asserted on the artifact list directly. Asserting "no problems" would
+        # have been vacuous: spec.md's write time always equals its own last
+        # requirement change, so the arithmetic could never flag it and the
+        # test would pass whether or not the exclusion existed. A surviving
+        # mutant found that.
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "design.md", "Implements FR-001.\n")
+        self.commit("initial")
+        names = [p.name for p in pipeline.dependent_artifacts(self.dir)]
+        self.assertNotIn("spec.md", names)
+        self.assertIn("design.md", names)
+
+    def test_a_deleted_requirement_leaves_its_citations_stale(self) -> None:
+        # A requirement can be removed as well as reworded, and a citation of
+        # something that no longer exists is worse than a stale one. This needs
+        # the diff's REMOVED lines, which a check reading only additions misses.
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "design.md", "Implements FR-002 as described.\n")
+        self.commit("initial")
+
+        write(self.dir / "spec.md", "# Spec\n\n## Requirements\n\n"
+              "- **FR-001**: The thing must happen.\n")
+        self.commit("drop FR-002")
+
+        problems = pipeline.check_propagation(self.dir)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("FR-002", problems[0])
+
+    def test_an_uncommitted_artifact_is_being_worked_on_not_stale(self) -> None:
+        write(self.dir / "spec.md", self.SPEC)
+        write(self.dir / "design.md", "Implements FR-001.\n")
+        self.commit("initial")
+        write(self.dir / "spec.md", self.SPEC.replace("must happen.", "must happen now."))
+        self.commit("amend FR-001")
+
+        write(self.dir / "design.md", "Implements FR-001, mid-edit.\n")  # not committed
+        self.assertEqual(pipeline.check_propagation(self.dir), [])
 
 
 if __name__ == "__main__":
