@@ -46,7 +46,7 @@ an intention to do it.
   - [X] Ranged file read with hash-based cache validity
   - [X] Zstd content blobs with access-time eviction
 - [ ] **F004 file-watch-sync** [P] (depends: F003)
-  - Spec: not yet specified
+  - Spec: specs/006-file-watch-sync
   - [ ] Engine-side inotify watcher scoped to the workspace
   - [ ] Configurable ignore set shared with the indexer
   - [ ] workspace/onFileEvent emission with event coalescing
