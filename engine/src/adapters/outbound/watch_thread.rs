@@ -203,12 +203,10 @@ fn to_wire(e: &FileEvent) -> WireEvent {
             EventKind::Renamed { to } => Some(to.clone()),
             _ => None,
         },
-        kind: describes.then(|| {
-            if e.is_directory {
-                EntryKind::Directory
-            } else {
-                EntryKind::File
-            }
+        kind: describes.then_some(if e.is_directory {
+            EntryKind::Directory
+        } else {
+            EntryKind::File
         }),
         // A directory has nothing to measure.
         size: (describes && !e.is_directory).then_some(e.size),

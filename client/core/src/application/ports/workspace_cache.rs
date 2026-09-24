@@ -136,6 +136,12 @@ pub trait WorkspaceCache: Send + Sync {
     /// settles it on next use (FR-019, FR-019a, A-UNPROVEN).
     fn mark_unproven(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()>;
 
+    /// Settle the doubt, once a hash comparison has agreed.
+    ///
+    /// Keyed by `file_id` rather than by path, because by the time the comparison runs the
+    /// caller holds the entry and a path lookup would be a second chance to get it wrong.
+    fn clear_unproven(&self, file_id: &FileId) -> CacheResult<()>;
+
     /// Rewrite a renamed directory and everything beneath it, in one transaction.
     ///
     /// Returns the number of rows rewritten, which is what a test asserts the separator

@@ -45,13 +45,13 @@ an intention to do it.
   - [X] Lazy shallow directory fetch and tree projection
   - [X] Ranged file read with hash-based cache validity
   - [X] Zstd content blobs with access-time eviction
-- [ ] **F004 file-watch-sync** [P] (depends: F003)
+- [X] **F004 file-watch-sync** [P] (depends: F003)
   - Spec: specs/006-file-watch-sync
-  - [ ] Engine-side inotify watcher scoped to the workspace
-  - [ ] Configurable ignore set shared with the indexer
-  - [ ] workspace/onFileEvent emission with event coalescing
-  - [ ] Client cache invalidation and open-file refresh
-  - [ ] Bulk invalidateAll handling for large changes
+  - [X] Engine-side inotify watcher scoped to the workspace
+  - [X] Configurable ignore set shared with the indexer
+  - [X] workspace/onFileEvent emission with event coalescing
+  - [X] Client cache invalidation and open-file refresh
+  - [X] Bulk invalidateAll handling for large changes
 - [ ] **F005 ec2-lifecycle** [P] (depends: F000, F001)
   - Spec: not yet specified
   - [ ] Instance wake and stop via the AWS SDK

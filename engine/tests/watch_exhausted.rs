@@ -6,7 +6,7 @@ mod common;
 use apex_engine::application::exclusions::ExclusionSet;
 use apex_engine::application::ports::file_system::FileSystem;
 use apex_engine::application::ports::file_watcher::FileWatcher;
-use apex_engine::application::use_cases::watch::{unwatch_paths, watch_paths};
+use apex_engine::application::use_cases::watch::watch_paths;
 use apex_engine::domain::path::{CanonicalRoot, ResolvedPath};
 use apex_engine::domain::watch::WatchSet;
 use common::fake_watcher::FakeWatcher;
@@ -48,17 +48,6 @@ fn add(c: &mut Ctx, paths: &[&str]) {
         &mut c.set,
         &mut c.watcher,
         &c.exclusions,
-        &c.fs as &dyn FileSystem,
-        &owned,
-    );
-}
-
-fn remove(c: &mut Ctx, paths: &[&str]) {
-    let owned: Vec<String> = paths.iter().map(|p| (*p).to_string()).collect();
-    unwatch_paths(
-        &c.root,
-        &mut c.set,
-        &mut c.watcher,
         &c.fs as &dyn FileSystem,
         &owned,
     );

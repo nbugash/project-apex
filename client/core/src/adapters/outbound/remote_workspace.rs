@@ -278,6 +278,25 @@ impl RemoteWorkspaceProvider {
     }
 }
 
+/// A refusal whose path does not parse is dropped rather than trusted.
+///
+/// Every path off the wire is untrusted at this end regardless of what the engine checked
+/// (FR-014, Principle VI). A refusal is the engine telling us about a path we sent, so a
+/// malformed one means the two ends disagree about what was asked -- and acting on it would be
+/// acting on the engine's word about our own request.
+fn from_wire_refusal(r: apex_protocol::wire::WatchRefusal) -> Option<Refusal> {
+    use apex_protocol::wire::RefusalReason as Wire;
+    Some(Refusal {
+        path: RelPath::parse(&r.path).ok()?,
+        reason: match r.reason {
+            Wire::Capacity => RefusalReason::Capacity,
+            Wire::Excluded => RefusalReason::Excluded,
+            Wire::NotFound => RefusalReason::NotFound,
+            Wire::NotADirectory => RefusalReason::NotADirectory,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,23 +353,4 @@ mod tests {
             ProviderError::NotFound
         );
     }
-}
-
-/// A refusal whose path does not parse is dropped rather than trusted.
-///
-/// Every path off the wire is untrusted at this end regardless of what the engine checked
-/// (FR-014, Principle VI). A refusal is the engine telling us about a path we sent, so a
-/// malformed one means the two ends disagree about what was asked -- and acting on it would be
-/// acting on the engine's word about our own request.
-fn from_wire_refusal(r: apex_protocol::wire::WatchRefusal) -> Option<Refusal> {
-    use apex_protocol::wire::RefusalReason as Wire;
-    Some(Refusal {
-        path: RelPath::parse(&r.path).ok()?,
-        reason: match r.reason {
-            Wire::Capacity => RefusalReason::Capacity,
-            Wire::Excluded => RefusalReason::Excluded,
-            Wire::NotFound => RefusalReason::NotFound,
-            Wire::NotADirectory => RefusalReason::NotADirectory,
-        },
-    })
 }

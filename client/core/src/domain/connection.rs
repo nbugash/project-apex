@@ -135,3 +135,76 @@ mod tests {
         assert_eq!(ConnectionState::default(), ConnectionState::Unknown);
     }
 }
+
+/// Whether the developer is being told about changes on the host.
+///
+/// **Deliberately not a `ConnectionState` variant.** Exhausted watch capacity happens while
+/// perfectly connected, and a link that is up while the watcher is refused is a state a single
+/// connection enum cannot express. FR-005 and FR-025 both require the developer to be told in
+/// that case, and folding it into connectivity would mean saying "disconnected" when the
+/// connection is fine, or saying nothing at all.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Reporting {
+    /// Changes arrive as they happen.
+    #[default]
+    Live,
+    /// Nothing is arriving because the link is down. The tree is what was last read.
+    Offline,
+    /// Connected, and some paths are not being watched. Carries how many, because "some" is
+    /// what a developer cannot act on.
+    Partial { unwatched: usize },
+    /// Connected, and watching is unavailable entirely — an engine that cannot watch, or a
+    /// local workspace in a version that does not (A-WATCHLOCAL). Browsing and reading
+    /// continue; only automatic freshness is lost, and its loss is stated (FR-027).
+    Unavailable,
+}
+
+impl Reporting {
+    /// Is the developer currently being told about every change?
+    ///
+    /// The question the status bar asks. Anything but `Live` is something to say out loud:
+    /// silence is how a developer would otherwise discover that watching failed, which is the
+    /// one outcome FR-005 forbids.
+    pub fn is_live(&self) -> bool {
+        matches!(self, Self::Live)
+    }
+}
+
+#[cfg(test)]
+mod reporting_tests {
+    use super::*;
+
+    #[test]
+    fn every_state_but_live_is_something_to_say() {
+        assert!(Reporting::Live.is_live());
+        for quiet in [
+            Reporting::Offline,
+            Reporting::Partial { unwatched: 3 },
+            Reporting::Unavailable,
+        ] {
+            assert!(
+                !quiet.is_live(),
+                "{quiet:?} must be reported to the developer"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_carries_a_number_rather_than_a_vague_quantity() {
+        // "Some paths are not being watched" is not something a developer can act on.
+        let state = Reporting::Partial { unwatched: 7 };
+        let Reporting::Partial { unwatched } = state else {
+            panic!("shape");
+        };
+        assert_eq!(unwatched, 7);
+    }
+
+    #[test]
+    fn it_is_independent_of_connectivity() {
+        // The whole reason it is a separate type: connected-and-not-reporting is a real state.
+        let connected = ConnectionState::Connected;
+        let partial = Reporting::Partial { unwatched: 1 };
+        assert_eq!(connected, ConnectionState::Connected);
+        assert!(!partial.is_live());
+    }
+}

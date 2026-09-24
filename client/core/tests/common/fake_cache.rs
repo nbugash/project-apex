@@ -281,6 +281,16 @@ impl WorkspaceCache for InMemoryCache {
         Ok(())
     }
 
+    fn clear_unproven(&self, file_id: &FileId) -> CacheResult<()> {
+        let mut rows = self.rows.lock().unwrap();
+        for row in rows.values_mut() {
+            if &row.file_id == file_id {
+                row.unproven = false;
+            }
+        }
+        Ok(())
+    }
+
     fn rename_subtree(&self, ws: &WorkspaceId, from: &RelPath, to: &RelPath) -> CacheResult<usize> {
         let mut rows = self.rows.lock().unwrap();
         let from_prefix = format!("{}/", from.as_str());

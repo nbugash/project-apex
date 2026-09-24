@@ -418,6 +418,16 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn clear_unproven(&self, file_id: &FileId) -> CacheResult<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE file_contents SET unproven = 0 WHERE file_id = ?1",
+                rusqlite::params![&file_id.0],
+            )?;
+            Ok(())
+        })
+    }
+
     fn rename_subtree(&self, ws: &WorkspaceId, from: &RelPath, to: &RelPath) -> CacheResult<usize> {
         let from_prefix = format!("{}/", from.as_str());
         let to_parent = to.parent().unwrap_or_else(RelPath::root);

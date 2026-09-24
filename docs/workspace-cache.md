@@ -107,3 +107,41 @@ compression ratio         36.6 %            budget   50.0 %
 
 The end-to-end suite needs a display: `tauri-driver` initialises GTK and cannot start in a
 headless environment.
+
+## Schema version 2 (F004)
+
+Two columns and one replaced trigger.
+
+`files.stale` marks a tree region as needing re-reading before it is trusted — distinct from
+content validity, which is a hash comparison. `file_contents.unproven` marks a blob an event
+says has changed. Neither is a validity state: `Validity` still has one constructor and it takes
+two hashes, so nothing but a hash comparison can declare content valid. An event is not a hash,
+and the flag sits beside validity precisely so that stays true (A-UNPROVEN).
+
+The trigger is the part that would have been missed. Version 1 shipped `files_fts_update` as
+`AFTER UPDATE ON files`, with no `OF` clause, so **every** update fires a delete and reinsert
+against the FTS5 index — including one that touches only `stale` and changes no indexed term.
+Marking a tree stale is the most common operation this feature performs. Without the narrowing
+it would cost 2N pointless index writes for N rows, so §5.2 was amended and, because V1 already
+exists in the field, the migration drops and recreates rather than simply defining it.
+
+### The subtree rename
+
+A directory rename arrives as one event naming the directory, whatever the size of the subtree
+beneath it. Enumerating descendants engine-side would emit thousands of events for one user
+action — the flood the bulk rule exists to prevent, caused by the feature meant to prevent it.
+The client already holds the subtree, so it rewrites the paths locally, in one transaction.
+
+Two details cost a failing test each.
+
+**The separator boundary.** `LIKE 'src%'` also matches `src-generated`. It does not fail; it
+silently rewrites rows nobody touched. The match is the exact row plus a range bounded to
+`src/`, and the statement returns the row count so the boundary is assertable rather than
+sampled.
+
+**One formula, not two arithmetics.** The separator must stay in the remainder rather than being
+skipped. A descendant's `parent_path` can be exactly the renamed directory, where skipping the
+separator yields an empty string and the new parent becomes `/syntax/` with a trailing
+separator — which no child ever matches, so the whole subtree becomes unreachable while every
+row still looks correct in isolation. Only the SQLite-backed test found it; the in-memory fake
+was laxer, which is the argument for testing against both.

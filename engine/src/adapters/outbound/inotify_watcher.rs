@@ -14,6 +14,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask};
 
+/// Linux errno values, named rather than written inline at the match arm. `libc` is not a
+/// dependency of this crate and adding one for two integers would be the wrong trade.
+const ENOSPC: i32 = 28;
+const ENOTDIR: i32 = 20;
+
 use crate::application::ports::clock::Millis;
 use crate::application::ports::file_watcher::{FileWatcher, WatchError};
 use crate::domain::path::{CanonicalRoot, ResolvedPath};
@@ -75,8 +80,8 @@ impl FileWatcher for InotifyWatcher {
             match e.raw_os_error() {
                 // The per-user watch ceiling. A resource limit, not a full disk, and the one
                 // the workspace must stay open and browsable through (FR-005a).
-                Some(libc_enospc) if libc_enospc == 28 => WatchError::CapacityExhausted,
-                Some(enotdir) if enotdir == 20 => WatchError::NotADirectory,
+                Some(ENOSPC) => WatchError::CapacityExhausted,
+                Some(ENOTDIR) => WatchError::NotADirectory,
                 _ => WatchError::Gone,
             }
         })?;

@@ -2,17 +2,58 @@
   import type { ConnectionState, WorkspaceReference } from '../ipc';
   import { present } from './presentation';
 
+  /// Whether changes on the host are reaching the developer.
+  ///
+  /// Separate from `connection` because exhausted watch capacity happens while perfectly
+  /// connected: a single connection state cannot express "the link is fine and you are not
+  /// being told about changes", and FR-005 and FR-025 both require saying so.
+  export type Reporting =
+    | { kind: 'live' }
+    | { kind: 'offline' }
+    | { kind: 'partial'; unwatched: number }
+    | { kind: 'unavailable' };
+
   interface Props {
     connection: ConnectionState;
     workspace: WorkspaceReference | null;
     persistenceFailed?: boolean;
+    reporting?: Reporting;
   }
-  let { connection, workspace, persistenceFailed = false }: Props = $props();
+  let {
+    connection,
+    workspace,
+    persistenceFailed = false,
+    reporting = { kind: 'live' },
+  }: Props = $props();
+
+  /// What to say when changes are not being reported. Silence is how a developer would
+  /// otherwise discover that watching failed, which is the outcome FR-005 forbids.
+  function reportingNote(r: Reporting): string | null {
+    switch (r.kind) {
+      case 'live':
+        return null;
+      case 'offline':
+        return 'Not watching for changes — showing what was last read';
+      case 'partial':
+        return `Not watching ${r.unwatched} folder${r.unwatched === 1 ? '' : 's'} — changes there will not appear`;
+      case 'unavailable':
+        return 'Not watching for changes — browsing and reading continue';
+    }
+  }
+
+  let note = $derived(reportingNote(reporting));
 
   let state = $derived(present(connection));
 </script>
 
 <footer class="status" aria-label="Session status">
+  {#if note}
+    <!-- An icon and a label, so the state is not carried by colour alone (FR-039). -->
+    <span class="reporting" data-testid="status-reporting" data-kind={reporting.kind}>
+      <i class="ph ph-eye-slash" aria-hidden="true"></i>
+      <span>{note}</span>
+    </span>
+  {/if}
   <span class="workspace" title={workspace?.name ?? 'No workspace'}>
     <i
       class="ph {workspace?.location_type === 'LOCAL' ? 'ph-desktop' : 'ph-cloud'}"

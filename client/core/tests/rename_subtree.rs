@@ -117,7 +117,6 @@ fn renaming_something_absent_moves_nothing_rather_than_failing() {
 /// the statement, and only the real store has one.
 mod against_sqlite {
     use super::{rel, ws};
-    use apex_shell::adapters::outbound::sqlite::migrate::migrate;
     use apex_shell::adapters::outbound::sqlite::schema;
     use apex_shell::adapters::outbound::sqlite::SqliteWorkspaceCache;
     use apex_shell::application::ports::workspace_cache::WorkspaceCache;

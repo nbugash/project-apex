@@ -149,7 +149,7 @@ invalidation, a stale tree, no refetch, and interactions still inside budget.
 - [X] T050 [P] [US2] Unit test in `engine/tests/bulk_threshold.rs`: 255 distinct paths in one second yield individual events; 256 yield exactly one `invalidateAll` and **zero** individual events for that window (FR-015, SC-004)
 - [X] T051 [P] [US2] Unit test in `engine/tests/overflow.rs`: a `RawKind::Overflow` yields `invalidateAll`, because events the kernel dropped are changes nobody would otherwise hear about (W7, A-COALESCE, FR-005)
 - [X] T052 [P] [US2] Integration test in `client/core/tests/invalidate_all.rs`: a wholesale invalidation marks the tree stale and discards **zero** content blobs (FR-018, SC-006)
-- [ ] T053 [P] [US2] Integration test in `client/core/tests/lazy_requery.rs`: after an invalidation, zero listing requests are issued until the developer navigates (FR-017, SC-012a)
+- [X] T053 [P] [US2] Integration test in `client/core/tests/lazy_requery.rs`: after an invalidation, zero listing requests are issued until the developer navigates (FR-017, SC-012a)
 
 ### Implementation for User Story 2
 
@@ -186,12 +186,12 @@ without the file being altered underneath them and without focus moving.
 ### Implementation for User Story 3
 
 - [X] T066 [US3] Implement `mark_unproven` over `file_contents.unproven` in `client/core/src/adapters/outbound/sqlite/mod.rs`, leaving `Validity` untouched — unproven is a flag beside validity, never a validity state (A-UNPROVEN, depends on T057)
-- [ ] T067 [US3] Clear `unproven` when a hash comparison runs, in `client/core/src/application/use_cases/cached_workspace.rs`, so the existing check is the only thing that decides (depends on T059)
+- [X] T067 [US3] Clear `unproven` when a hash comparison runs, in `client/core/src/application/use_cases/cached_workspace.rs`, so the existing check is the only thing that decides (depends on T059)
 - [X] T068 [US3] Implement `rename_subtree` in `client/core/src/adapters/outbound/sqlite/mod.rs` with the exact-row plus `LIKE 'from/%'` match expressed as an explicit range comparison, in one transaction, with the `CASE` that gives the renamed row its own parent (depends on T066)
 - [X] T069 [US3] Create `client/ui/lib/workspace/watched.svelte.ts`, deriving the watched set from `WorkspaceTree`'s expanded nodes and the `OpenDocumentReference[]` tab list. Send **file** paths for tabs so the engine keeps their folder watched after a collapse, which is what makes an open tab reportable however the tree is arranged (FR-003c, FR-023)
 - [X] T070 [US3] Apply rename events to the tree in `client/ui/lib/workspace/tree.svelte.ts`, moving the entry rather than removing and re-adding it so cached content survives (FR-021, depends on T048)
 - [X] T071 [P] [US3] Unit test in `tests/unit/tab-watch-paths.test.ts`: opening a file whose folder is collapsed still contributes a watched path, and closing its last tab removes it (FR-023, FR-024a)
-- [ ] T100 [P] [US3] End-to-end spec in `tests/e2e/file-watch-no-tab.spec.ts`: a change to a file with **no open tab** produces no interruption (FR-024, US3 acceptance 4), a file open from a collapsed folder **is** reported, and a file whose last tab has closed is reported in zero cases (SC-001b). T090 covers the unfocused-tab case only
+- [X] T100 [P] [US3] End-to-end spec in `tests/e2e/file-watch-no-tab.spec.ts`: a change to a file with **no open tab** produces no interruption (FR-024, US3 acceptance 4), a file open from a collapsed folder **is** reported, and a file whose last tab has closed is reported in zero cases (SC-001b). T090 covers the unfocused-tab case only
 - [X] T101 [P] [US3] Test in `client/core/tests/rename_blob_survives.rs`: after a rename the cached content blob of the renamed file is still present and still addressable at the new path (SC-008, FR-021). T063 tests the paths; this tests the blob, which is why FR-021 exists
 
 **Checkpoint**: an open file that changes on the host is reported; one with no tab is not.
@@ -224,10 +224,10 @@ capacity, and confirm resources are returned and the developer is told in every 
 - [X] T102 [P] [US4] Test in `client/core/tests/reconnect_reflect.rs`: a change made while disconnected is reflected the next time the developer navigates to it (SC-012). T077 asserts the tree is stale and zero listings are issued; this asserts the change actually surfaces
 - [X] T080 [US4] Implement `ReleaseWatches` in `engine/src/application/use_cases/watch.rs`: release on collapse, on the last tab closing, on workspace close, on connection drop and on engine exit (FR-004, depends on T037)
 - [X] T081 [US4] Return `-32009` when the workspace root has gone, distinct from `-32001`, in `engine/src/adapters/inbound/rpc.rs`; refuse a deleted watched path per-path with `not_found` rather than failing the whole call, which would leave everything unwatched on re-establishment (depends on T040)
-- [ ] T082 [US4] Re-establish the full watched set with one `watch` call on reconnection in `client/core/src/application/use_cases/observe_connection.rs`, carrying expanded folders and open files together (FR-026b)
-- [ ] T083 [US4] Mark the tree stale in its entirety on reconnection in `client/core/src/application/use_cases/observe_connection.rs`, re-reading nothing until the developer navigates (FR-026, depends on T082, same file)
-- [ ] T084 [US4] Surface watch refusals to the developer in `client/core/src/domain/connection.rs` as a state distinct from disconnection — exhausted capacity happens while perfectly connected, so `ConnectionState` alone is the wrong home
-- [ ] T085 [US4] Render the "changes are not being reported" indication in `client/ui/lib/statusbar/StatusBar.svelte` using existing design tokens (FR-025, FR-027; **depends on T004**)
+- [X] T082 [US4] Re-establish the full watched set with one `watch` call on reconnection in `client/core/src/application/use_cases/observe_connection.rs`, carrying expanded folders and open files together (FR-026b)
+- [X] T083 [US4] Mark the tree stale in its entirety on reconnection in `client/core/src/application/use_cases/observe_connection.rs`, re-reading nothing until the developer navigates (FR-026, depends on T082, same file)
+- [X] T084 [US4] Surface watch refusals to the developer in `client/core/src/domain/connection.rs` as a state distinct from disconnection — exhausted capacity happens while perfectly connected, so `ConnectionState` alone is the wrong home
+- [X] T085 [US4] Render the "changes are not being reported" indication in `client/ui/lib/statusbar/StatusBar.svelte` using existing design tokens (FR-025, FR-027; **depends on T004**)
 - [X] T086 [US4] Render the changed-on-host tab marker in `client/ui/lib/tabs/TabStrip.svelte` per the answer recorded in T004, keeping it distinct from the dirty dot bound to `t.dirty` (FR-023a; **depends on T004**)
 
 **Checkpoint**: watching stops, resumes and reports its own absence correctly.
@@ -236,17 +236,17 @@ capacity, and confirm resources are returned and the developer is told in every 
 
 ## Phase 7: Polish and cross-cutting concerns
 
-- [ ] T087 [P] Measure reflection latency in `tests/perf/watch-reflection.mjs` — p99 over at least 100 samples at the interface boundary, harness delay excluded, **printing the measured value** rather than only comparing it (A-NFR, SC-001). Measure one interval across a locally spawned engine; summing an engine-side p99 and a client-side p99 gives a p98 bound, not a p99, and if that composition is used it must be reported as p98
-- [ ] T088 [P] Measure watch establishment against the §1.4 interaction budget in `tests/perf/watch-establish.mjs`, printing the measured value (Principle V, A-NFR)
-- [ ] T089 [P] Measure event delivery against interactive traffic in `tests/perf/watch-interference.mjs`: with ten thousand changes in flight, interactive actions still meet §1.4 (FR-016, SC-005)
-- [ ] T090 [P] End-to-end spec in `tests/e2e/file-watch.spec.ts`: expand a folder, change a file on the host, see the tree update, and confirm an unfocused tab is marked with **zero** focus changes (SC-001a)
-- [ ] T091 [P] End-to-end spec in `tests/e2e/file-watch-stale.spec.ts`: a wholesale invalidation dims the tree and navigation re-reads it (SC-012, FR-017)
-- [ ] T092 [P] Greyscale and keyboard-reachability assertions for both new visual states in `tests/e2e/file-watch-a11y.spec.ts`, because `lint:ds` can see neither (Principle I, SC-011)
-- [ ] T093 [P] Run the mutation checks from [quickstart.md](./quickstart.md) and record the outcome: widen the coalescing window, remove the separator boundary from the subtree rename, and make an event mark content valid. Each must fail a named test. **The window mutation is the one that matters** — FR-012's assertion is an upper bound, so widening the window makes the event count fall and a suite with no lower bound still passes while the developer waits
-- [ ] T094 [P] Update `docs/engine.md` with the watcher, the coalescer and the writer seam (FR-001, FR-012, FR-016)
-- [ ] T095 [P] Update `docs/workspace-cache.md` with schema version 2, the unproven flag and the subtree rename rule (FR-019, FR-022)
-- [ ] T103 Add a no-network assertion to the `gate` target in `Makefile`, running the suite under `unshare -rn` where unprivileged user namespaces are available and otherwise asserting no test opens a socket. FR-028 and A-TEST make this binding and SC-013 measures it; quickstart.md describes the check and nothing owned it
-- [ ] T096 Verify `make gate` is green, then mark F004 complete in `specs/features-map.md`
+- [X] T087 [P] Measure reflection latency in `tests/perf/watch-reflection.mjs` — p99 over at least 100 samples at the interface boundary, harness delay excluded, **printing the measured value** rather than only comparing it (A-NFR, SC-001). Measure one interval across a locally spawned engine; summing an engine-side p99 and a client-side p99 gives a p98 bound, not a p99, and if that composition is used it must be reported as p98
+- [X] T088 [P] Measure watch establishment against the §1.4 interaction budget in `tests/perf/watch-establish.mjs`, printing the measured value (Principle V, A-NFR)
+- [X] T089 [P] Measure event delivery against interactive traffic in `tests/perf/watch-interference.mjs`: with ten thousand changes in flight, interactive actions still meet §1.4 (FR-016, SC-005)
+- [X] T090 [P] End-to-end spec in `tests/e2e/file-watch.spec.ts`: expand a folder, change a file on the host, see the tree update, and confirm an unfocused tab is marked with **zero** focus changes (SC-001a)
+- [X] T091 [P] End-to-end spec in `tests/e2e/file-watch-stale.spec.ts`: a wholesale invalidation dims the tree and navigation re-reads it (SC-012, FR-017)
+- [X] T092 [P] Greyscale and keyboard-reachability assertions for both new visual states in `tests/e2e/file-watch-a11y.spec.ts`, because `lint:ds` can see neither (Principle I, SC-011)
+- [X] T093 [P] Run the mutation checks from [quickstart.md](./quickstart.md) and record the outcome: widen the coalescing window, remove the separator boundary from the subtree rename, and make an event mark content valid. Each must fail a named test. **The window mutation is the one that matters** — FR-012's assertion is an upper bound, so widening the window makes the event count fall and a suite with no lower bound still passes while the developer waits
+- [X] T094 [P] Update `docs/engine.md` with the watcher, the coalescer and the writer seam (FR-001, FR-012, FR-016)
+- [X] T095 [P] Update `docs/workspace-cache.md` with schema version 2, the unproven flag and the subtree rename rule (FR-019, FR-022)
+- [X] T103 Add a no-network assertion to the `gate` target in `Makefile`, running the suite under `unshare -rn` where unprivileged user namespaces are available and otherwise asserting no test opens a socket. FR-028 and A-TEST make this binding and SC-013 measures it; quickstart.md describes the check and nothing owned it
+- [X] T096 Verify `make gate` is green, then mark F004 complete in `specs/features-map.md`
 
 ---
 

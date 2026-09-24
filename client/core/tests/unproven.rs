@@ -6,7 +6,6 @@
 
 mod common;
 
-use apex_shell::application::ports::workspace_cache::WorkspaceCache;
 use apex_shell::application::use_cases::apply_file_event::{ApplyFileEvent, Change, FileEvent};
 use apex_shell::domain::workspace::{RelPath, WorkspaceId};
 use common::fake_cache::InMemoryCache;

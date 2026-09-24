@@ -164,6 +164,11 @@ impl WorkspaceProvider for CachedWorkspace {
                     // Every hit records its access, so retention measures use rather than age
                     // (FR-028). A failure to record is not a failure to read.
                     let _ = self.cache.touch(&entry.file_id, self.clock.now());
+                    // The hash agreed, so whatever doubt an event cast is now settled. Clearing
+                    // it here rather than when the event arrives is the point of A-UNPROVEN:
+                    // the existing comparison is the only thing that decides, and `unproven` is
+                    // a hint that it will disagree rather than a second mechanism.
+                    let _ = self.cache.clear_unproven(&entry.file_id);
                     self.publish(Presentation::Current);
                     Ok(chunk_from(entry.bytes, range, entry.hash))
                 }
