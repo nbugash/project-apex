@@ -265,8 +265,13 @@ the task never stopped and no output was lost.
 - **FR-005a**: A task's environment MUST NOT be written to any log or crash report. It is a
   common place for credentials, and A-OBS already requires the crash reporter to redact — this
   states what it must redact here.
-- **FR-006**: A task's children MUST be constrained by the same resource limits as the task
-  (§7.3), so that a runaway build cannot destabilise the instance.
+- **FR-006**: A task MUST be constrained by per-process resource limits, inherited by its
+  children, so that a single runaway process cannot exhaust the instance and take the engine with
+  it (A-LSP names that outcome as the one to prevent; A-TASKLIMIT records what this catches).
+- **FR-006a**: A task MUST run in its own process group, so that stopping it stops everything it
+  spawned (FR-018) rather than only the command that was named.
+- **FR-006b**: The limits MUST be **stated quantities fixed in the plan**, not judgements made
+  per task. A limit nobody chose is one nobody can defend when it fires.
 
 **Output**
 
@@ -420,6 +425,9 @@ the task never stopped and no output was lost.
   50 MiB, with the memory held measured and printed rather than asserted.
 - **SC-025**: A task's environment appears in zero log lines and zero crash reports, including
   when the task fails to start.
+- **SC-026**: A single process exceeding its memory limit is terminated within 2 seconds of
+  doing so, and the engine survives in 100% of exercised cases.
+- **SC-027**: Stopping a task leaves zero of the processes it spawned running, at any depth.
 - **SC-017**: The full suite for this feature runs with no remote host and no network.
 
 ## Assumptions
@@ -463,9 +471,15 @@ the task never stopped and no output was lost.
   entirely cannot reach its running tasks — is bounded rather than permanent, because A-EC2 stops
   the instance after thirty minutes without interactive traffic and reaps them.
 
-- **There is no fixed limit on concurrent tasks.** They are bounded by the resource limits §7.3
-  already applies to child processes, which is a real bound rather than an arbitrary count, and
-  one a developer running two builds and a test watcher would not trip.
+- **There is no fixed limit on concurrent tasks.** They are bounded by the per-process limits
+  FR-006 applies, which is a real bound rather than an arbitrary count, and one a developer
+  running two builds and a test watcher would not trip.
+
+- **Per-process limits do not bound a process tree, and that is accepted** (A-TASKLIMIT). Sixty-
+  four compilers at three gigabytes each exhausts a hundred-and-twenty-eight-gigabyte instance
+  while every one of them stays under its own ceiling. On this hardware reaching that takes
+  deliberate over-parallelisation — `-j$(nproc)` is sixteen — so the gap is recorded rather than
+  closed, and closing it is the shared supervisor's job when one exists.
 
 - The specific signals an interrupt and a stop request send, the escalation after a process
   ignores one, the mechanism that provides terminal attachment, the panel library, and the

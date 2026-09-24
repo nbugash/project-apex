@@ -870,7 +870,9 @@ The supervisor handles four transitions per server:
   connection does not leave orphaned servers holding memory.
 
 Child processes run under Linux cgroups so a runaway indexing task cannot destabilise the
-orchestrator.
+orchestrator. **Execution tasks are not yet among them**: F010 bounds them with per-process
+limits and a process group instead, because cgroup delegation depends on provisioning F005 has
+not specified. See A-TASKLIMIT, which records what that does and does not catch.
 
 One server per language per workspace, started lazily on first use of that language, each under
 a cgroup memory limit. A server exceeding its limit is killed and restarted rather than allowed
@@ -2720,6 +2722,68 @@ F020 arriving with a different model of survival, in which case this is the thin
 rather than a constraint it inherits. Or retained output for absent clients proving expensive
 enough on a per-hour instance that a bounded hold beats an unbounded one — which is a number, not
 a direction, and would narrow this decision rather than reverse it.
+
+---
+
+## A-TASKLIMIT — Tasks are bounded per process, not per tree, until a supervisor exists (2026-09-24)
+
+**Decision.** An execution task runs in its own process group, and is constrained by per-process
+resource limits inherited by its children. It is **not** placed in a cgroup. Full cgroup
+isolation remains owed by whichever feature builds the shared process supervisor.
+
+**Rationale.** The threat A-LSP names is precise: a runaway process exhausts the instance and the
+out-of-memory killer takes the engine, "which is not recoverable" where restarting one server is.
+What bounds that threat depends on the shape of the runaway, and on the size of the instance.
+
+§1 puts the instance at 16 vCPU and 128 GB. At that size the realistic runaway is a **single
+process** — a test with an allocation bug, a development server that leaks, a tool that never
+frees. A per-process limit fits that exactly: the process dies at its ceiling in seconds and
+nothing else notices.
+
+The case a per-process limit cannot catch is a **tree** that collectively exhausts while every
+member stays under its own ceiling — sixty-four compilers at three gigabytes each is a hundred
+and ninety-two, and no single limit was exceeded. That is real, and on this hardware it takes
+deliberate over-parallelisation to reach: `-j$(nproc)` is sixteen, and sixteen times three is
+forty-eight of a hundred and twenty-eight. It is a flag pasted from a larger machine, not an
+ordinary Tuesday.
+
+So this decision buys the common case cheaply and leaves the uncommon one to the mechanism built
+for it.
+
+**Why not cgroups now.** Two reasons, and the second is the one that decided it.
+
+A cgroup v2 subtree must be **delegated** before an unprivileged process can create anything in
+it, which is a property of how the instance is provisioned. Provisioning is F005
+`ec2-lifecycle`, which is unspecified and now sequenced after F010. Building against an
+assumption about a feature that does not exist is how a gap at the edge of a decision becomes a
+failure at the edge of an instance.
+
+And the supervisor is shared. §7.3 describes one thing spawning language servers and tasks alike,
+and F007 `lsp-multiplexing` needs the same isolation. Whichever feature builds it first defines
+it for the other, and a subsystem designed against one caller's needs is one the second caller
+reconciles rather than uses. That is an acceptable trade for a behaviour, as A-TASKLIFE was; it
+is a poor one for a subsystem.
+
+**Rejected — build cgroup v2 support in F010.** Catches every shape of runaway, and is what §7.3
+and §15.4 describe. Rejected on the delegation dependency and on the shape of the overlap, above.
+
+**Rejected — poll `/proc` and kill a tree past a threshold.** Bounds a tree without privileges or
+delegation, which is more than per-process limits manage. Rejected because it reacts at the poll
+interval, so a fast allocator crosses the threshold and keeps going between samples, and because
+it is custom machinery no other system runs — the bugs in it would be entirely ours, bought to
+cover a case that needs deliberate misuse to reach.
+
+**Rejected — nothing beyond the process group.** Leaves the threat A-LSP names unmitigated for
+tasks and relies on the out-of-memory killer choosing the right victim, which it usually does and
+not always.
+
+### Reversal conditions
+
+A tree exhausting the instance in practice rather than in principle — at which point the
+mechanism is cgroups and the question is only who builds it. F005 specifying provisioning in a
+way that guarantees a delegated subtree, which removes the dependency this decision avoided. Or
+F007 building the shared supervisor, which is where the isolation was always owed; this decision
+then narrows to the process group, and the per-process limits become redundant rather than wrong.
 
 ---
 
