@@ -479,11 +479,42 @@ discovers that when a resumption is refused.
 | `workspace/rename` | request | `workspaceId`, `fromPath`, `toPath` | — |
 | `workspace/delete` | request | `workspaceId`, `relativePath`, `recursive` | — |
 | `workspace/search` | request | `workspaceId`, `query`, `maxResults` | `matches[]` |
-| `workspace/onFileEvent` | notification | `workspaceId`, `event`, `relativePath`, `toPath?` | — |
+| `workspace/watch` | request | `workspaceId`, `paths[]` | `{watching, refused[]}` |
+| `workspace/unwatch` | request | `workspaceId`, `paths[]` | `{watching}` |
+| `workspace/onFileEvent` | notification | `workspaceId`, `events[]` of `{event, relativePath, toPath?, type?, size?, modified?}` | — |
 | `workspace/invalidateAll` | notification | `workspaceId` | — |
 
 `workspaceId` is mandatory on every workspace method. The original "formal" contract omitted
 it, which silently removed multi-workspace addressing.
+
+`workspace/watch` and `workspace/unwatch` exist because watching is scoped to what the developer
+has open (A-WATCHSCOPE), and the engine cannot infer that. Until they were added the catalogue had
+two file-event notifications and no way to begin or end a watch, while §6.1 declared `watch()` on
+the provider trait — the fifth absence of this kind, and the same shape as `workspace/register`
+below. Both take a **list** and both are idempotent against a set the engine holds per workspace,
+which is what lets a reconnecting client re-establish everything with one call rather than
+replaying a remembered history.
+
+The paths in that list are **what the client cares about, not what the engine will watch**: a
+folder path for an expanded folder, a **file** path for an open editor tab. The engine derives the
+directories to watch from it — the folders, the parent of each named file, their ancestors, and
+the root. The distinction matters because a folder holding an open file would otherwise arrive as
+one path for two reasons, and unwatching on a collapse could not be told from unwatching on a tab
+close; the client would stop being told about a file it still has open. `refused[]` carries the
+paths the host could not watch, so exhausted capacity is reported rather than silently producing a
+watcher that delivers nothing (§10.3).
+
+`workspace/onFileEvent` carries an **array**. The engine coalesces before it emits (A-COALESCE),
+so everything whose window closed together travels in one frame; one pipe is one queue (§4.6), and
+a burst delivered as hundreds of separate frames would take the writer hundreds of times ahead of
+whatever interactive request is behind it. `event` is one of `created`, `modified`, `deleted` or
+`renamed`; `renamed` is the only kind that sets `toPath`, and it is emitted once for a directory
+however large the subtree beneath it, the client rewriting descendant paths in its own projection.
+`created` and `modified` carry `type`, `size` and `modified` — the same entry metadata
+`workspace/readDirectory` returns, and for the same reason: without them a newly created file
+cannot be placed in the tree at all, and the client would have to ask about a path it was just
+told about. This is metadata, not content: no event ever carries bytes, and no event makes cached
+content valid, which remains a hash comparison and nothing else (§5.3).
 
 `workspace/register` tells the engine what a `workspaceId` means. Until this was added the
 catalogue presumed it in two places and defined it nowhere — §15.4 step 3 says to register a
@@ -660,12 +691,17 @@ CREATE TRIGGER files_fts_delete AFTER DELETE ON files BEGIN
     VALUES ('delete', old.rowid, old.relative_path, old.name);
 END;
 
-CREATE TRIGGER files_fts_update AFTER UPDATE ON files BEGIN
+CREATE TRIGGER files_fts_update AFTER UPDATE OF relative_path, name ON files BEGIN
     INSERT INTO files_fts(files_fts, rowid, relative_path, name)
     VALUES ('delete', old.rowid, old.relative_path, old.name);
     INSERT INTO files_fts(rowid, relative_path, name)
     VALUES (new.rowid, new.relative_path, new.name);
 END;
+-- The `OF relative_path, name` clause arrived with schema version 2 (F004). Version 1 shipped
+-- this trigger as `AFTER UPDATE ON files`, which fires a delete-and-reinsert for every update
+-- including ones that change no indexed term — and F004 marks whole trees stale, which is
+-- exactly that. Version 2's migration drops and recreates it; a version 1 database in the
+-- field still carries the wider form until it migrates.
 ```
 
 Four corrections are load-bearing:
@@ -761,9 +797,19 @@ pub trait WorkspaceProvider: Send + Sync {
     async fn delete(&self, path: &RelPath, recursive: bool) -> Result<()>;
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchMatch>>;
-    async fn watch(&self, path: &RelPath) -> Result<WatchHandle>;
+
+    async fn watch(&self, paths: &[RelPath]) -> Result<WatchOutcome>;
+    async fn unwatch(&self, paths: &[RelPath]) -> Result<WatchOutcome>;
 }
 ```
+
+`watch` took one path and returned a `WatchHandle` until F004. Three things were wrong with that.
+A handle implies a subscription the caller later drops, which is the wrong lifetime model once
+watching is a set the engine reconciles — and no `WatchHandle` type was ever defined anywhere, so
+the normative signature referred to nothing. One path at a time cannot re-establish a whole set on
+reconnection without the client replaying a remembered history. And there was no way to stop
+watching at all. Taking a slice and returning the outcome makes the trait say what A-WATCHSCOPE
+decided; `WatchOutcome` carries the count now watched and the paths refused.
 
 The signature is normative in three respects the original draft got wrong. `read_file` returns
 bytes rather than `String`, because the system is required to serve binary build artifacts.
@@ -938,8 +984,16 @@ queries — and returns a bounded result list. The client renders text it did no
 
 ## 10.3 File watching
 
-The engine owns all file watches, using `inotify` scoped to the workspace with build and
-dependency directories excluded.
+The engine owns all file watches, using `inotify` scoped to **what the client has asked to
+watch** — expanded folders, the directories holding open files, the ancestors of both, and the
+workspace root — with build and dependency directories excluded. Watch cost is therefore
+proportional to what the developer has opened rather than to the size of the repository, which is
+the same principle §10.1 applies to the tree itself. The client says what it cares about through
+`workspace/watch` and `workspace/unwatch` (§4.8); see A-WATCHSCOPE for why the engine cannot infer
+it. Where the host's watch capacity is exhausted even under that scope, the engine reports the
+refusal rather than appearing to watch, and the workspace remains browsable. Where the kernel's
+own event queue overflows, the engine emits `workspace/invalidateAll` (§10.4), because events the
+kernel dropped are changes nobody would otherwise hear about.
 
 The exclusion set is the repository's own `.gitignore` files plus a fixed built-in set —
 `.git/`, `node_modules/`, `target/`, `dist/`, `build/`, `.venv/`, `__pycache__/`. One resolved
@@ -2437,6 +2491,176 @@ A change that is breaking for some methods and not others, which would mean the 
 grown independent parts and needs versioning per part rather than as a whole.
 
 ---
+
+---
+
+## A-WATCHSCOPE — Watching follows attention, not repository size (2026-09-24)
+
+**Decision.** The engine watches only what the client asks it to. The client names **what it cares
+about** — folder paths for expanded folders, file paths for open editor tabs — and the engine
+derives the directories to watch: the folders, the parent of each named file, their ancestors up to
+the workspace root, and the root itself, which is watched from registration and released only when
+the workspace closes. §4.8 gains `workspace/watch` and `workspace/unwatch`, each taking a list,
+each idempotent against a set the engine holds per workspace. §6.1's `watch()` changes shape to
+match, and loses the `WatchHandle` that was never defined.
+
+**Rationale.** §10.3 read as though the engine watched the whole workspace from registration and
+the client merely filtered what arrived. That holds until the repository is large. Observing a
+filesystem costs a resource the host limits per user, and a hundred thousand files can exhaust it
+before the developer has looked at anything — so the failure appears as a watcher that is running
+and silent, the one outcome §10.3 already forbids. Scoping to what is open makes the cost
+proportional to attention, the same principle §10.1 applies to the tree.
+
+The engine cannot know which folders are expanded or which files are open, so the scoping decision
+forces a protocol method, and the catalogue had none: two file-event notifications and no request
+to begin or end a watch, while §6.1 declared `watch()` on the provider trait. That is the fifth
+absence of this kind, after `workspace/register`.
+
+The client sends reasons rather than conclusions because a folder holding an open file is one path
+with two reasons. Were the client to resolve that itself and send only directories, `unwatch` on a
+collapse would be indistinguishable from `unwatch` on a tab close, and collapsing a folder would
+silently stop reporting a file still open inside it. Sending both kinds keeps the arithmetic where
+both facts are, and lets the engine recompute the watch set from the request at any time — which
+is what makes reconnection one idempotent call rather than a replayed history. Watches do not
+survive a dropped connection, and a client that resumed believing it was still being told about
+changes would show a tree that had quietly stopped updating.
+
+**Rejected — watch the whole workspace and filter client-side.** Needs no new method and is what
+§10.3 read like. It exhausts host watch capacity on a large repository, and it puts client-side
+filtering between a `node_modules` install and a flood on the control channel.
+
+**Rejected — one `setWatched` call carrying the complete desired set every time.** Attractively
+stateless, and it resends the entire set on every expand and collapse. The delta shape costs one
+extra method and keeps the common message small, while the full set stays available for
+reconnection precisely because the operation is idempotent.
+
+**Rejected — notifications rather than requests.** Cheaper on the wire, and `refused[]` has nowhere
+to go, so exhausted capacity becomes silence.
+
+### Reversal conditions
+
+Watch establishment measured outside §1.4's interaction budget, which would make the round trip per
+expand the thing to remove: the call becomes fire-and-forget and refusals arrive as their own
+notification. A feature needing recursive subtree watching, which adds a depth field to `paths[]`
+rather than a third method.
+
+---
+
+## A-COALESCE — A hundred milliseconds per path, two hundred and fifty-six paths becomes wholesale (2026-09-24)
+
+**Decision.** Repeated changes to one path collapse into one event on a **100 ms** trailing edge.
+**256 distinct paths** changing within a rolling **1 second** window are delivered as a single
+`workspace/invalidateAll` instead of individual events, and so is an `IN_Q_OVERFLOW` from the
+kernel. `workspace/onFileEvent` carries an array, so one flush is one frame.
+
+**Rationale.** §10.4 names the cases — branch switches, large pulls — and gives no number.
+"Thousands" is not a bound a test can assert against, and "coalesce when there are a lot" is not
+implementable. Both values are therefore derived from bounds rather than chosen.
+
+The coalescing window is bounded above by the two-second reflection budget it sits inside, against
+§18.1's modelled 250 ms round trip: at 100 ms the window is about a fifth of the transit in front
+of it and a twentieth of the budget, leaving the measurement room to be a measurement. It is
+bounded below by having to collapse anything at all — editors save by writing a temporary file and
+renaming it over the target, two to three events per save, and below about 50 ms a burst survives
+as a burst. The property that matters is that the number of events delivered is bounded by elapsed
+time rather than by writes: at most ten per second per path, whatever the writer does.
+
+The bulk threshold is bounded below by human action — editing touches single digits, a save-all in
+a large project touches tens — so 256 sits an order of magnitude above anything normal work
+produces. It is bounded above by the frame: §4.1 caps a frame at 1 MiB and A-BULKSIZE puts bulk
+transfer at 512 KiB, and a path event serialises to roughly 150–250 bytes, so 256 of them is about
+64 KiB, a factor of eight inside the smaller limit. That upper bound is only real because events
+batch into one frame; while `onFileEvent` carried a single path the arithmetic described a message
+shape the catalogue did not define, which is why the array is part of this decision rather than a
+separate one.
+
+A kernel queue overflow is routed the same way because it is the same problem. The queue is finite,
+a burst that outruns the reader is dropped, and everything dropped is a change the client would
+otherwise never hear about — the silence §10.3 and the watch requirements exist to forbid. The
+client's response to a wholesale invalidation is already specified and already correct here: mark
+the tree stale, re-read lazily, discard no cached content.
+
+**Rejected — a window that widens adaptively under load.** This is "coalesce when there are a lot"
+with arithmetic attached: the delivered event count stops being a function of elapsed time, and the
+requirement stops being testable.
+
+**Rejected — a leading-edge flush.** Reports the first change immediately, which reads better for a
+single save, and debounces away the last write in a burst — the one whose content the developer
+would actually fetch.
+
+**Rejected — a byte threshold rather than a count.** Closer to the real constraint and harder to
+reason about: the developer-facing question is whether something wholesale happened, which is a
+count of paths, and a byte threshold makes the answer depend on path length.
+
+**Rejected — reporting overflow as "cannot watch".** Watching has not failed and does not need
+re-establishing, so the developer would be told they had lost freshness they still have.
+
+### Reversal conditions
+
+Measured p99 reflection approaching two seconds, which shrinks the window before anything else is
+tuned. Ten events per second per path proving enough to delay interactive traffic under §4.6, which
+widens it and re-derives the budget. A branch switch in a repository of realistic size producing
+fewer than 256 changed paths — so the wholesale path never fires in the case it exists for — which
+lowers the threshold. Overflow proving common enough to be costly, which sizes the reader's buffer
+against the burst instead.
+
+---
+
+## A-UNPROVEN — An event marks content unproven, never valid and never invalid (2026-09-24)
+
+**Decision.** An event naming a cached file sets an `unproven` flag beside the cache entry. It does
+not change validity, does not discard the blob, and does not trigger a fetch. Validity remains a
+comparison of two hashes and nothing else (§5.3).
+
+**Rationale.** The cache's one rule is that a blob is valid exactly when its hash matches the
+engine's, and F003 enforced it in the type system: `Validity` has a single constructor taking two
+hashes, so no path exists by which anything other than a hash comparison can declare content valid.
+An event is not a hash. Making "changed" a validity state would put a non-hash path into the one
+type built to have none, and the check the client already performs before serving cached content
+while connected does the work anyway — the flag is a hint that the existing comparison will
+disagree, not a second mechanism.
+
+Keeping the blob is the other half. Discarding it throws away content for a change the developer
+may never open, and removes the copy they can still read offline. Marked possibly stale and
+readable is strictly better than absent.
+
+**Rejected — a third `Validity` variant.** The obvious shape, and precisely the reopening of the
+invariant F003 closed deliberately.
+
+**Rejected — deriving unproven from a modification timestamp.** No schema change, and it makes "has
+this been disproved" a clock question. A cache that begins trusting clocks has stopped being
+decidable.
+
+### Reversal conditions
+
+None foreseen. A second hint of this kind would make the two an explicit flags column rather than
+accumulating booleans.
+
+---
+
+## A-WATCHLOCAL — Local mode does not watch in v1 (2026-09-24)
+
+**Decision.** The local workspace provider returns `Unsupported` from `watch()`. No native watcher
+ships for macOS or Windows, and no `inotify` integration ships in the client for Linux local mode.
+
+**Rationale.** The product is a thin client against a remote engine; the local provider exists so
+the read path can be exercised without a host. Watching it natively would mean FSEvents on macOS,
+`ReadDirectoryChangesW` on Windows and a second `inotify` integration on Linux — three backends
+serving a mode no requirement asks to watch.
+
+The behaviour this produces is already specified rather than missing: losing the ability to watch
+must not make a workspace unusable, browsing and reading continue, and the loss is stated. Local
+mode therefore exercises the degradation path for free, and that path has a test either way.
+
+**Rejected — one cross-platform watcher crate used by both binaries.** One dependency and all
+platforms. Refused for the engine on binary size, which A-BOOT makes a first-class concern because
+the engine is transferred on every first connect; refused for the client because nothing requires
+it.
+
+### Reversal conditions
+
+A local-first mode with real users, or a cloud-burst feature needing a watched local workspace. The
+port is already the seam, so either is a new adapter rather than a change to anything else.
 
 ---
 

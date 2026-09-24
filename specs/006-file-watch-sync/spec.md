@@ -393,8 +393,12 @@ longer being reported.
 
 ### Key Entities
 
-- **Watch**: The engine's observation of one workspace. Has a lifetime bounded by the workspace
-  being open, and consumes a host resource that is finite.
+- **Watch**: The engine's observation of **one directory**. Its lifetime is bounded by the
+  reason it exists — a folder staying expanded, or a file staying open — and so is strictly
+  shorter than the workspace's own (FR-003a, FR-004). It consumes a host resource that is
+  finite, which is why the count tracks attention rather than repository size. The workspace
+  root is the one exception: it is watched from registration until the workspace closes,
+  because its disappearance is what the developer most needs told about.
 - **File event**: What happened, where, and — for a rename — where it went. Carries no content.
 - **Exclusion set**: The resolved set of paths not watched and not indexed, computed once per
   workspace from the repository's own ignore files plus a fixed built-in set.
