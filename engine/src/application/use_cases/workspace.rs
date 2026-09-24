@@ -74,6 +74,21 @@ impl WorkspaceRoots for InMemoryRoots {
         Ok(root)
     }
 
+    fn deregister(&self, id: &str) -> Result<(), RootError> {
+        let mut roots = self.roots.lock().expect("roots registry poisoned");
+        if roots.remove(id).is_none() {
+            return Err(RootError::NotRegistered);
+        }
+        // The exclusion set goes with it. Leaving it would keep a walked `.gitignore` alive for
+        // a workspace the client has finished with, and a later re-registration would find a
+        // stale set rather than walking afresh.
+        self.exclusions
+            .lock()
+            .expect("exclusions poisoned")
+            .remove(id);
+        Ok(())
+    }
+
     fn resolve(&self, id: &str) -> Result<CanonicalRoot, RootError> {
         let roots = self.roots.lock().expect("roots registry poisoned");
         let (_, root) = roots.get(id).ok_or(RootError::NotRegistered)?;
