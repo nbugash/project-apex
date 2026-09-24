@@ -53,7 +53,7 @@ an intention to do it.
   - [X] Client cache invalidation and open-file refresh
   - [X] Bulk invalidateAll handling for large changes
 - [ ] **F010 execution-terminals** [P] (depends: F000, F003)
-  - Spec: not yet specified
+  - Spec: specs/007-execution-terminals
   - [ ] Task spawn with pty, working directory and environment
   - [ ] Stdout and stderr streaming notifications
   - [ ] Stdin, resize and terminate control path
