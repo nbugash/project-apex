@@ -15,7 +15,7 @@ added — `execution/attach`, `execution/list` and `workspace/close`; `runTask` 
 *Fixed Quantities* table fixed eleven values four requirements said it owed. Every row, code and
 quantity cited below was read from those files, not carried from a summary of them. What this
 contract previously listed as *Amendments still required* has been applied in full; what is left
-is in *What remains open*, which is shorter and has two entries that are new.
+is in *What was open here, and is not any more*, whose two entries have both since been closed.
 
 Rationale for the shapes below is in research.md, *Attaching to a task that is already running*,
 *What the `pty` parameter means, and what it costs* and *Backpressure comes for free*. It is not
@@ -35,18 +35,20 @@ rather than quietly starting a second process.
 
 **`workspaceId` on `runTask` and `attach` says where the task runs, and is validated as F003
 validates it.** Unknown or unregistered is `-32001`; registered with a vanished root is `-32009`
-(§4.4). `attach` with a `taskId` that is live under a **different** workspace is `-32006` — one
-refusal covering "never started", "already released" and "not yours".
+(§4.4). **`attach` with a `taskId` that is live under a different workspace is also `-32001`**,
+and §4.8 states both the rule and the reason: because a `taskId` is engine-unique the engine could
+resolve the task from the id alone and treat the mismatched workspace as noise, but a client that
+believes a task belongs to a workspace it does not is a client whose state has diverged, and
+silently servicing the request would leave it diverged. Principle VI puts the check on both sides.
 
-That uniformity used to be justified here as non-enumerability: a caller able to tell "not yours"
-from "not there" could enumerate another workspace's tasks from refusals alone. **`execution/list`
-has retired that reason**, because a caller may now enumerate every task the engine holds by
-asking (§4.8: `workspaceId` is optional and omitting it lists all of them). The reason that
-survives is narrower and sufficient: after release an identity carries **no history**, so "never
-started" and "finished and collected" are the same fact about the engine's state, and a second
-code would have to distinguish two states the engine does not keep. Cross-workspace disclosure is
-not a boundary here in any case — §15.5 and A-EC2 make the instance single-tenant, so every
-workspace belongs to the one developer asking.
+**So "not yours" and "not there" are deliberately distinguishable**, which reverses the reasoning
+this contract previously gave for merging them. That reasoning was non-enumerability — a caller
+able to tell the two apart could enumerate another workspace's tasks from refusals alone — and two
+amendments retired it. `execution/list` makes enumeration a **method** rather than a side channel,
+and §15.5 with A-EC2 make the instance single-tenant, so there is no second party from whom
+another workspace's tasks are hidden. What is left is a client-correctness concern, and for that a
+divergence reported beats a divergence serviced. `-32006` accordingly means one thing only: no
+live identity of that name, anywhere in the engine.
 
 **`cwd` is untrusted input and §4.7 is normative for it** (FR-003, Principle VI). §4.7's own
 sentence names `relativePath`; `runTask`'s parameter is called `cwd`, and the check is identical
@@ -126,7 +128,7 @@ unchanged, and it now covers three rows rather than one.
    deliberately refuses to set, because some programs read it as "no terminal". A client that
    passes `pty: true` and omits both SHOULD send `execution/resizePty` before the process can
    read its width, and a client that knows its panel's dimensions SHOULD simply pass them.
-   This is the half of the old gap that the amendment left open; see *What remains open*, item 1.
+   The absent case defaults to 80 x 24 (§4.8); see *What was open here, and is not any more*.
 8. **The task runs in its own process group** (FR-006a), which is what makes terminating it
    terminate what it spawned (FR-018, SC-027) rather than only the command named.
 9. **The task runs under per-process resource limits** (FR-006, FR-006b, A-TASKLIMIT): 16 GiB of
@@ -211,7 +213,10 @@ Each fails the whole call. No process is started and no identity becomes live.
    never sees this response at all.
 6. **An identity that was never started, or whose exit has already been delivered and identity
    released (FR-023), is `-32006`.** These two are one condition on purpose: after release the
-   identity carries no history, so "never started" and "finished and collected" are the same fact.
+   identity carries no history, so "never started" and "finished and collected" are the same fact
+   about the engine's state, and a code that told them apart would have to describe a state the
+   engine does not keep. A `taskId` that **is** live but under another workspace is not this
+   condition and is not this code — it is `-32001` (*What is shared*, above).
 7. **Attaching twice is not an error and delivers nothing twice.** A client that re-attaches
    having already received the retained output receives `retained: 0`. The engine tracks what an
    attachment has been sent, not what exists.
@@ -227,9 +232,9 @@ Each fails the whole call. No process is started and no identity becomes live.
 
 | Code | Condition |
 |---|---|
-| `-32001` | Unknown or unregistered `workspaceId` |
+| `-32001` | Unknown or unregistered `workspaceId` — **or** a `workspaceId` that does not own the named task (§4.8). Both are the client's state having diverged from the engine's |
 | `-32009` | Registered, and the root no longer exists |
-| `-32006` | No live identity `taskId` in this workspace — never started, already released, or live under a different workspace (guarantee 6, and *What is shared* above) |
+| `-32006` | No live identity `taskId` — never started, or already released (guarantee 6) |
 | `-32601` | This engine predates `execution/attach`. The client redeploys (§3.8, A-BOOT) |
 | `-32602` | `taskId` absent or not a string |
 
@@ -252,15 +257,15 @@ Each element:
 | `pty` | boolean | yes |
 | `pid` | integer | yes |
 | `running` | boolean | yes |
-| `retained` | integer, byte count | yes |
 | `exitCode` | integer | **exactly when** it ended with a code |
-| `signal` | string | **exactly when** it was killed by a signal |
+| `signal` | string, signal name | **exactly when** it was killed by a signal |
 
-**§4.8 fixes the row and not the element**: it writes `{tasks[]}` and stops. The fields above are
-this contract's, chosen so that a summary is an `attach` result with the three facts a caller who
-has lost its identities needs in order to decide — which identity, in which workspace, running
-what. Nothing here is new state: every field is already on `Task` (data-model.md) or already in
-`attach`'s result. See *What remains open*, item 2.
+**These are §4.8's fields, not this contract's.** The catalogue names the element as well as the
+row, under the same exactly-one rule `onExit` carries, and it states one deliberate omission:
+**no `env`**, because FR-005a keeps a task's environment out of anything that can be read back and
+a listing is exactly that. Nothing is added here — in particular **not `retained`**: a caller that
+wants the byte count attaches, which returns it, and an element that carried it would invite a
+client to render "1.2 MB missed" for a task it has not attached to and is owed nothing of.
 
 ### Guarantees
 
@@ -293,8 +298,9 @@ what. Nothing here is new state: every field is already on `Task` (data-model.md
    than an empty list. An empty `tasks` array is a positive assertion that a registered workspace
    holds no tasks — the same distinction `session/onRestart`'s `unpreserved` draws between an
    empty list and an absence of information.
-7. **No element carries `env`** (FR-005a, SC-025). The environment appears in no result, no log
-   line and no crash report, and a listing is the most tempting place to put it.
+7. **No element carries `env`** (FR-005a, SC-025, and §4.8 says so in the row's own prose). The
+   environment appears in no result, no log line and no crash report, and a listing — a thing
+   built to be read back — is the most tempting place to put it.
 8. **Every element carries `command`, and FR-005a deliberately does not protect it.** The spec
    records a credential passed as an argument as a known, accepted boundary rather than an
    oversight. Listing it widens that boundary from "the client that started the task" to "any
@@ -335,6 +341,13 @@ of a directory.
 
 A workspace method, specified here because its entire obligation is executional: FR-024 and
 SC-013 are this feature's, and §4.8 added the row on 2026-09-24 for them.
+
+**§4.8 fixes the row, the tasks and the watches, and leaves three questions unanswered**: when
+the response is written relative to the ends it causes, whether a second close is an error, and
+whether the registration survives. Guarantees 3, 8 and 7 answer them, and they are this
+contract's decisions filling a catalogue silence rather than readings of a statement — the same
+status `execution/list`'s element shape has. Each carries the alternative it rejected, so a
+reader who disagrees can see what they are disagreeing with.
 
 ### Guarantees
 
@@ -485,13 +498,23 @@ frame; the engine does not resize to zero, which some programs read as "no termi
 
 ### Guarantees
 
-1. **The signal is named by the caller, not chosen by the engine** (FR-017: the request "MUST
-   state which signal it sends"). The engine does not substitute one and **does not escalate**:
-   plan.md's `SIGTERM`-then-`SIGKILL`-after-5 s is the rule for the terminations the **engine**
-   initiates, where no caller named a signal — `workspace/close` (FR-024) and engine exit or
-   re-execution (FR-025, A-TASKEXEC, §15.3). A `terminate` request sends the one signal it names.
-   An engine that escalated here would end a process with a signal the request did not state,
-   which is the sentence FR-017 exists to forbid.
+1. **The signal is named by the caller and is the *initial* signal** (FR-017: the request "MUST
+   state which signal it sends"; §4.8). The engine never substitutes a different first signal.
+   Whether a second follows is fixed by §4.8 and follows from which one was named:
+
+   - **`SIGTERM` escalates to `SIGKILL` after 5 s** (plan.md, *Fixed Quantities*), because "a stop
+     that a process can decline is not a stop". Five seconds is long enough for a build to flush
+     and remove partial output.
+   - **`SIGINT` does not escalate.** It is the developer asking a foreground process to stop the
+     way Ctrl-C asks, and a program legitimately handling it — a test runner printing a summary, a
+     shell returning to its prompt — must not then be killed for having handled it. A client that
+     wants the process gone asks for `SIGTERM`.
+   - **`SIGKILL` has nothing to escalate to.**
+
+   This is consistent with FR-017 rather than an exception to it: the request states the signal it
+   **sends**, and the escalation is a published consequence of that choice rather than a
+   substitution made behind the caller. The same rule ends a workspace's tasks, where no caller
+   named anything and the engine therefore begins at `SIGTERM` (`workspace/close`, guarantee 2).
 2. **The signal goes to the process group, not the process** (FR-006a, FR-018, SC-027). Stopping a
    build stops its compilers, at any depth, because every descendant inherits the group. Signalling
    the pid alone is the defect the spec's *A process that spawns children* edge case describes.
@@ -501,16 +524,19 @@ frame; the engine does not resize to zero, which some programs read as "no termi
    §4.4 no longer contradicts this: `-32006` is "Task not found" and says in its own prose that
    stopping a task that has already stopped is a success, "since the caller asked for it not to be
    running and it is not running".
-4. **Terminating is a request, not a guarantee, until it is `SIGKILL`.** The spec's *A process
-   that ignores a request to stop* edge case is real: a process may catch `SIGTERM` and continue.
-   The response says the signal was delivered, never that the process died. The exit, when it
-   comes, comes as `onExit` — which is the only thing that says a task ended (FR-020). A client
-   that wants the plan's escalation applies it itself, by sending `SIGKILL` after its own delay,
-   which is the shape FR-017 leaves it.
-5. **`signal` is a closed vocabulary of three.** `SIGINT` is the interrupt (FR-015, and the signal
-   plan.md fixes for one); `SIGTERM` asks; `SIGKILL` ends. Anything else is `-32602`, because an
-   arbitrary signal number from a wire frame is untrusted input reaching `kill(2)`, and the
-   reasoning is `ResolvedPath`'s applied to a second kind of input.
+4. **The response says the signal was delivered, never that the process died.** The spec's *A
+   process that ignores a request to stop* edge case is real: a process may catch `SIGTERM` and
+   continue, and it has five seconds in which continuing is allowed. The exit, when it comes,
+   comes as `onExit` — which is the only thing that says a task ended (FR-020). A client that
+   sends `SIGINT` and needs the process gone regardless sends `SIGTERM` afterwards; a client that
+   sent `SIGTERM` needs to send nothing, because the escalation is already running.
+5. **`signal` is the signal's name, from a closed vocabulary of three** (§4.8). `SIGINT` is the
+   interrupt (FR-015, and the signal plan.md fixes for one); `SIGTERM` asks; `SIGKILL` ends.
+   A **name and not a number**, for §4.8's reason: signal numbers differ between platforms and the
+   client is not always on the engine's, so a client on macOS composing a stop request should not
+   have to know Linux's numbering — and an unrecognised name can be refused, whereas an
+   unrecognised number is indistinguishable from a valid one. Anything else is `-32602`, which is
+   `ResolvedPath`'s reasoning applied to a second kind of untrusted input reaching a syscall.
 6. **Terminating does not release the identity.** Release follows the exit and its delivery
    (FR-023, guarantee 12 of `runTask`), so a client may terminate and then attach to collect the
    last output and the exit — which is the sequence the spec's *Output arriving after the process
@@ -730,10 +756,10 @@ holding the task identities is gone, and two tasks are still running on the inst
  "result":{"tasks":[
    {"task_id":"build-01","workspace_id":"ws_7f2a",
     "command":["cargo","build","--release"],"pty":true,
-    "pid":48211,"running":true,"retained":0},
+    "pid":48211,"running":true},
    {"task_id":"test-02","workspace_id":"ws_7f2a",
     "command":["cargo","test"],"pty":false,
-    "pid":48300,"running":false,"retained":8192,"exit_code":0}]}}
+    "pid":48300,"running":false,"exit_code":0}]}}
 ```
 
 `params` is `{}` rather than a `workspace_id`, because a client that lost its identities lost the
@@ -764,8 +790,10 @@ exit has not been delivered and its identity is therefore still live (guarantee 
 
 The second call **succeeds** although the task had already exited (FR-019), and the signal reached
 a process group that no longer exists. A client racing an exit is not told it did something wrong.
-The two calls are also what escalation looks like when a client wants it: the engine sent exactly
-the signal each request named and added nothing (guarantee 1).
+The second call was also unnecessary: the `SIGTERM` was already escalating to `SIGKILL` on its own
+five seconds after the first (guarantee 1). Sending it early is harmless and sending it at all is
+the client's choice; what a client may **not** infer from the first result is that nothing further
+will happen.
 
 **Closing a workspace** (FR-024, SC-013).
 
@@ -804,7 +832,7 @@ five seconds later and the result would have arrived then (plan.md). A second
 | That an `execution/list` entry names a task it can attach to | That the task is still running now — a listing is a snapshot of what the engine knows (guarantee 3) |
 | That an absent `taskId` in a full listing means the identity is free | That the task never existed — a released identity leaves no trace (FR-023) |
 | That a `terminate` result means the signal was delivered | That the process is dead (guarantee 4), or that its children are — only `onExit` says the first, and only after it |
-| That `terminate` sends exactly the signal named | That the engine will escalate. It escalates only for the stops it initiates (guarantee 1) |
+| That `terminate` sends exactly the signal named **first** | That nothing follows it — a `SIGTERM` becomes a `SIGKILL` five seconds later, and a `SIGINT` does not (guarantee 1) |
 | That a `workspace/close` result means that workspace's tasks have ended (guarantee 3) | That their `onExit` frames have already been delivered, or that the workspace is still registered |
 | That a `writeStdin` frame was written to the pipe | That the process received it. A notification reports nothing, including failure (guarantee 1) |
 | That a `pty: true` task's `0x03` is an interrupt (guarantee 4) | That the same holds with `pty: false`, where it is a literal byte |
@@ -831,28 +859,28 @@ does not increment `protocolVersion` (§4.8), and none of these did.
 | A terminal's size at creation | §4.8, `runTask`'s `cols?` and `rows?` — **partly**; see below |
 | Chunk size and time bounds, retention bound, resource limits, scrollback bound, signal vocabulary and escalation | plan.md, *Fixed Quantities* |
 | A method that closes a workspace (FR-024, SC-013) | §4.8, `workspace/close` |
-| A method that enumerates tasks (SC-023, FR-025) | §4.8, `execution/list` |
+| A method that enumerates tasks (SC-023, FR-025) | §4.8, `execution/list`, element fields included |
+| Whether a mismatched `workspaceId` on `attach` is serviced or refused | §4.8, `-32001` and its reasoning |
+| Whether `terminate` escalates, and after which signal | §4.8 prose, with the 5 s in plan.md |
 
-## What remains open
+## What was open here, and is not any more
 
-Two items, both consequences of the amendments rather than survivors of the old list.
+Both items this document raised have since been closed in the places they belonged, which is
+recorded rather than deleted so that the reasoning survives the resolution.
 
-1. **A `pty: true` task started without `cols` and `rows` still has a size nobody chose.** §4.8
-   added the parameters and made them optional, and fixed no fallback; plan.md's *Fixed
-   Quantities* has no terminal size. So the absent case lands on the pseudo-terminal's own
+1. **A `pty: true` task started without `cols` and `rows`** landed on the pseudo-terminal's own
    default, which on Linux is 0×0 — the one value `resizePty` refuses to set, because programs
-   read it as "no terminal" (`resizePty`, *Errors*). The gap is half closed: a client that knows
-   its dimensions can now state them, and a client that does not is where it was. Closing it is
-   either a fallback size in plan.md's table or making the two parameters mandatory when `pty` is
-   true; the first does not change the wire and is the smaller change. **This contract does not
-   choose a number** — FR-006b's principle, that a quantity nobody chose is one nobody can defend
-   when it fires, applies to a terminal's width as much as to a memory ceiling.
-2. **§4.8 fixes `execution/list`'s row and not the shape of its elements.** The result is written
-   `{tasks[]}`; a third party implementing from the table would invent the element, and two
-   implementations would invent different ones. The nine fields above are this contract's, built
-   only from state `Task` already holds and fields `attach` already returns, but they are a
-   contract decision filling a catalogue silence rather than a reading of one — the same status
-   `retained`-as-a-count had before §4.8 stated it.
+   read it as "no terminal". This contract declined to invent a number, on FR-006b's principle
+   that a quantity nobody chose is one nobody can defend when it fires. §4.8 now defaults the two
+   to **80 × 24** and plan.md's *Fixed Quantities* carries the row, so the absent case has a value
+   somebody chose and a reason attached to it.
+2. **Nothing bounded what a task writes to disk.** `RLIMIT_FSIZE` was unset, and unlike CPU time
+   and process count it had not been *declined* — it had simply not been considered, which is a
+   different thing and the reason this was worth raising. plan.md now carries a **File size** row
+   declining it explicitly: the limit caps a single file, a build legitimately writes large ones,
+   and any value low enough to stop a runaway log is low enough to break real output. A task can
+   still fill the volume; §5.5 and §16 accept that under single tenancy, and it is now an accepted
+   consequence rather than an unexamined one.
 
 ## What is NOT here
 

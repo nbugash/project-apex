@@ -687,6 +687,16 @@ process to stop the way Ctrl-C asks, and a program legitimately handling it — 
 printing a summary, a shell returning to its prompt — must not then be killed for having handled
 it. A client that wants the process gone asks for `SIGTERM`.
 
+Two limitations of this shape, stated rather than left to be discovered. A client cannot ask for a
+`SIGTERM` that does **not** escalate, so a process that legitimately needs longer than the grace
+period to shut down — a database flushing, a container stopping — is killed partway. No
+requirement asks for "ask and wait", so no parameter exists for it; if one is added later it
+belongs on `terminate` as a grace period, not as a second method. And `execution/list` is
+**unpaged**, unlike `workspace/readDirectory`, which caps at a thousand entries and returns a
+cursor. Its result is bounded only by how many tasks one developer has started, and a large enough
+set would exceed §4.1's frame cap and answer `-32007` against the engine's own listing. That is
+accepted because the realistic count is tens, and recorded because the arithmetic does not care.
+
 `execution/list` exists because `attach` takes an identity the caller must already know. A client
 that has lost its identities — a fresh install, a cleared profile, a crash before its store was
 written — has no route back to tasks that are still running, and under A-TASKLIFE those tasks keep

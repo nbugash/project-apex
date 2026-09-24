@@ -542,55 +542,36 @@ Stated here rather than discovered by a reviewer.
    the transport-facing half of those criteria runs only against the locally spawned engine, and
    the loss-and-latency path they would otherwise cover is untested for output specifically.
 
-2. **`execution/list`'s element is named in two places and they do not quite agree.** §4.8 now
-   states what an entry carries — `taskId`, `workspaceId`, `command`, `pty`, `pid`, `running`, and
-   `exitCode?`/`signal?` under the same exactly-one rule as `onExit`, and explicitly not `env`.
-   `contracts/task-methods.md` publishes the same fields **plus `retained`**, which the catalogue
-   does not mention. SC-023's check is unaffected either way: it enumerates and attaches by the id
-   returned, and the id is the field nobody disagrees about. But a test asserting the full element
-   should assert the catalogue's fields as the contract and treat `retained` as this feature's
-   addition, or the divergence should be closed in one direction before anybody writes it down
-   twice more.
+2. **SC-026's limit bounds address space, and address space is not killed.** plan.md fixes 16
+   GiB, soft and hard, which is what makes the criterion measurable at all — but the mechanism
+   that implies is `RLIMIT_AS`, and crossing an address-space limit does not get a process
+   terminated by the kernel. Its allocation **fails**. SC-026 was restated for this: it now reads
+   as the allocation being denied within 2 seconds, not the process being terminated, because the
+   denial is what the limit does and what protects the instance, while the death afterwards is the
+   program's own choice. The check observes the denied allocation directly. Where the environment
+   refuses to apply the limit at all, the criterion is skipped rather than passed, and a skipped
+   criterion must appear in the validation record as a skip.
 
-3. **A `pty: true` task started without `cols` and `rows` has a size nobody chose.** The amendment
-   added both parameters and made them optional, and fixed no fallback — plan.md's *Fixed
-   Quantities* has no terminal size in it. So the absent case lands on whatever the
-   pseudo-terminal is created with, which on Linux is 0×0, the one size a program reads as "no
-   terminal at all". US2.3a above tests the case where the client states its dimensions, which is
-   now testable and was not. The case where it does not state them has no expected value to assert
-   against, and inventing one in the test is exactly what FR-006b forbids: a quantity nobody chose
-   is a quantity nobody can defend when it fires. `contracts/task-methods.md` records the same
-   gap and declines to choose the number, which is the right call — it belongs in plan.md.
-
-4. **SC-026's limit bounds address space, and address space is not killed.** plan.md fixes 16 GiB,
-   soft and hard, which is what makes the criterion measurable at all — but the mechanism that
-   implies is `RLIMIT_AS`, and crossing an address-space limit does not get a process terminated
-   by the kernel. Its allocation **fails**. Whether it then dies is the program's own choice, so a
-   fixture that handles the failure and carries on would leave SC-026's "terminated within 2
-   seconds" unobservable against a completely correct implementation. The allocating fixture must
-   therefore abort on allocation failure, deliberately and visibly, and the criterion read as "the
-   limit fires and the process ends" rather than "the engine kills it". The same property pays for
-   itself elsewhere: crossing the limit costs a reservation rather than sixteen gigabytes of
-   touched pages, so the check is affordable on any host. Where the environment refuses to apply
-   the limit at all, the criterion is skipped rather than passed, and a skipped criterion must
-   appear in the validation record as a skip.
-
-5. **The process-count criteria degrade where `/proc` is restricted.** SC-012, SC-013, SC-014 and
+3. **The process-count criteria degrade where `/proc` is restricted.** SC-012, SC-013, SC-014 and
    SC-027 are all "zero running" claims, and the only honest observable is the operating system's.
    In a container that hides other processes, they fall back to counting what the engine believes
    it holds — which passes for an implementation whose bookkeeping is right and whose signalling
    is not, i.e. for the bug. Run them on the instance, or on a host where `/proc` is whole. The
    same applies to §9's re-execution check, which counts processes across a `session/restart`.
 
-6. **SC-017's network check depends on the host, and must not be read too strictly.**
+4. **SC-017's network check depends on the host, and must not be read too strictly.**
    `make no-network` uses `unshare -rn` where unprivileged user namespaces are available and
    degrades to a source scan where they are not, which is weaker and says so. Note that F010's
    suite deliberately spawns real local processes: that is not a network dependency, and a future
    tightening of this check that forbids spawning would fail this feature for the wrong reason.
 
-**Four gaps this guide carried are closed, recorded here so nobody re-opens them as though they
+**Six gaps this guide carried are closed, recorded here so nobody re-opens them as though they
 were still live.** The plan stated none of the quantities four criteria needed; it now fixes
-twelve, in *Fixed Quantities*, and §8 measures against them. SC-002 had no oracle, because nothing
+fourteen, in *Fixed Quantities*, and §8 measures against them. Two of those fourteen closed gaps
+of their own: a `pty: true` task started without `cols`/`rows` had no chosen size and landed on the
+kernel's 0×0 — the one value `resizePty` refuses — and now defaults to 80×24; and `execution/list`
+was published with a `retained` field the catalogue never named, a divergence now closed in the
+catalogue's direction. SC-002 had no oracle, because nothing
 in this repository is a local terminal; spec.md now states the criterion as a cell grid matched
 against a hand-written expected grid, which is what was runnable all along — the finding produced
 the restatement rather than a workaround. SC-023's second half had no route, because `attach`

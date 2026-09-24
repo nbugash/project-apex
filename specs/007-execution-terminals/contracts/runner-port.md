@@ -46,6 +46,8 @@ a build in them.
 | Window-size changes and the `SIGWINCH` that follows | Which attachment is owed what, and what has been delivered (FR-031b) |
 | Signalling the process **group** (FR-006a, FR-018) | Refusing a live identity (FR-031c), releasing a dead one (FR-023) |
 | `waitpid`, and caching the status once collected | Building the wire notification from a chunk (task-events.md) |
+| — | Enumerating live tasks and which workspace owns each (`execution/list`, SC-023) |
+| — | Selecting a workspace's tasks and timing the stop escalation (`workspace/close`, FR-024) |
 | Nothing else | Everything else |
 
 Three entries are worth naming because they look like adapter work and are not.
@@ -181,9 +183,14 @@ pub enum Shape {
     /// One device. `isatty` is true and both descriptors write into it, so only
     /// `Stream::Stdout` can ever be yielded (guarantee T3).
     ///
-    /// The dimensions are needed at creation: a terminal has a size before anything resizes it,
-    /// and §4.8's `runTask` carries none. The value is owed by plan.md
-    /// (task-methods.md, item 7).
+    /// The dimensions are needed at creation: a terminal has a size before anything resizes
+    /// it. §4.8's `runTask` now carries `cols?` and `rows?` for exactly this, so the use case
+    /// passes what the client chose. **When the client chooses nothing, nothing chooses for
+    /// it**: neither §4.8 nor plan.md's *Fixed Quantities* fixes a fallback, so the use case
+    /// passes zero and the terminal is created 0×0 — the one value `execution/resizePty`
+    /// deliberately refuses to set (task-methods.md, `runTask` guarantee 7, and *What remains
+    /// open*, item 1). The port does not invent a size, because a size nobody chose is not the
+    /// port's to choose.
     Pty { cols: u16, rows: u16 },
     /// Three pipes. `isatty` is false and the two output streams stay distinguishable.
     Pipes,
@@ -223,10 +230,22 @@ pub enum Exit {
 /// The signals this feature sends. A closed enum, so the port cannot be handed an arbitrary
 /// integer from a wire frame — the same reasoning `ResolvedPath` applies to paths.
 ///
-/// **The vocabulary and the escalation after a process ignores one are owed by plan.md**
-/// (spec Assumptions; task-methods.md, item 8). The variants below are the ones the
-/// requirements name — FR-015's interrupt, FR-017's stop, FR-018's guarantee that it ends —
-/// and the list is not this contract's to close.
+/// **The vocabulary is closed at three and the escalation is fixed** (§4.8; plan.md, *Fixed
+/// Quantities*). `Int` is FR-015's interrupt — `SIGINT`, what Ctrl-C sends; `Term` is FR-017's
+/// stop; `Kill` is FR-018's guarantee that it ends. The wire carries the **name** and not the
+/// number, because numbers differ between platforms and the client is not always on the engine's;
+/// this enum is where the name stops and the number begins, and the number exists only inside the
+/// adapter.
+///
+/// A `Term` escalates to a `Kill` after **5 s**, sent to the process group; an `Int` does not
+/// escalate, because a program that legitimately handles it must not be killed for having handled
+/// it. The same `Term`-then-`Kill` rule ends a workspace's tasks, where no caller named anything
+/// (`workspace/close`, FR-024) and the engine begins at `Term`.
+///
+/// **The escalation is not behind this port.** It is two `signal` calls with a `Clock` wait
+/// between them, which is a decision and therefore lives above the line (*The dividing line*).
+/// A port that escalated on its own would make those five seconds untestable without a real
+/// process that ignores `SIGTERM`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskSignal {
     Int,
@@ -265,6 +284,14 @@ pub enum ControlError {
 }
 ```
 
+**Every `SpawnFailure` becomes `-32011` on the wire**, because FR-004 and SC-015 admit exactly one
+outcome for a command that could not be started and §4.4 gives that outcome one code. The variant
+survives as the `data.reason` §4.4 requires for an error a user can act on — and the distinction
+the client needs from it is **whose fault it is**: `NotExecutable` and `CwdUnusable` are the
+developer's to fix and are what §4.4's wording enumerates, while `NoDevice` and `LimitRefused` are
+the instance's condition and want different words in front of a human. Neither reason may carry
+the environment (guarantee T10, FR-005a, SC-025).
+
 ### Guarantees
 
 | # | Guarantee | Requirement |
@@ -281,6 +308,7 @@ pub enum ControlError {
 | T10 | Nothing the port returns, logs or formats carries the environment. `SpawnRequest`'s `Debug` redacts `env`; `SpawnFailure` has no field it could occupy | FR-005a, SC-025 |
 | T11 | The port makes no delivery decision. It reports what the process wrote; what reaches the wire is decided above it | FR-010, FR-011, Principle VIII |
 | T12 | `TaskOutput` is `Send` and not `Sync`; `TaskControl` is `Send + Sync` — see below | FR-012, SC-006 |
+| T13 | A `signal` issued while this task's reader thread is blocked in `read` takes effect without waiting for that read to return. This is what bounds `workspace/close` at plan.md's five seconds whatever the process is doing, including a process blocked in `write` against a full retention buffer | FR-024, SC-013, FR-012 |
 
 **T12 is the shape the whole feature rests on.** The obvious port — one trait with `&mut self`
 and a task handle on every method — needs a mutex around the runner, and a keystroke would then
@@ -298,23 +326,33 @@ waits for a read. It is the same reasoning F004's `FileWatcher` used to justify 
 /// Per-process ceilings, applied between fork and exec so the child is already constrained when
 /// it starts, and inherited by everything it spawns (FR-006).
 ///
-/// **Soft and hard are both set.** A child may raise its own soft limit up to its hard limit, so
-/// a soft-only ceiling is one the process being bounded can remove.
-///
-/// **The values are owed by plan.md.** FR-006b requires "stated quantities fixed in the plan, not
-/// judgements made per task", and plan.md fixes none of them. This type is the shape; the numbers
-/// are missing (task-methods.md, item 8).
+/// **The values are plan.md's, and there are two of them.** FR-006b requires "stated quantities
+/// fixed in the plan, not judgements made per task"; plan.md's *Fixed Quantities* table now
+/// states them, and this type carries exactly the limits it states and no field for a limit it
+/// deliberately declined to set. `FIXED` is what every task gets — the struct exists so a test
+/// can construct another and provoke `SpawnFailure::LimitRefused`, not so a caller can tune one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceLimits {
-    /// Address space a single process may map. The ceiling A-TASKLIMIT's realistic runaway hits.
+    /// Address space a single process may map, set as **both the soft and the hard limit**.
+    /// The ceiling A-TASKLIMIT's realistic runaway hits.
+    ///
+    /// Both, because a child may raise its own soft limit up to its hard limit: a soft-only
+    /// ceiling is one the process being bounded can simply remove, and the removal is invisible
+    /// until the first measurement of a runaway finds it was never bounded.
     pub address_space_bytes: u64,
-    /// CPU seconds a single process may consume.
-    pub cpu_seconds: u64,
-    /// Bytes a single process may write to one file.
-    pub file_size_bytes: u64,
-    /// Core dump size. Zero, because a dump of a task carries its memory — and its environment
-    /// (FR-005a, SC-025).
+    /// Core dump size. **Zero, and required to be** — FR-005a forbids a task's environment
+    /// reaching any log or crash report, and a core dump is a crash report carrying the whole
+    /// environment. This is a requirement satisfied by a limit, not a limit chosen for tuning,
+    /// and it is the one field here that may not be varied by a caller for any reason.
     pub core_bytes: u64,
+}
+
+impl ResourceLimits {
+    /// plan.md's *Fixed Quantities*: 16 GiB of address space, soft and hard; no core dumps.
+    pub const FIXED: Self = Self {
+        address_space_bytes: 16 * 1024 * 1024 * 1024,
+        core_bytes: 0,
+    };
 }
 ```
 
@@ -330,18 +368,62 @@ survives in 100% of exercised cases.
   and accepted (A-TASKLIMIT), not closed. Closing it is cgroup delegation, which depends on
   provisioning F005 has not specified, and it belongs to whichever feature builds the shared
   supervisor §7.3 describes.
-- **Aggregate disk.** `file_size_bytes` bounds one file from one process. A tree writing ten
-  thousand files fills the volume without any process exceeding anything.
-- **Process count.** `RLIMIT_NPROC` is **per user, not per tree**, and under A-EC2 the engine runs
-  as the same user as every task. Setting it for a task therefore bounds the developer's whole
-  session including the engine, which is why no such field is above: a limit that can starve the
-  engine is not a limit that protects it. A fork bomb is a tree problem and is owed with the rest.
+- **CPU time.** Not limited, deliberately (plan.md). `RLIMIT_CPU` counts per process, and any
+  value low enough to catch a spinning process is low enough to kill a real compile. The runaway
+  that takes an instance down is memory; a process spinning on CPU stays visible in
+  `execution/list` and stoppable through `execution/terminate`.
+- **Process count.** Not limited, and the reasoning is plan.md's rather than this contract's:
+  `RLIMIT_NPROC` is **per user, not per process**, and under A-EC2 the engine runs as the same
+  user as every task it starts, so setting it for a task bounds the developer's entire session
+  including the engine. A limit that can starve the engine is not a limit that protects it. A
+  fork bomb remains a tree problem, owed with the rest.
+- **Disk, at any granularity.** `RLIMIT_FSIZE` is not set, because plan.md fixes no value for it
+  and FR-006b forbids this document inventing one. So neither a single enormous file nor a tree
+  writing ten thousand small ones is bounded, and a task can fill the volume. §5.5 and §16
+  accept an unquota'd disk under single tenancy — "a developer filling their own disk" — which
+  covers the consequence, and plan.md's *File size* row now declines the limit explicitly, with
+  the reason: the limit caps a single file, and a build legitimately writes large ones.
 - **Anything about the pseudo-terminal's kernel buffer.** That buffer is what slows a producer
   when nobody reads (T7, research.md, *Backpressure comes for free*), and no limit here changes
   its size or its behaviour.
 - **The engine.** These limits are the child's. Nothing here bounds the engine's own memory, and
   A-LSP's threat — the out-of-memory killer choosing the engine — is mitigated by the child dying
   first, not by the engine being protected.
+
+---
+
+## What `execution/list` and `workspace/close` need
+
+Both rows were added to §4.8 on 2026-09-24. **Neither adds anything to this port**, and the reason
+is worth stating rather than leaving as a silence a reader would mistake for an omission.
+
+**`execution/list` needs nothing.** Enumeration is over the `TaskSet` the application already
+holds (data-model.md), keyed by `TaskId` — an identity this port has never heard of. Every field
+of a list entry is application state: `taskId`, `workspaceId`, `command` and `pty` are recorded at
+`runTask`, `retained` is the bounded buffer the application owns, `pid` came back from `spawn`,
+and `running` is `Task::state`, which the reader thread has already updated from `ReadOutcome` and
+`reap`. **The listing therefore touches the port zero times**, which is what makes
+`execution/list` a pure read (task-methods.md, guarantee 2) and what makes its snapshot semantics
+honest: it reports what the engine has observed, not what the kernel currently holds
+(task-methods.md, guarantee 3). A port method that probed liveness per task would replace one
+in-memory read with N syscalls and would still be a snapshot by the time it was serialised.
+
+**`workspace/close` needs only `TaskControl::signal`, which it already has.** Selecting the
+workspace's tasks is `TaskSet::drain_for_workspace` — application state, because the port takes a
+resolved working directory and does not know what a workspace is. Ending them is `signal(Term)`,
+then `signal(Kill)` after 5 s measured on the `Clock` port F004 added. Reporting them is the
+ordinary exit path: `reap`, then `onExit` (task-events.md, guarantee 16).
+
+**The one property this depends on is T12, and it is not free.** Closing a workspace arrives on
+the dispatch thread while every one of that workspace's tasks has a reader thread blocked in
+`read`. `TaskControl` being `Send + Sync` behind an `Arc`, separate from the `TaskOutput` its
+thread owns, is what lets the close signal all of them immediately (T13). Under the obvious port
+— one trait, `&mut self`, a task handle per call — a close would have to wait for each blocked
+read to return before it could signal that task, and a task blocked because its retention buffer
+is full is a task whose read will not return until somebody drains it. The bound plan.md fixes at
+five seconds would have been unbounded, and SC-013 would have been unmeetable for exactly the
+tasks it most needs to end. The split was justified for a keystroke (T12); it is load-bearing for
+a close.
 
 ---
 
@@ -374,6 +456,9 @@ a real process produces rarely and a test must produce every run.
   tests half of FR-018.
 - **`SpawnFailure` on demand**, every variant. FR-004 and SC-015 live entirely in the failure
   path, and a fake that cannot fail tests only the case where nothing goes wrong.
+- **A `signal` that lands while a `read` is outstanding**, so T13 is asserted rather than assumed
+  — the fake's `read` can be told to block until released, which is how `workspace/close` against
+  a task whose buffer is full (SC-013) becomes a unit test instead of a race nobody can provoke.
 - **`Shape::Pty` yielding only `Stream::Stdout`.** SC-028's first half is then a unit test; its
   second half — `isatty` reporting true — is not, and needs a real process (below).
 
@@ -413,10 +498,11 @@ attachment is owed what (FR-031b) are domain and use-case concerns. The port kno
 it has never heard of a task id.
 
 **A workspace.** The port takes a resolved working directory and nothing else. It does not know
-which workspace a task belongs to, which is why FR-024's "closing a workspace terminates its tasks"
-is a use-case rule applied through `TaskControl::signal` rather than anything the port offers —
-and why the absence of a method to close a workspace (task-methods.md, *What is NOT here*) is a
-catalogue gap rather than a port gap.
+which workspace a task belongs to, which is why FR-024's "closing a workspace terminates its
+tasks" is a use-case rule applied through `TaskControl::signal` rather than anything the port
+offers. §4.8 gained `workspace/close` on 2026-09-24, so the frame that triggers that rule now
+exists; what it needs from the port did not change, and *What `execution/list` and
+`workspace/close` need* below says why.
 
 **The client.** `LocalTaskProvider` returns `Unsupported` for every task method in v1, and no
 local pseudo-terminal ships. §13.2 was amended on 2026-09-24 to say so in the system specification:

@@ -277,7 +277,12 @@ the task never stopped and no output was lost.
   what this requirement forbids. The task's **command** is deliberately not covered; a credential
   passed as an argument is a real leak this requirement does not close, and redacting arguments
   would remove the one field that makes a failed task diagnosable. Recorded as a known boundary
-  rather than left to be read as an oversight.
+  rather than left to be read as an oversight. `execution/list` moves where that boundary sits: a
+  task's `command` becomes readable by any client that enumerates, not only by the client that
+  started it. Under A-EC2's single tenancy both are the same developer, so this widens *where* the
+  argument is visible and not *who* can see it — but it would not survive the shared instance
+  A-WORKSPACE names as its reversal condition, and it is recorded here so that reversal has
+  something to find.
 - **FR-006**: A task MUST be constrained by per-process resource limits, inherited by its
   children, so that a single runaway process cannot exhaust the instance and take the engine with
   it (A-LSP names that outcome as the one to prevent; A-TASKLIMIT records what this catches).

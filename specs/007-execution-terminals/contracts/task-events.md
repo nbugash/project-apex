@@ -264,8 +264,9 @@ Frames are snake_case and length-prefixed per §4.1; headers omitted. Notificati
 
 Thirty-three raw bytes, far under the 64 KiB size bound, so this frame was emitted by the 20 ms
 time bound instead (guarantee 6). The escape bytes `0x1B 0x5B 0x31 0x3B 0x33 0x32 0x6D` survive
-intact (FR-009, SC-002). The engine did not interpret them and does not know the output is
-coloured; the panel renders it (FR-027).
+intact (FR-009, SC-003). The engine did not interpret them and does not know the output is
+coloured; the panel renders them, and SC-002 compares the cell grid that results against a
+hand-written expected grid (FR-027).
 
 **A single unbroken 4 MiB line, chunked** (SC-005, FR-011). No newline anywhere in it. At the
 64 KiB bound the delivery is exactly 64 frames, in order, with zero truncation: 4 MiB is
