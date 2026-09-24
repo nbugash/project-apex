@@ -86,7 +86,7 @@ Phase 0 work. No task may depend on attaching to a running task until §4.8 defi
 
 ```text
 specs/007-execution-terminals/
-├── spec.md              # 42 FRs, 27 SCs, 5 stories, 2 decisions recorded in Appendix A
+├── spec.md              # 43 FRs, 28 SCs, 5 stories, 2 decisions recorded in Appendix A
 ├── plan.md              # This file
 ├── research.md          # Phase 0 output
 ├── data-model.md        # Phase 1 output
