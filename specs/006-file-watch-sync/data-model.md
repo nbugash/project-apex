@@ -80,10 +80,11 @@ rather than as a message.
 as the workspace registry does, and `session/onRestart`'s `unpreserved` list is how a client
 learns it must re-send its set (FR-026b, plan.md Technical Context).
 
-The client holds a mirror of what it has asked for, plus the refusals it was told about. Where
-that mirror is surfaced is not settled: `ConnectionState` is the wrong home, because an exhausted
-watch capacity happens while perfectly connected, and FR-005/FR-025 require the developer be told
-in that case too. **Undetermined here; design.md's concern.**
+The client holds a mirror of what it has asked for, plus the refusals it was told about. Where that
+mirror is surfaced is settled in [design.md](./design.md)'s Error Handling table and owned by
+T084: a reporting state **distinct from** `ConnectionState`, because exhausted watch capacity
+happens while perfectly connected and FR-005 and FR-025 require the developer be told in that case
+too. A single connection enum cannot express "connected, and not being told about changes".
 
 ### `RawEvent`
 
@@ -496,10 +497,16 @@ pub struct UnwatchResult { watching: u32 }
 
 // ---- workspace/onFileEvent ----
 pub struct FileEventParams {
-    workspace_id:  WorkspaceId,
+    workspace_id: WorkspaceId,
+    events:       Vec<FileEvent>,    // never empty; one flush is one frame
+}
+pub struct FileEvent {
     event:         FileEventKind,
     relative_path: String,
-    to_path:       Option<String>,   // skip_serializing_if = "Option::is_none"
+    to_path:       Option<String>,   // skip_serializing_if; present exactly for Renamed
+    kind:          Option<EntryKind>,// serialised as `type`; on Created and Modified
+    size:          Option<u64>,      // on Created and Modified, for a file
+    modified:      Option<i64>,      // epoch milliseconds, on Created and Modified
 }
 pub enum FileEventKind { Created, Modified, Deleted, Renamed }            // lowercase on the wire
 
@@ -516,30 +523,32 @@ receiving it.
 `to_path` is omitted when absent, as `cursor` and `next_cursor` already are, and is present exactly
 when `event` is `renamed`. That is FR-011 expressed as a shape.
 
-**`watching` is stated as a count above, and that is not settled.** research.md writes the result
-as `{watching, refused[]}` without saying whether `watching` is a cardinality or the set itself.
-The constraint it must meet is FR-025's: the client must be able to discover that it is not being
-told about changes. A count detects disagreement cheaply; the full set detects *which* path
-disagrees. **Undetermined — contracts/watch-methods.md settles it.**
+**`watching` is a count, settled by [watch-methods.md](./contracts/watch-methods.md).** It is the
+size of the requested set after the call. Returning the full set on every expand would put an
+O(set) payload inside the §1.4 budget and duplicate state the client authored. Note that it is
+**not** the number of host watch descriptors: the two differ by ancestors and the root, and
+SC-009/009a/009b measure the descriptors through the port's `held()`, never this field.
 
-Two further points the contracts must close.
+**A containment failure fails the whole call**, also settled there. §4.7 is normative for every
+method — "rejecting anything else with `-32002`" — and degrading it to a per-path refusal would
+make the boundary check advisory. This is deliberately inconsistent with the partial-result shape
+used for every other per-path condition, and the inconsistency is the point: capacity and a
+missing folder are conditions, a path escaping the root is an attack surface.
 
-**Whether a containment failure fails the call.** §4.7 requires the engine to reject a path that
-escapes the root with `-32002`, which is unambiguous for a single-path method. With a list, one
-bad path could fail the whole call or appear as a `refused[]` entry, and research.md's `refused[]`
-is introduced for exhausted capacity, not for path escapes. Undetermined; stated rather than
-guessed.
+**`onFileEvent` carries a batch, and each event carries entry metadata.** This was flagged as
+unresolved when this document was first written, and §4.8 was amended on 2026-09-24 to settle it.
 
-**Whether `onFileEvent` can carry a batch.** §4.8 defines the notification with a singular
-`relativePath`, and research.md's list of required §4.8 amendments names only the two new method
-rows and the narrowing of §10.3. But research.md's bulk-threshold derivation reasons about "256 of
-them [at] about 64 KiB — a factor of eight inside the smaller limit", and plan.md's Constraints
-say "the bulk threshold is chosen so an event batch cannot approach" the 1 MiB frame cap. Both
-sentences describe several events sharing one frame, which the defined payload cannot do. Either
-the notification is sent up to 256 times per bulk window, each in its own frame — in which case
-the 64 KiB figure is not a frame size and the threshold's upper bound rests on nothing — or
-`onFileEvent` gains an `events[]` form, which is a third §4.8 amendment nobody has recorded. **The
-types above match §4.8 as it stands; the discrepancy is flagged, not resolved.**
+The batch exists because one flush of the coalescer is one frame: §4.6 makes this one pipe and one
+queue, and a burst delivered as up to 256 separate frames would take the writer 256 times ahead of
+whatever interactive request is queued behind it (FR-016). It also makes A-COALESCE's upper bound
+on the 256-path threshold a real frame-size constraint — "about 64 KiB, a factor of eight inside"
+A-BULKSIZE — rather than an aggregate across frames that never approach the cap.
+
+The metadata exists because a `created` event cannot otherwise produce a row: `files` declares
+`size_bytes`, `remote_modified_at` and `is_directory` all `NOT NULL`, so US1's first acceptance
+scenario would need a follow-up `stat` that FR-020 forbids. `type`, `size` and `modified` are what
+`workspace/readDirectory` already returns per entry. FR-013 is not breached: it forbids **content**,
+and metadata cannot tell the client what a file now says.
 
 **Neither addition increments `protocolVersion`.** §4.8 is explicit that adding a method does not.
 What the client needs instead is a way to know the engine has them, and that is what

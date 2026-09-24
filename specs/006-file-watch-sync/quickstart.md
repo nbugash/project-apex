@@ -128,7 +128,7 @@ thresholds are fixed values, not judgements: **100 ms** per path, **256 distinct
 second** (research.md, A-COALESCE).
 
 ```bash
-cargo test -p apex-engine --test coalescer
+cargo test -p apex-engine --lib coalescer
 cargo test -p apex-shell  --test invalidate_all
 ```
 
@@ -210,27 +210,27 @@ the code intends.
 
 | SC | Claim | Command | Observable |
 |---|---|---|---|
-| SC-001 | Open-tab change reflected within 2 s, p99 | `cargo test -p apex-shell --test watch_delivery -- --nocapture` | **Printed** p99 in ms over ≥100 samples, harness delay excluded (§7) |
+| SC-001 | Open-tab change reflected within 2 s, p99 | `cargo test -p apex-engine --test file_events -- --nocapture` and `tests/perf/watch-reflection.mjs` | **Printed** p99 in ms over ≥100 samples, harness delay excluded (§7) |
 | SC-001a | Unfocused tab marked, zero focus changes | `npm run e2e` (`file-watch.spec.ts`) | The marked tab's id differs from the focused tab id; focused id identical before and after |
-| SC-001b | Open tab in a collapsed folder reported; closed tab not | `cargo test -p apex-shell --test file_event_apply` | Report count 1 for the collapsed-folder tab, 0 after the last tab closes |
-| SC-002 | Zero events for excluded paths | `cargo test -p apex-engine --test watch_exclusions` | Event count 0 per exclusion, over every member of the built-in set plus a `.gitignore` entry |
-| SC-003 | Watcher and indexer exclusion sets identical | `cargo test -p apex-engine --test watch_exclusions` | **Partial** — the indexer does not exist yet. See *Known gaps* |
-| SC-004 | Over the limit: one invalidation, zero events | `cargo test -p apex-engine --test coalescer` | Frame counts by method name at the recording sink: 1 and 0 |
-| SC-005 | Interactive budget holds through a 10 000-change burst | `cargo test -p apex-engine --test watch_budget -- --nocapture` | **Printed** p99 for an interactive read during the burst, against §1.4's 250 ms |
+| SC-001b | Open tab in a collapsed folder reported; closed tab not | `cargo test -p apex-shell --test apply_file_event` | Report count 1 for the collapsed-folder tab, 0 after the last tab closes |
+| SC-002 | Zero events for excluded paths | `cargo test -p apex-engine --test exclusions --test excluded_paths` | Event count 0 per exclusion, over every member of the built-in set plus a `.gitignore` entry |
+| SC-003 | Watcher and indexer exclusion sets identical | `cargo test -p apex-engine --test exclusions --test excluded_paths` | **Partial** — the indexer does not exist yet. See *Known gaps* |
+| SC-004 | Over the limit: one invalidation, zero events | `cargo test -p apex-engine --lib coalescer` | Frame counts by method name at the recording sink: 1 and 0 |
+| SC-005 | Interactive budget holds through a 10 000-change burst | `cargo test -p apex-engine --test bulk_threshold -- --nocapture` | **Printed** p99 for an interactive read during the burst, against §1.4's 250 ms |
 | SC-006 | Wholesale invalidation discards zero blobs | `cargo test -p apex-shell --test invalidate_all` | Blob count **and** bytes identical before and after |
-| SC-006a | Event on a cached file: zero blobs discarded, zero extra confirmations | `cargo test -p apex-shell --test file_event_apply` | Hash-confirmation count at the fake engine is exactly the one F003's read already makes |
-| SC-006b | Unproven content still served while disconnected, marked possibly stale | `cargo test -p apex-shell --test unproven_content` | Bytes returned while the connection source says disconnected, with the possibly-stale presentation |
-| SC-007 | 1 000 writes in 1 s bounded by elapsed time / window | `cargo test -p apex-engine --test watch_budget -- --nocapture` | **Printed** event count; bound computed from the window constant the coalescer exports, not a literal in the test |
-| SC-008 | Rename: one event naming both paths, content survives | `cargo test -p apex-engine --test coalescer`, `cargo test -p apex-shell --test file_event_apply` | One `renamed` frame carrying both paths; same blob id before and after |
-| SC-009 | 100 open/close cycles leak zero watches | `cargo test -p apex-engine --test watch_lifecycle` | Watch-descriptor count read from `/proc/self/fdinfo/<fd>` before and after the loop |
-| SC-009a | Watch count proportional to what is open, not to the repository | `cargo test -p apex-engine --test watch_budget -- --nocapture` | **Printed** watch count for a 100 000-file tree with ten folders expanded, against the expected set size |
-| SC-009b | Collapse releases; collapse over an open tab releases nothing that tab needs | `cargo test -p apex-engine --test watch_scope` | Count returns to the pre-expansion value; in the tab case the tab's parent is still in the set |
-| SC-009c | Exhausted capacity still opens and browses | `cargo test -p apex-engine --test watch_capacity` | `refused[]` non-empty, call returns success, a subsequent `readDirectory` still answers |
-| SC-010 | Out-of-root event path refused by the client | `cargo test -p apex-shell --test file_event_containment` | Refusal for each escape shape, including ones the engine itself would have refused |
-| SC-011 | Watching unavailable: the developer is told | `cargo test -p apex-shell --test watch_reconnect`, `npm run e2e` | A published state, plus a rendered indication that survives the greyscale check |
-| SC-012 | A change made while disconnected shows on the next navigation | `cargo test -p apex-shell --test watch_reconnect` | The listing issued by the simulated navigation returns the new state |
-| SC-012a | Reconnection: zero listings until navigation, zero blobs discarded | `cargo test -p apex-shell --test watch_reconnect` | Request count at the recording fake is 0 between reconnect and navigation; blob bytes unchanged |
-| SC-012b | Everything expanded and open is watched again | `cargo test -p apex-shell --test watch_reconnect` | The set in the single post-reconnect `workspace/watch` equals the pre-drop set, compared as sets |
+| SC-006a | Event on a cached file: zero blobs discarded, zero extra confirmations | `cargo test -p apex-shell --test apply_file_event` | Hash-confirmation count at the fake engine is exactly the one F003's read already makes |
+| SC-006b | Unproven content still served while disconnected, marked possibly stale | `cargo test -p apex-shell --test unproven_offline` | Bytes returned while the connection source says disconnected, with the possibly-stale presentation |
+| SC-007 | 1 000 writes in 1 s bounded by elapsed time / window | `cargo test -p apex-engine --test bulk_threshold -- --nocapture` | **Printed** event count; bound computed from the window constant the coalescer exports, not a literal in the test |
+| SC-008 | Rename: one event naming both paths, content survives | `cargo test -p apex-engine --lib coalescer`, `cargo test -p apex-shell --test apply_file_event` | One `renamed` frame carrying both paths; same blob id before and after |
+| SC-009 | 100 open/close cycles leak zero watches | `cargo test -p apex-engine --test watch_release` | Watch-descriptor count read from `/proc/self/fdinfo/<fd>` before and after the loop |
+| SC-009a | Watch count proportional to what is open, not to the repository | `cargo test -p apex-engine --test bulk_threshold -- --nocapture` | **Printed** watch count for a 100 000-file tree with ten folders expanded, against the expected set size |
+| SC-009b | Collapse releases; collapse over an open tab releases nothing that tab needs | `cargo test -p apex-engine --test watch_collapse` | Count returns to the pre-expansion value; in the tab case the tab's parent is still in the set |
+| SC-009c | Exhausted capacity still opens and browses | `cargo test -p apex-engine --test watch_exhausted` | `refused[]` non-empty, call returns success, a subsequent `readDirectory` still answers |
+| SC-010 | Out-of-root event path refused by the client | `cargo test -p apex-shell --test event_outside_root` and `cargo test -p apex-engine --test watch_containment` | Refusal for each escape shape, including ones the engine itself would have refused |
+| SC-011 | Watching unavailable: the developer is told | `cargo test -p apex-shell --test reconnect_watches --test reconnect_stale --test reconnect_reflect`, `npm run e2e` | A published state, plus a rendered indication that survives the greyscale check |
+| SC-012 | A change made while disconnected shows on the next navigation | `cargo test -p apex-shell --test reconnect_watches --test reconnect_stale --test reconnect_reflect` | The listing issued by the simulated navigation returns the new state |
+| SC-012a | Reconnection: zero listings until navigation, zero blobs discarded | `cargo test -p apex-shell --test reconnect_watches --test reconnect_stale --test reconnect_reflect` | Request count at the recording fake is 0 between reconnect and navigation; blob bytes unchanged |
+| SC-012b | Everything expanded and open is watched again | `cargo test -p apex-shell --test reconnect_watches --test reconnect_stale --test reconnect_reflect` | The set in the single post-reconnect `workspace/watch` equals the pre-drop set, compared as sets |
 | SC-013 | The suite runs with no remote host and no network | `unshare -rn make test` | The full gate passes with no network namespace. Needs unprivileged user namespaces; see *Known gaps* |
 
 ---
