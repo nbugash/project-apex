@@ -326,7 +326,7 @@ member, so this is no longer a shape with one known field.
 
 | Field | Type | Value | Why |
 |---|---|---|---|
-| `address_space` | `u64` | **16 GiB**, set as **both** the soft and the hard limit | Fatal to a runaway allocator under 128 GB, generous to any real build including a linker doing LTO. SC-026 is the one that measures it |
+| `address_space` | `u64` | **16 GiB**, set as **both** the soft and the hard limit | Fatal to a runaway allocator under 128 GB, generous to any real build including a linker doing LTO. SC-026 measures it as a **denied allocation**, not a termination: an address-space limit makes the allocation fail and whether the process then exits is its own behaviour |
 | `cpu_time` | — | **Not limited** | `RLIMIT_CPU` counts per process, so any value low enough to catch a spinning process kills a real compile. The runaway that takes the instance down is memory; a spinning process stays visible in `execution/list` and stoppable through `execution/terminate` |
 | `core` | `u64` | **0** — core dumps disabled | **Required by FR-005a, not chosen.** A dump is a crash report containing the entire environment, so leaving dumps enabled writes to disk exactly what the requirement forbids |
 | `nproc` | — | **Not limited** | `RLIMIT_NPROC` is per **user**, and under A-EC2 the engine runs as the same user as every task. Setting it for a task bounds the developer's whole session, the engine included |
@@ -933,7 +933,7 @@ Things a test should be able to break and find something wrong.
 | 20 | An engine re-execution leaves zero tasks running and names every one of them in `unpreserved` | `drain_all` before the `exec`; the drained ids are the list | A-TASKEXEC, FR-025, §15.3 |
 | 21 | After a hundred start-and-exit cycles the live-id count and the running-process count return to their starting values | `release` removes on delivery; the reaper leaves nothing | FR-023, SC-014 |
 | 22 | A task's `env` appears in zero log lines and zero crash reports, including on a failed spawn | `Debug` elides it; the crash reporter redacts (A-OBS); `RLIMIT_CORE` = 0 leaves no dump to read it from | FR-005a, SC-025 |
-| 23 | One process exceeding its 16 GiB ceiling dies within 2 seconds and the engine survives, and the ceiling cannot be raised from inside the task | Per-process limits, soft **and** hard | FR-006, SC-026 |
+| 23 | One process reaching its 16 GiB ceiling is denied the allocation within 2 seconds and the engine survives, and the ceiling cannot be raised from inside the task | Per-process limits, soft **and** hard | FR-006, SC-026 |
 | 24 | A `cwd` that escapes the workspace root is refused with `-32002`, independently of the client | `ResolvedPath`, which has no public constructor but `resolve` | FR-003, §4.7, Principle VI |
 | 25 | The pseudo-terminal is named in exactly one file | `engine/tests/pty_confinement.rs`, following `inotify_confinement.rs` | plan.md Structure Decision; research.md, *Confining the mechanism* |
 
