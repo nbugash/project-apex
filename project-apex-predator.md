@@ -652,7 +652,9 @@ its name lives in — two workspaces both choosing `build` have named the same t
 `cols` and `rows` are optional on `runTask` and meaningful only when `pty` is true. A process
 reads its terminal width at startup, before any client has had an opportunity to resize it, so
 without them it reads whatever the pseudo-terminal happened to be created with rather than a value
-somebody chose. `resizePty` against a task started with `pty: false` is **silently ignored**:
+somebody chose. Omitted, they default to **80 by 24** — the conventional terminal size, and
+specifically not the kernel's own default of zero by zero, which is both a size no display has and
+the one value `resizePty` refuses. `resizePty` against a task started with `pty: false` is **silently ignored**:
 there is no terminal to resize, and a notification has no way to refuse.
 
 `execution/onExit` carries `exitCode` **or** `signal`, exactly one of the two and never both. A

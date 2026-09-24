@@ -25,6 +25,18 @@ detector that is broken produce identical output. **Passes.**
 **Decision**: Add `execution/attach` to §4.8 — a request taking `workspaceId` and `taskId`,
 returning the task's current state and the output retained since it was last read.
 
+**As it landed**, §4.8's result is `{pid, running, retained, exitCode?, signal?}`, and two things
+about it were settled after this decision was taken. `retained` is a **byte count**, not the bytes
+themselves: the retention bound is larger than §4.1's frame cap and chunking is defined for
+notifications rather than results, so the bytes are replayed after the response as ordinary
+`onStdout` and `onStderr` notifications — each chunk on the notification its own stream would have
+used when live — in order, and one ordering rule then covers live and replayed output alike. And
+the result carries `exitCode?`/`signal?` under the same exactly-one-of rule as `execution/onExit`,
+because a client reattaching to a task that finished while it was away learns how it finished from
+the response, where `running: false` on its own says only that it is over. Neither changes the
+decision below; both make "returning the output retained" a looser phrase than the wire allows,
+and this paragraph is here so that phrase is not read as a specification.
+
 **Rationale**: A-TASKLIFE made a task outlive its connection. The catalogue was written when it
 did not: `execution/runTask` **starts** a task, and the other six methods address one the caller
 already has. Nothing says "this exists, connect me to it". That is the sixth absence of this kind,
@@ -76,8 +88,16 @@ on one stream, as it does in any terminal. A programmatic caller that wants to p
 errors uses `pty: false` and gets them separated, at the cost of the process no longer believing
 it has a terminal — which is the same trade every CI system makes.
 
-**§4.8 must state this.** It names the parameter and never says what it does, the same absence
-F004 found in the `event` vocabulary. FR-008 is narrowed to match.
+**§4.8 must state this — and now does.** It named the parameter and never said what it did, the
+same absence F004 found in the `event` vocabulary. The amended Execution subsection states both
+shapes and that `onStderr` carries nothing when `pty` is true, and the choice is recorded as
+**A-TASKSTREAM**. FR-008 is narrowed to match.
+
+The same amendment gave `runTask` optional `cols` and `rows`, meaningful only when `pty` is true,
+because a process reads its terminal width at startup — before any client has had the opportunity
+to resize it — and made `execution/resizePty` against a `pty: false` task **silently ignored**,
+a notification having no way to refuse. Neither follows from this decision; both are consequences
+of it, and they are recorded here so a reader of this page is not surprised by the catalogue.
 
 **Alternatives considered**:
 
@@ -148,12 +168,19 @@ instance is not a number a developer reaches by working.
 
 **Decision**: Output is chunked by **both** a size bound and a time bound: a chunk is emitted when
 it reaches a stated size, or when a stated interval passes with bytes waiting, whichever comes
-first. Both are values fixed in the plan. The chunker is pure — fed bytes and told the time.
+first. Both are values fixed in the plan, and plan.md's *Fixed Quantities* now fixes them:
+**64 KiB** raw for the size bound, **20 ms** for the time bound. The chunker is pure — fed bytes
+and told the time.
 
 **Rationale**: Size alone starves an interactive process: a shell printing a prompt and waiting
 writes far less than a chunk, and the developer would see nothing until they typed. Time alone
 produces frames of unbounded size, which §4.1 caps at 1 MiB and FR-011 forbids. Each bound covers
 the other's failure.
+
+The size bound is stated in **raw** bytes rather than as a share of the frame cap because §4.8
+makes `data` base64, which inflates by 4/3: the true raw ceiling is three-quarters of §4.1's
+1 MiB, about 786 KB, and a bound naively set to 1 MiB overflows the frame by a third. 64 KiB sits
+an order of magnitude under that ceiling, which is where plan.md put it and why.
 
 Purity is what makes the volume requirements testable. Ordering, the size bound, the time bound
 and the retention limit are all decidable without a process: the chunker is handed bytes and a
@@ -172,8 +199,8 @@ rather than changing the shape.
 
 ## Backpressure comes for free
 
-**Decision**: When retained output reaches its bound, the reader **stops reading** the task's
-terminal. Nothing else is done.
+**Decision**: When retained output reaches its bound — **4 MiB** per task, fixed in plan.md's
+*Fixed Quantities* — the reader **stops reading** the task's terminal. Nothing else is done.
 
 **Rationale**: FR-013 requires a process outrunning the link to be slowed rather than truncated,
 and this is the mechanism a terminal already has. A pseudo-terminal has a kernel buffer; when it
@@ -245,16 +272,35 @@ anywhere, then anywhere may decide something, and deciding requires a real proce
 
 ## Appendix A records required before implementation
 
-Two are already recorded — **A-TASKLIFE** and **A-TASKLIMIT**. One more is owed:
+Two were already recorded when this phase ran — **A-TASKLIFE** and **A-TASKLIMIT**. One more was
+owed, and it has since been written:
 
-| Record | Decision | Reversal condition |
-|---|---|---|
-| **A-TASKSTREAM** | `pty: true` merges the streams and gives the process a terminal; `pty: false` separates them and does not. The choice is exclusive because a terminal is one device | None foreseen; this is how terminals work |
+| Record | Decision | Reversal condition | Status |
+|---|---|---|---|
+| **A-TASKSTREAM** | `pty: true` merges the streams and gives the process a terminal; `pty: false` separates them and does not. The choice is exclusive because a terminal is one device | None foreseen; this is how terminals work | **Recorded** |
 
-The system specification needs three edits:
+A second record was written afterwards, by the reconciliation that applied the edits below, and it
+is named here because it changes what §15.3 promises a running task rather than anything this
+phase decided: **A-TASKEXEC** — an engine re-execution terminates every running task and names it
+in `session/onRestart`'s `unpreserved` list, rejecting the alternative of carrying the
+pseudo-terminal descriptors across the `exec` by clearing `FD_CLOEXEC`. Appendix A now holds 39
+records.
 
-| Section | Edit | Why |
-|---|---|---|
-| §4.8 | `execution/attach` row | A-TASKLIFE made a task outlive its connection; nothing reaches one the client did not start this session |
-| §4.8 | State what `pty` does, and that `onStderr` carries nothing when it is true | The catalogue names the parameter and never defines it — the same absence F004 found in the `event` vocabulary |
-| §13.2 | Note that local task execution is F015's, not F010's | So a reader of §13.2 does not believe it ships with this feature |
+The system specification needed three edits. Five landed:
+
+| Section | Edit | Why | Status |
+|---|---|---|---|
+| §4.8 | `execution/attach` row | A-TASKLIFE made a task outlive its connection; nothing reaches one the client did not start this session | **Landed** |
+| §4.8 | State what `pty` does, and that `onStderr` carries nothing when it is true | The catalogue names the parameter and never defines it — the same absence F004 found in the `event` vocabulary | **Landed**, recorded as A-TASKSTREAM |
+| §13.2 | Note that local task execution is F015's, not F010's | So a reader of §13.2 does not believe it ships with this feature | **Landed** |
+| §4.8 | `execution/list` row | `attach` takes an identity the caller must already know, so a client that lost its store had no route back to a task still running — the seventh absence of this kind | **Landed**; not asked for by this phase |
+| §4.8 | `workspace/close` row | FR-024 requires closing a workspace to terminate its tasks, and no frame meant "I am finished with this workspace" | **Landed**; not asked for by this phase |
+
+Four clarifications landed in §4.8 alongside them, and they bear on the decisions above rather
+than merely accompanying them: `data` is **base64** on `writeStdin`, `onStdout` and `onStderr`;
+`command` is an **argv vector** rather than a shell line, so the engine interposes no `sh -c`; a
+`taskId` is unique **across the engine** rather than within a workspace; and a `signal` on the
+wire is the signal's **name** rather than its number, with `SIGTERM` escalating to `SIGKILL` and
+`SIGINT` deliberately not escalating. §4.4 gained `-32010` (the identity is already running) and
+`-32011` (the command could not be started), and narrowed `-32006` to "task not found" alone —
+which is what makes FR-031c's refusal distinguishable in practice rather than only in principle.

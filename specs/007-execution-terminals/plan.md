@@ -70,7 +70,8 @@ though it were a notification. Noted, not fixed here: no client sends one.)
 — FR-006b (resource limits), FR-013a (the amount buffered before a process is slowed), FR-029a
 (the panel's retained history) — and research.md says the same of the chunker's two bounds. They
 are fixed here, with the reasoning, because a number chosen during implementation is a number
-nobody reviewed.
+nobody reviewed. The table carries more than those five: a quantity found to be missing while the
+contracts were written is fixed here too, on the same grounds.
 
 | Quantity | Value | Why this value |
 |---|---|---|
@@ -82,6 +83,7 @@ nobody reviewed.
 | Task CPU time | **Not limited** | Deliberate. A legitimate build burns CPU for minutes and `RLIMIT_CPU` counts per process, so any value low enough to catch a spinning process is low enough to kill a real compile. The runaway that actually takes the instance down is memory; a process spinning on CPU stays visible in the task list and stoppable through `execution/terminate`. |
 | Core dumps | **Disabled** (`RLIMIT_CORE` = 0) | Not a tuning choice. FR-005a forbids a task's environment reaching any log or crash report, and a core dump is a crash report containing the whole environment. Leaving dumps enabled writes the thing FR-005a prohibits straight to disk. |
 | Process count | **Not limited** | `RLIMIT_NPROC` is per **user**, not per process, and under A-EC2 the engine runs as the same user as every task it starts. Setting it for a task bounds the developer's entire session, the engine included. A limit that can starve the engine is not a limit that protects it. |
+| Default terminal size | **80 × 24** | `cols`/`rows` are optional on `runTask` and the kernel's default for a new pseudo-terminal is 0 × 0 — a size no display has, and the one value `resizePty` refuses, so the unstated case would otherwise land on the single illegal value. 80 × 24 is the conventional default every terminal program already expects to cope with. |
 | Interrupt signal | `SIGINT` | What Ctrl-C sends. FR-015's interrupt is the developer asking the foreground process to stop, which is the signal every interactive program already handles. |
 | Stop escalation | `SIGTERM`, then `SIGKILL` after **5 s** | Sent to the process **group**, not the process, so a shell's children go with it — the process group is the whole reason FR-026 can be met without cgroups. Five seconds is long enough for a build to flush and remove partial output, short enough that a developer who asked twice is not left waiting. |
 | Developer shell | `$SHELL`, falling back to `/bin/sh` | The developer's own shell is what makes the terminal theirs; `/bin/sh` is guaranteed to exist when the variable is unset. Not a login shell: a login shell re-reads profile scripts whose side effects the developer did not ask for on every new terminal. |

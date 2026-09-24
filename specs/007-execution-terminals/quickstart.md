@@ -176,13 +176,13 @@ npm run e2e                        # tests/e2e/terminal.spec.ts, Linux, per A-E2
 | Scenario | What to do | What must be observed |
 |---|---|---|
 | US2.1 | Write a string containing control bytes and a non-UTF-8 sequence to a task's input | The echo fixture returns the identical bytes; compared as bytes, not as a string |
-| US2.2 | Send an interrupt to a running task | The signal fixture reports catching **`SIGINT`** — the signal plan.md fixes, not whichever one happens to arrive; its recorded input contains **zero** `0x03` bytes |
+| US2.2 | Send an interrupt to a running task, and let the fixture handle it and keep running | The signal fixture reports catching **`SIGINT`** — the signal plan.md fixes, named rather than numbered on the wire (§4.8); its recorded input contains **zero** `0x03` bytes; and it is **still running afterwards**, because `SIGINT` does not escalate |
 | US2.3 | Resize the panel, 100 times, to alternating dimensions | The window-size fixture reports each new size; latency measured and printed, see §8 |
 | US2.3a | Start a task with `cols` and `rows` supplied, and read the size before any resize is sent | The fixture reports those dimensions at startup. They are `runTask` parameters rather than a resize (§4.8), because a process reads its terminal width before a client has had the opportunity to change it. Omitting them is a separate case with no expected value to assert — *Known gaps* 3 |
 | US2.3b | Send `execution/resizePty` to a task started with `pty: false` | Nothing happens and nothing is reported: a notification has no way to refuse, so the engine ignores it silently (§4.8). The assertion is that the task keeps running and emits no error frame |
 | US2.4 | Run a fixture that asks whether it is attached to a terminal | It reports yes, and it colours its output without being asked to |
 | US2.5 | Ask to stop a task, and ask again after it has gone | Both requests succeed (FR-019); the second is not an error for racing an exit |
-| US2.6 | Stop a task whose fixture ignores the first signal | The fixture reports catching **`SIGTERM`** and survives it; it is gone after **5 s**, killed by `SIGKILL`. Both go to the process **group**, so its children go with it |
+| US2.6 | Stop a task whose fixture ignores the first signal, asking for `SIGTERM` | The fixture reports catching **`SIGTERM`** and survives it; it is gone after **5 s**, killed by `SIGKILL`. Both go to the process **group**, so its children go with it |
 
 US2.6 is assertable end to end, and it was not when this guide was first written. The
 specification's Assumptions make the signals and the escalation plan-level values; plan.md's
@@ -194,6 +194,14 @@ gives a build no chance to flush its output or remove what it half wrote.
 The 5 s is the clause a test quietly ruins. Measure it from the moment `SIGTERM` leaves the
 boundary and assert **both** halves — still alive shortly before, gone shortly after. An assertion
 only that it is gone eventually passes for an implementation with no waiting period at all.
+
+**Which signal escalates is part of the contract, so US2.2 and US2.6 are one check in two halves.**
+§4.8 makes the signal a client sends the *initial* one: `SIGTERM` escalates to `SIGKILL`, because
+a stop a process can decline is not a stop, and `SIGINT` does **not**, because it is Ctrl-C and a
+program that legitimately handles it — a test runner printing its summary, a shell returning to
+its prompt — must not be killed for having handled it. So US2.2's fixture has to **survive** its
+interrupt and be asserted alive 5 s later. A suite that only ever interrupts a process which then
+dies cannot tell the two rules apart, and an implementation that escalates everything passes it.
 
 ---
 
@@ -214,7 +222,7 @@ cargo test -p apex-engine --test task_leak
 | Scenario | What to do | What must be observed |
 |---|---|---|
 | US3.1 | Run a command that exits 7 | `execution/onExit` carries `exitCode` 7 — not "non-zero" — and **no `signal` field at all** |
-| US3.2 | Kill a task's process with a signal | `onExit` carries `signal` and **no `exitCode`** — two states named on the wire, never one field carrying the `128 + n` convention (FR-021, §4.8) |
+| US3.2 | Kill a task's process with a signal | `onExit` carries `signal` as a **name** (`SIGKILL`, not `9`) and **no `exitCode`** — two states named on the wire, never one field carrying the `128 + n` convention (FR-021, §4.8) |
 | US3.3 | Let a task exit, then start a new one under the same identity | The old identity is released after its last chunk is delivered, and the reuse succeeds |
 | US3.3a | Try to reuse an identity that is still live | Refused with **`-32010`** (SC-022) — the same check US5.4 makes from the other side |
 | US3.4 | Close a workspace holding three running tasks with `workspace/close` | Zero of its processes survive, counted in `/proc`, including children — and a task in a **second** workspace is still running, which is what proves the close was scoped rather than total |
@@ -289,11 +297,12 @@ cargo test -p apex-shell  --test task_summary
 | Scenario | What to do | What must be observed |
 |---|---|---|
 | US5.1 | Close the transport under a running task | The process is still alive afterwards; zero exits attributable to the close |
-| US5.2 | Write output while detached, then reattach | The response carries `retained` as a **byte count**; the bytes themselves follow it as ordinary `onStdout` notifications, in order, **before** anything written since — checked as a sequence, not as a set |
+| US5.2 | Write output while detached, then reattach — once with `pty: true`, once with `pty: false` | The response carries `retained` as a **byte count**; the bytes follow it as ordinary notifications, in order, **before** anything written since — checked as a sequence, not as a set. In the `pty: false` run each chunk arrives on the notification its own stream would have used when live (§4.8), so the separation that task asked for survives the replay |
 | US5.3 | Let a task exit while detached, then reattach | The attach result carries `running: false` and exactly one of `exitCode` / `signal` (SC-020, §4.8) |
 | US5.4 | Start a task under an identity that is already running | Refused; the process count under that identity is unchanged |
 | US5.5 | Restart the client, reload its stored state, reattach | Every identity the store holds attaches; the developer is told which survived and what was missed (FR-032) |
 | US5.6 | Reattach to an identity that was never started | Refused with `-32006`, which now means only that the identity is unknown — distinguishably from an identity that ran and ended, which attaches and reports how (§4.4) |
+| US5.6a | Attach to a live task, naming a **different** registered workspace from the one that owns it | Refused with `-32001` rather than serviced. A `taskId` is engine-unique, so the engine could resolve it and ignore the mismatch — refusing is what stops a client whose state has diverged from staying diverged (§4.8, Principle VI) |
 | US5.7 | Restart the client having discarded its store entirely, then call `execution/list` with no `workspaceId` | Every task the engine holds is enumerated, and each one attaches by the id the listing returned. The client reaches them having remembered nothing (FR-031d, SC-023) |
 | US5.8 | Ask the engine to replace itself with `session/restart` while three tasks are running | Zero of their processes survive; all three ids appear in `session/onRestart`'s `unpreserved` list; the developer is told (A-TASKEXEC) |
 
@@ -346,7 +355,7 @@ the code intends.
 | SC-016 | Panel colours resolve to design-system tokens, zero raw values | `npm run lint:ds`, `npm run test:unit -- tests/unit/terminal-palette.test.ts`, `npm run e2e` (`terminal-tokens.spec.ts`) | Source: lint passes. Rendered: computed colour of each of the 16 ANSI slots equals a `--color-*` token value. The terminal library's own default palette is the raw value `lint:ds` cannot see, which is why the second assertion is on computed style — see §11 |
 | SC-017 | The suite runs with no remote host and no network | `make no-network` | The Rust suite passes with no interfaces; the target states its own degraded fallback where user namespaces are unavailable |
 | SC-018 | A task survives a drop 100%, zero terminated by the drop alone | `cargo test -p apex-engine --test task_detach` | Process alive after the transport closes; exits attributable to the close counted, and the count is 0 |
-| SC-019 | Reattach receives every missed byte, in order, first | `cargo test -p apex-engine --test task_reattach` | The response's `retained` count equals what was written while detached, and those bytes arrive as ordinary `onStdout` notifications **after** the response, in order (§4.8); the first post-attach chunk's index is the last pre-drop index plus one |
+| SC-019 | Reattach receives every missed byte, in order, first | `cargo test -p apex-engine --test task_reattach` | The response's `retained` count equals what was written while detached, and those bytes arrive as ordinary notifications **after** the response, in order, each on the stream it would have used live (§4.8); the first post-attach chunk's index is the last pre-drop index plus one |
 | SC-020 | An exit while detached is reported on reattach, 100% | `cargo test -p apex-engine --test task_reattach` | The attach result carries `running: false` and exactly one of `exitCode` / `signal`; the retained output is replayed, and the exit is delivered after it |
 | SC-021 | A detached overrun is slowed, zero bytes dropped | `cargo test -p apex-engine --test task_retention -- --nocapture` | **Printed** bytes held and bytes delivered: delivered equals written, held stays at or under **4 MiB** per task, read from the constant the source exports (§8) |
 | SC-022 | Starting under a live identity refused 100%, second process in zero | `cargo test -p apex-engine --test task_reattach` | **`-32010`** on the second `runTask` — the code that says "attach instead", distinct from `-32011`'s "your command is wrong"; the process count under that identity is unchanged |
@@ -447,7 +456,7 @@ check is decoration.
 | **A second process under a live identity** (SC-022) | Process count under the identity's group before and after the refused `runTask` | The first task must still be **running** at the moment of the second call. Against a task that has exited, reuse is legitimate (FR-023) and the refusal would be the bug. Assert on the process count, not on the error: an implementation that spawns and then reports an error passes an error-only assertion |
 | **A task's environment in a log line** (SC-025) | A sentinel value grepped across every captured log line and crash payload for the run | The environment must contain a value that could only have come from the environment, and the task must be exercised on **both** paths — started successfully, and failed to start. The failure path is where the request is most likely to be logged whole |
 | **A core file left by a task that crashed** (SC-025, FR-005a) | A scan of the task's working directory and of the host's configured dump location after a task segfaults | The fixture must actually **crash** rather than exit non-zero, and the host must be one that would otherwise write a dump — read `ulimit -c` before the run and record it, because on a host whose limit is already zero this check passes without the engine having done anything. A dump is a crash report carrying the whole environment, which is the thing FR-005a forbids, so `RLIMIT_CORE` is 0 by requirement rather than by taste |
-| **An exit report carrying both `exitCode` and `signal`, or neither** (SC-010, §4.8) | The decoded `onExit` params for every task in the suite, asserted on which field is **present** rather than on its value | Both fixtures must run in the same suite — one exiting with a code, one killed by a signal. A client reading `exitCode` from a signalled death gets `null` or `0` depending on the serialiser, and both of those read as success, so an assertion on values cannot see the bug that an assertion on presence catches |
+| **An exit report carrying both `exitCode` and `signal`, or neither** (SC-010, §4.8) | The decoded `onExit` params for every task in the suite, asserted on which field is **present** rather than on its value, and on `signal` being a **name** rather than a number | Both fixtures must run in the same suite — one exiting with a code, one killed by a signal. A client reading `exitCode` from a signalled death gets `null` or `0` depending on the serialiser, and both of those read as success, so an assertion on values cannot see the bug that an assertion on presence catches. A numeric `signal` is the same class of defect one layer down: `9` is a valid integer on any platform and means something different on each |
 | **A task surviving an engine re-execution unwatched** (A-TASKEXEC) | Process count for each task's group after `session/restart`, **and** each id's presence in `session/onRestart`'s `unpreserved` list | The tasks must be running at the moment the restart is requested, and the check must count **processes** as well as read the notification. An implementation that names an id in `unpreserved` and leaves its process running produces exactly the outcome A-TASKEXEC exists to prevent — a build still burning CPU that nothing can reach — and passes any assertion written against the list alone |
 
 ---
@@ -533,15 +542,15 @@ Stated here rather than discovered by a reviewer.
    the transport-facing half of those criteria runs only against the locally spawned engine, and
    the loss-and-latency path they would otherwise cover is untested for output specifically.
 
-2. **`execution/list`'s element shape is the contract's, not the catalogue's.** §4.8 fixes the
-   row and writes the result as `{tasks[]}`, and stops there. `contracts/task-methods.md` names
-   the nine fields an element carries, built only from state the task already holds and fields
-   `attach` already returns — but they fill a catalogue silence rather than read one. SC-023's
-   check is runnable either way, because it enumerates and then attaches by each id returned, and
-   an id is the one field nobody could disagree about. What it cannot do is prove that an engine
-   written from §4.8 alone and a client written from `contracts/` agree on anything else in the
-   element. Assert the id; treat the other eight as this feature's contract and not as the
-   protocol's, until the catalogue says otherwise.
+2. **`execution/list`'s element is named in two places and they do not quite agree.** §4.8 now
+   states what an entry carries — `taskId`, `workspaceId`, `command`, `pty`, `pid`, `running`, and
+   `exitCode?`/`signal?` under the same exactly-one rule as `onExit`, and explicitly not `env`.
+   `contracts/task-methods.md` publishes the same fields **plus `retained`**, which the catalogue
+   does not mention. SC-023's check is unaffected either way: it enumerates and attaches by the id
+   returned, and the id is the field nobody disagrees about. But a test asserting the full element
+   should assert the catalogue's fields as the contract and treat `retained` as this feature's
+   addition, or the divergence should be closed in one direction before anybody writes it down
+   twice more.
 
 3. **A `pty: true` task started without `cols` and `rows` has a size nobody chose.** The amendment
    added both parameters and made them optional, and fixed no fallback — plan.md's *Fixed

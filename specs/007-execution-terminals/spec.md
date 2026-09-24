@@ -17,9 +17,12 @@ Every number and rule below comes from somewhere. Where it comes from the system
 it is cited; where this specification chooses it, that is said, and the reasoning is in
 Assumptions.
 
-- **§4.8** already defines all seven methods this feature needs — `execution/runTask`,
-  `writeStdin`, `resizePty`, `terminate`, `onStdout`, `onStderr`, `onExit`. Unlike F004, which
-  found `workspace/watch` absent, the catalogue is complete here and no amendment is expected.
+- **§4.8** defined seven of the methods this feature needs — `execution/runTask`, `writeStdin`,
+  `resizePty`, `terminate`, `onStdout`, `onStderr`, `onExit` — and was missing three. This
+  assumption originally read "the catalogue is complete here and no amendment is expected", which
+  was wrong in the same way F004's reading of `workspace/watch` was wrong: `execution/attach`,
+  `execution/list` and `workspace/close` have since been added, along with the encoding, arity and
+  exit-shape statements the existing rows needed in order to be implementable at all.
 - **§4.1** caps a frame at 1 MiB. A build's output exceeds that many times over, so output is
   chunked by definition.
 - **§4.6** is the one that shapes this feature: one pipe is one queue, and outbound frames are
@@ -31,8 +34,9 @@ Assumptions.
   instance.
 - **§8.3** — one panel per task, input flowing back and resize reaching the process, "so remote
   processes behave like a real terminal rather than a log viewer".
-- **§15.2** — the engine tracks active task IDs and PID mappings so a transient crash can be
-  recovered.
+- **§15.2** — the engine tracks active task IDs and PID mappings, so a client that disconnects
+  and returns reattaches to work that kept running. Narrowed during this feature: the map is
+  memory, so a **crash** recovers nothing (A-TASKEXEC).
 - **A-EC2** — single tenancy. A task runs as the developer's own user on their own instance.
 
 ## What this feature is not
@@ -239,8 +243,10 @@ the task never stopped and no output was lost.
   already running.
 - **Output retained for an absent client reaching its bound.** The same slowing applies; the
   process must not behave differently for being unobserved.
-- **The engine restarting under a running task.** §15.2 tracks task IDs and PID mappings for
-  exactly this, and F002's session contract says what survives.
+- **The engine restarting under a running task.** Tasks do **not** survive it. A re-execution is
+  preceded by termination and the terminated ids are reported in `session/onRestart`'s
+  `unpreserved` list (A-TASKEXEC); an engine *crash* leaves the processes running and unreachable,
+  which §15.2 now states rather than claims to recover.
 - **Two panels on one task.** Whether a task has one viewer or many is a scope question.
 - **A task started in a directory that is deleted while it runs.**
 - **An environment variable carrying a secret.** It is the developer's own instance and their own
@@ -363,8 +369,9 @@ the task never stopped and no output was lost.
 - **FR-031c**: Reattaching MUST be distinguishable from starting, so that a client cannot
   silently start a second task under an identity that is already running.
 
-  **This requires a way to attach to a task that is already running, which §4.8 does not
-  define.** The catalogue has `execution/runTask`, which *starts* one, and six further methods
+  **This required a way to attach to a task that is already running, which §4.8 did not define.**
+  `execution/attach` was added for it, deliberately as a separate call rather than by making
+  `runTask` idempotent, and `-32010` refuses a second start under a live identity distinguishably. The catalogue has `execution/runTask`, which *starts* one, and six further methods
   that all address a task already known to the caller. There is nothing that says "this task
   exists; connect me to it". Recorded here as a consequence rather than discovered during
   implementation, the way F004 recorded `workspace/watch` — it is the sixth absence of this kind,
@@ -444,8 +451,13 @@ the task never stopped and no output was lost.
   50 MiB, with the memory held measured and printed rather than asserted.
 - **SC-025**: A task's environment appears in zero log lines and zero crash reports, including
   when the task fails to start.
-- **SC-026**: A single process exceeding its memory limit is terminated within 2 seconds of
-  doing so, and the engine survives in 100% of exercised cases.
+- **SC-026**: A single process reaching its memory limit is **denied the allocation** within 2
+  seconds of requesting it, and the engine survives in 100% of exercised cases. Stated as a denied
+  allocation rather than a termination because that is what the chosen mechanism does: an address
+  space limit makes the allocation fail, and whether the process then exits is the process's own
+  behaviour — most abort, but one that handles the failure may legitimately continue. The purpose
+  the limit serves is that a runaway cannot take the instance down, not that it dies; a mechanism
+  that guarantees the kill is a cgroup, which A-TASKLIMIT records as unavailable until F005.
 - **SC-027**: Stopping a task leaves zero of the processes it spawned running, at any depth.
 - **SC-028**: A task given a terminal reports `isatty` true and delivers zero bytes on the error
   stream, in 100% of exercised cases; the same task without one reports false and delivers its
