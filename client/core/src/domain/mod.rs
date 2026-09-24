@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod cache;
 pub mod connection;
 pub mod failure;
 pub mod geometry;
@@ -6,3 +7,4 @@ pub mod layout;
 pub mod rail;
 pub mod request;
 pub mod session;
+pub mod workspace;

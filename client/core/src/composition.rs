@@ -4,24 +4,40 @@
 //! service locator. Swapping the stub connection source for the real transport in F001 is a
 //! one-line change in this file.
 
-use crate::adapters::inbound::tauri_commands::Shell;
+use crate::adapters::inbound::tauri_commands::{Shell, WorkspaceAccess};
 use crate::adapters::outbound::deploy::SshStreamDeployer;
 use crate::adapters::outbound::json_session_store::JsonFileSessionStore;
 use crate::adapters::outbound::openssh::{OpenSshSpawner, SshTransport};
 use crate::adapters::outbound::stub_connection::StubConnectionStatusSource;
+use crate::adapters::outbound::system_clock::SystemClock;
 use crate::application::ports::connection::ConnectionStatusSource;
 use crate::application::ports::session_store::SessionStore;
 use crate::application::ports::spawner::SpawnSpec;
+use crate::application::ports::workspace_provider::{
+    ProviderError, ProviderResult, WorkspaceProvider,
+};
+use crate::application::use_cases::cached_workspace::{CachedWorkspace, Limits};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
+use crate::application::use_cases::register_workspace::RegisterWorkspace;
 use crate::application::use_cases::restore_session::RestoreSession;
+use crate::composition_workspace::prepare_cache;
 use crate::domain::rail::RailCatalogue;
+use crate::domain::workspace::{
+    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, WorkspaceId,
+};
 use crate::window::controller::WindowController;
+use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct Wiring {
     pub shell: Shell,
+    /// The workspace provider the interface reaches, with maintenance already run.
+    ///
+    /// Always present: a workspace command must be answerable before a host is configured, and
+    /// answering "offline" is information while a missing command is a crash.
+    pub workspace: WorkspaceAccess,
     pub stub: Arc<StubConnectionStatusSource>,
     /// Present when a host is configured. F002 gives F001's `HandToBootstrap` a recipient: the
     /// transport can already classify a missing engine, and this is what deploys one.
@@ -94,7 +110,36 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
         }
         None => stub.clone(),
     };
-    let connection = Arc::new(ObserveConnection::new(source));
+    let connection = Arc::new(ObserveConnection::new(source.clone()));
+
+    // The projection, migrated and evicted before any provider exists. `ReadyCache` is the only
+    // thing that hands out a cache and the only way to obtain one runs maintenance first, so the
+    // ordering FR-018c and FR-026a require is checked by the compiler rather than by review.
+    let ready = prepare_cache(
+        data_dir.clone(),
+        Arc::new(|phase| crate::logging::info(&format!("cache maintenance: {phase:?}"))),
+    );
+    if ready.report.rebuilt {
+        crate::logging::warn("the workspace cache was rebuilt; cached content will be refetched");
+    }
+
+    // No engine-backed provider until a transport exists. `FakeWorkspace` is a test double and
+    // does not belong here, so the inner provider is one that refuses: the caching layer then
+    // serves what is already cached and reports the rest as offline, which is exactly what it
+    // does during a real outage.
+    let inner: Arc<dyn WorkspaceProvider> = Arc::new(DisconnectedWorkspace);
+    let workspace = WorkspaceAccess {
+        cache: ready.get(),
+        register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
+        provider: Arc::new(CachedWorkspace::new(
+            inner,
+            ready.get(),
+            Arc::new(SystemClock),
+            source,
+            Arc::new(|_presentation| {}),
+            Limits::default(),
+        )),
+    };
 
     #[cfg(debug_assertions)]
     let shell = Shell {
@@ -114,7 +159,41 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
 
     Wiring {
         shell,
+        workspace,
         stub,
         deployer,
+    }
+}
+
+/// The inner provider before a transport exists.
+///
+/// Every method reports `Offline`, which is the truth: nothing is reachable. The caching layer
+/// above it still serves whatever the projection holds and reports the rest as unavailable —
+/// the same behaviour as a real outage, which is why this is a provider rather than an
+/// `Option` that every call site would have to unwrap.
+struct DisconnectedWorkspace;
+
+#[async_trait]
+impl WorkspaceProvider for DisconnectedWorkspace {
+    async fn read_directory(
+        &self,
+        _ws: &WorkspaceId,
+        _path: &RelPath,
+        _page: PageRequest,
+    ) -> ProviderResult<DirPage> {
+        Err(ProviderError::Offline)
+    }
+
+    async fn stat(&self, _ws: &WorkspaceId, _path: &RelPath) -> ProviderResult<FsMeta> {
+        Err(ProviderError::Offline)
+    }
+
+    async fn read_file(
+        &self,
+        _ws: &WorkspaceId,
+        _path: &RelPath,
+        _range: Option<ByteRange>,
+    ) -> ProviderResult<FileChunk> {
+        Err(ProviderError::Offline)
     }
 }

@@ -1,7 +1,11 @@
 pub mod bootstrap;
+pub mod cached_workspace;
 pub mod connect;
 pub mod exchange;
+pub mod maintain_cache;
 pub mod observe_connection;
 pub mod persist_session;
+pub mod register_workspace;
 pub mod restore_session;
+pub mod search_paths;
 pub mod supervise;

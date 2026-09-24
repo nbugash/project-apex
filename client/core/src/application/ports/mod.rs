@@ -1,7 +1,12 @@
+pub mod bulk_transfer;
+pub mod clock;
 pub mod connection;
 pub mod credential;
 pub mod deployer;
 pub mod handshake;
+pub mod request_sender;
 pub mod session_store;
 pub mod spawner;
 pub mod transport;
+pub mod workspace_cache;
+pub mod workspace_provider;

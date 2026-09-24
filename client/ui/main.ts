@@ -3,6 +3,7 @@ import { mount } from 'svelte';
 import Window from './lib/shell/Window.svelte';
 import { shellState } from './lib/state.svelte';
 import { onConnectionChanged, onWorkspaceChanged, sessionGet, shellReady } from './lib/ipc';
+import { CONTENT_PRESENTATION, MAINTENANCE_PRESENTATION } from './lib/statusbar/presentation';
 
 /**
  * Startup order is load-bearing.

@@ -7,6 +7,7 @@
 pub mod adapters;
 pub mod application;
 pub mod composition;
+pub mod composition_workspace;
 pub mod domain;
 pub mod logging;
 pub mod window;
@@ -29,6 +30,11 @@ pub fn run() {
             cmd::rail_select,
             cmd::tool_window_resize,
             cmd::rail_destinations,
+            cmd::workspace_read_directory,
+            cmd::workspace_open,
+            cmd::workspace_delete,
+            #[cfg(debug_assertions)]
+            cmd::workspace_seed_for_tests,
             #[cfg(debug_assertions)]
             cmd::stub_set_connection,
         ])
@@ -80,6 +86,7 @@ pub fn run() {
             });
 
             app.manage(wiring.shell);
+            app.manage(wiring.workspace);
             Ok(())
         })
         .build(tauri::generate_context!())

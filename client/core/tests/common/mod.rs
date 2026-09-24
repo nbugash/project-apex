@@ -14,6 +14,10 @@
 //! it. Integration tests are separate crates, and `tests/common/` is how Rust shares code
 //! between them.
 
+pub mod fake_cache;
+pub mod fake_clock;
+pub mod fake_workspace;
+
 use apex_shell::application::ports::spawner::{
     ProcessSpawner, SpawnError, SpawnSpec, SpawnedChild,
 };
@@ -758,11 +762,25 @@ impl EngineSpawner {
         // handshake test failing with ConnectionLost, a symptom that says nothing about the
         // cause. A missing binary is obvious; a stale one is the expensive kind of wrong.
         let built = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
-        let sources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        // Only the inputs that actually produce the binary: `engine/src` and the manifest.
+        //
+        // This used to walk the whole `engine/` directory, which swept in `engine/tests/`. Test
+        // files cannot change the binary, so adding one made the guard demand a rebuild that
+        // would change nothing — and a guard that fires when nothing is wrong is one people
+        // learn to work around, which is exactly how the staleness it exists to catch gets back
+        // in. F003 is the first feature to put tests in the engine crate, which is why this
+        // surfaced now.
+        let engine = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
             .join("engine");
-        let newest = newest_source(&sources);
+        let newest = [
+            newest_source(&engine.join("src")),
+            newest_source(&engine.join("Cargo.toml")),
+        ]
+        .into_iter()
+        .flatten()
+        .max();
         if let (Some(built), Some(newest)) = (built, newest) {
             assert!(
                 built >= newest,
@@ -780,10 +798,15 @@ impl EngineSpawner {
     }
 }
 
-/// The most recently modified Rust source or manifest under `dir`.
-fn newest_source(dir: &std::path::Path) -> Option<std::time::SystemTime> {
+/// The most recently modified Rust source or manifest at or under `path`.
+///
+/// Accepts a file as well as a directory, so a manifest can be checked directly.
+fn newest_source(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    if path.is_file() {
+        return std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    }
     let mut newest: Option<std::time::SystemTime> = None;
-    let mut stack = vec![dir.to_path_buf()];
+    let mut stack = vec![path.to_path_buf()];
     while let Some(d) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else {
             continue;

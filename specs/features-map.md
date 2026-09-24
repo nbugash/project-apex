@@ -37,14 +37,14 @@ an intention to do it.
   - [X] Protocol version negotiation and mismatch policy
   - [X] In-place binary replacement and re-execution
   - [X] Session continuity contract across engine re-execution (task recovery is F010, language servers F007, surviving a disconnection F020)
-- [ ] **F003 workspace-cache** (depends: F002)
-  - Spec: not yet specified
-  - [ ] WorkspaceProvider trait with local and remote implementations
-  - [ ] Canonical SQLite schema with WAL, FTS index and migrations
-  - [ ] Workspace registration and path mapping
-  - [ ] Lazy shallow directory fetch and tree projection
-  - [ ] Ranged file read with hash-based cache validity
-  - [ ] Zstd content blobs with access-time eviction
+- [X] **F003 workspace-cache** (depends: F002)
+  - Spec: specs/005-workspace-cache
+  - [X] WorkspaceProvider trait with local and remote implementations
+  - [X] Canonical SQLite schema with WAL, FTS index and migrations
+  - [X] Workspace registration and path mapping
+  - [X] Lazy shallow directory fetch and tree projection
+  - [X] Ranged file read with hash-based cache validity
+  - [X] Zstd content blobs with access-time eviction
 - [ ] **F004 file-watch-sync** [P] (depends: F003)
   - Spec: not yet specified
   - [ ] Engine-side inotify watcher scoped to the workspace

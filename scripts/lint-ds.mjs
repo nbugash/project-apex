@@ -82,6 +82,42 @@ for (const root of ROOTS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Every `var(--token)` must name a token the design system actually defines.
+//
+// The checks above forbid raw hex, raw pixels and hard-coded fonts, which is what Principle I's
+// token discipline is usually taken to mean. They have no view of whether a token *exists* — so
+// `var(--color-ink)` passes cleanly, resolves to nothing, and the element renders unstyled. F003
+// wrote seven such tokens and this gate said nothing, which is what added it.
+//
+// Locally-scoped properties (set with `--x:` in the same file, or inline via `style=`) are not
+// design tokens and are skipped.
+{
+  const tokenSources = ['client/ui/lib/ds/system/styles.css', 'client/ui/lib/ds/layout-tokens.css'];
+  const defined = new Set();
+  for (const src of tokenSources) {
+    const css = await readFile(src, 'utf8').catch(() => '');
+    for (const m of css.matchAll(/(--[a-z0-9-]+)\s*:/g)) defined.add(m[1]);
+  }
+
+  for (const root of ROOTS) {
+    for await (const file of walk(root)) {
+      const text = await readFile(file, 'utf8');
+      // Anything this file declares itself, including inline `style="--depth: 2"`.
+      const local = new Set([...text.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+      for (const m of text.matchAll(/var\((--[a-z0-9-]+)/g)) {
+        const token = m[1];
+        if (defined.has(token) || local.has(token)) continue;
+        const line = text.slice(0, m.index).split('\n').length;
+        console.error(
+          `${file}:${line}  \`${token}\` is not a design-system token — it resolves to nothing`,
+        );
+        failures++;
+      }
+    }
+  }
+}
+
 if (failures > 0) {
   console.error(`\nlint:ds — ${failures} design-system violation(s).`);
   process.exit(1);
