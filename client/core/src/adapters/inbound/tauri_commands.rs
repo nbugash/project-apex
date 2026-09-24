@@ -247,6 +247,9 @@ impl From<ProviderError> for WorkspaceFailure {
 /// field that is always `None` before then would put an unwrap in every command.
 pub struct WorkspaceAccess {
     pub provider: Arc<dyn WorkspaceProvider>,
+    /// Held so the debug-only seeding command can write through the same port the application
+    /// reads through, rather than injecting a fixture into the view.
+    pub cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
     pub register: Arc<crate::application::use_cases::register_workspace::RegisterWorkspace>,
 }
 
@@ -333,6 +336,61 @@ pub fn workspace_delete(
         .register
         .delete(&WorkspaceId(workspace_id))
         .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))
+}
+
+/// Debug builds only: seed a workspace and one listing straight into the projection.
+///
+/// The end-to-end suite has no engine and no host, so without this the tree renders empty and
+/// every assertion about rows — focus, keyboard expansion, indentation — has nothing to stand
+/// on. F001 established this pattern with `stub_set_connection`: a command that exists solely so
+/// the suite can drive a state, `#[cfg(debug_assertions)]` so it cannot become a production
+/// surface by accident.
+///
+/// It writes through the same `WorkspaceCache` port the application uses, so what the tree then
+/// renders came through the real read path rather than a fixture injected into the view.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn workspace_seed_for_tests(
+    workspace_id: String,
+    parent: String,
+    entries: Vec<(String, bool)>,
+    access: State<'_, WorkspaceAccess>,
+) -> Result<(), WorkspaceFailure> {
+    use crate::domain::workspace::{FsEntry, Location, Workspace};
+
+    let id = WorkspaceId(workspace_id);
+    let ws = Workspace {
+        id: id.clone(),
+        name: "seeded".into(),
+        location: Location::Remote {
+            host: "test".into(),
+            base: "/seed".into(),
+        },
+        last_opened_at: 0,
+    };
+    access
+        .cache
+        .register(&ws, 0)
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e}")))?;
+
+    let listing: Vec<FsEntry> = entries
+        .into_iter()
+        .map(|(name, is_dir)| FsEntry {
+            name,
+            kind: if is_dir {
+                apex_protocol::wire::EntryKind::Directory
+            } else {
+                apex_protocol::wire::EntryKind::File
+            },
+            size: 0,
+            modified: 0,
+        })
+        .collect();
+    let parent = RelPath::parse(&parent).map_err(|_| WorkspaceFailure::Refused)?;
+    access
+        .cache
+        .put_listing(&id, &parent, &listing)
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e}")))
 }
 
 #[cfg(test)]

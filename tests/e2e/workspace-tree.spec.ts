@@ -17,11 +17,53 @@ async function rows(): Promise<{ path: string; level: number; expanded: string |
   );
 }
 
+/** Seed the projection through the real cache port, so what the tree renders arrived by the
+ *  read path rather than as a fixture injected into the view. Debug builds only; see
+ *  `workspace_seed_for_tests`. */
+async function seed(): Promise<void> {
+  await browser.execute(async () => {
+    const invoke = (
+      window as unknown as {
+        __TAURI_INTERNALS__?: { invoke: (c: string, a: unknown) => Promise<unknown> };
+      }
+    ).__TAURI_INTERNALS__?.invoke;
+    // The root, and one folder's children — so expanding `src` exercises a real listing that
+    // came through the cache rather than appearing because the test put rows in the view.
+    await invoke?.('workspace_seed_for_tests', {
+      workspaceId: 'e2e',
+      parent: '/',
+      entries: [
+        ['src', true],
+        ['docs', true],
+        ['README.md', false],
+      ],
+    });
+    await invoke?.('workspace_seed_for_tests', {
+      workspaceId: 'e2e',
+      parent: '/src',
+      entries: [
+        ['main.rs', false],
+        ['lib.rs', false],
+      ],
+    });
+  });
+}
+
 describe('workspace tree', () => {
   before(async () => {
     resetSession();
     await relaunch();
     await waitForShell();
+    await seed();
+    // The tree reads its workspace once; reloading is how the seeded listing reaches it.
+    await browser.execute(() => {
+      const w = window as unknown as { __APEX_TREE__?: { open: () => Promise<void> } };
+      void w.__APEX_TREE__?.open();
+    });
+    await browser.waitUntil(async () => (await rows()).length > 0, {
+      timeout: 10000,
+      timeoutMsg: 'the seeded listing never reached the tree',
+    });
   });
 
   it('renders the tree as a tree, not a list', async () => {
@@ -70,7 +112,7 @@ describe('workspace tree', () => {
     const before = (await rows()).length;
     await browser.execute(() => {
       const folder = Array.from(document.querySelectorAll('[data-testid="tree-row"]')).find(
-        (r) => r.getAttribute('aria-expanded') === 'false',
+        (r) => r.getAttribute('data-path') === '/src',
       ) as HTMLElement | undefined;
       folder?.focus();
     });

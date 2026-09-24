@@ -53,19 +53,4 @@ async function start(): Promise<void> {
   }).catch((e) => console.error('workspace events unavailable', e));
 }
 
-// A test seam, development builds only.
-//
-// The end-to-end greyscale gate (SC-016) has to check **every** published state, and the
-// application never renders all six at once. Exposing the shipped maps lets the gate read the
-// real definitions rather than a fixture copy — which is the mistake F001 recorded, where a test
-// kept its own copy of a state map and passed while the component crashed.
-//
-// Guarded by `import.meta.env.DEV`, so it is absent from a release bundle and cannot become a
-// production surface by accident, exactly as `stub_set_connection` is `#[cfg(debug_assertions)]`.
-if (import.meta.env.DEV) {
-  const w = window as unknown as Record<string, unknown>;
-  w.__APEX_CONTENT_PRESENTATION__ = CONTENT_PRESENTATION;
-  w.__APEX_MAINTENANCE_PRESENTATION__ = MAINTENANCE_PRESENTATION;
-}
-
 void start();

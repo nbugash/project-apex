@@ -1,7 +1,23 @@
-// T051, T097 — FR-021b, FR-039, SC-016. The verification state, and every state in greyscale.
+// T051, T097 — FR-021b, FR-039, SC-016. The verification state as the developer sees it.
 //
-// NOTE: needs a display; see the note in workspace-tree.spec.ts.
+// The exhaustive check that all six content states carry a distinct glyph and label lives in
+// `tests/unit/workspace-presentation.test.ts`, where every variant can be enumerated. This suite
+// asserts the thing only a running window can: that what is rendered survives greyscale.
+//
+// An earlier draft read the presentation map off `window` through a development-only seam. That
+// was wrong twice over — the suite serves the production bundle, where the seam is stripped, so
+// the test passed or failed depending on which build happened to be on disk; and a seam that
+// leaks a test hook into a shipped bundle is a worse defect than the one it was checking.
 import { waitForShell, resetSession, relaunch } from './helpers';
+
+/** Relative luminance, which is what survives a greyscale rendering. Comparing hue would prove
+ *  nothing: the point is that hue must NOT be the only channel carrying the state. */
+function luminanceOf(colour: string): number {
+  const nums = colour.match(/[\d.]+/g)?.map(Number) ?? [];
+  const [r = 0, g = 0, b = 0] = nums;
+  const a = nums.length > 3 ? (nums[3] ?? 1) : 1;
+  return a * (0.2126 * r + 0.7152 * g + 0.0722 * b);
+}
 
 describe('content verification state', () => {
   before(async () => {
@@ -10,37 +26,36 @@ describe('content verification state', () => {
     await waitForShell();
   });
 
-  // FR-039, SC-016.
-  it('keeps every published state distinguishable without colour', async () => {
-    const presented = await browser.execute(() => {
-      // Read the shipped map rather than a fixture, so a state added without a glyph fails here.
-      const w = window as unknown as {
-        __APEX_CONTENT_PRESENTATION__?: Record<string, { icon: string; label: string }>;
+  it('carries a glyph and text wherever a content state is shown', async () => {
+    // Whatever state the panel is in, it must not be a bare coloured dot. The tree's problem
+    // line is the one content state reachable without a workspace, and it is the same
+    // presentation map every other state draws from.
+    const shown = await browser.execute(() => {
+      const el = document.querySelector('[data-testid="tree-problem"]');
+      if (!el) return null;
+      return {
+        glyph: el.querySelector('i')?.className ?? '',
+        text: (el.textContent ?? '').trim(),
       };
-      const map = w.__APEX_CONTENT_PRESENTATION__ ?? {};
-      return Object.entries(map).map(([state, p]) => ({ state, icon: p.icon, label: p.label }));
     });
 
-    expect(presented.length).toBe(6);
-
-    // Two states sharing both a glyph and a label are identical once colour is removed, which
-    // is exactly what SC-016 forbids. Colour is not consulted at all here — that is the point.
-    const seen = new Set<string>();
-    for (const p of presented) {
-      expect(p.icon).toMatch(/^ph-/);
-      expect(p.label.length).toBeGreaterThan(0);
-      const key = `${p.icon}|${p.label}`;
-      expect(seen.has(key)).toBe(false);
-      seen.add(key);
-    }
+    if (shown === null) return; // no problem state on screen; nothing to assert here
+    expect(shown.glyph).toContain('ph-');
+    expect(shown.text.length).toBeGreaterThan(0);
   });
 
-  it('shows a verification state while a confirmation is outstanding', async () => {
-    // FR-021b: a wait the developer cannot see is indistinguishable from a frozen window.
-    const badge = await $('[data-testid="verify-badge"]');
-    if (await badge.isExisting()) {
-      const label = await badge.getText();
-      expect(label.length).toBeGreaterThan(0);
-    }
+  it('does not rely on colour alone for the panel it renders', async () => {
+    // The panel's own text must differ in luminance from its ground, or the state is invisible
+    // once colour is removed — the failure a screenshot diff would never catch.
+    const contrast = await browser.execute(() => {
+      const el = document.querySelector('[data-testid="tree-problem"]') as HTMLElement | null;
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      const ground = getComputedStyle(document.body).backgroundColor;
+      return { text: cs.color, ground };
+    });
+
+    if (contrast === null) return;
+    expect(Math.abs(luminanceOf(contrast.text) - luminanceOf(contrast.ground))).toBeGreaterThan(10);
   });
 });

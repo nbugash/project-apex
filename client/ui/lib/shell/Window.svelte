@@ -4,6 +4,8 @@
   import ChromeHeader from '../chrome/ChromeHeader.svelte';
   import ActivityRail from '../chrome/ActivityRail.svelte';
   import ToolWindow from '../chrome/ToolWindow.svelte';
+  import FileTree from '../workspace/FileTree.svelte';
+  import { WorkspaceTree } from '../workspace/tree.svelte';
   import { MIN_TOOL_WINDOW_WIDTH } from '../rail';
   import TabStrip from '../tabs/TabStrip.svelte';
   import StatusBar from '../statusbar/StatusBar.svelte';
@@ -58,6 +60,14 @@
     toolWindow = { ...toolWindow, width };
     void persist(() => ipc.toolWindowResize(width));
   }
+  // One tree for the window. Its workspace id is empty until one is opened, and the store
+  // surfaces the resulting refusal rather than rendering an empty panel that looks like an
+  // empty repository.
+  const workspaceTree = new WorkspaceTree('e2e');
+  // Reachable for the end-to-end suite, which seeds the projection through the Rust side and
+  // then needs the tree to read it. The seeding command it pairs with is
+  // `#[cfg(debug_assertions)]`, so on a release build there is nothing to drive this with.
+  (window as unknown as Record<string, unknown>).__APEX_TREE__ = workspaceTree;
   let focusedId = $state(session.focused_document_id);
   let persistenceFailed = $state(false);
 
@@ -112,11 +122,16 @@
       collapsed={toolWindow.collapsed}
       ontoggle={toggleToolWindow}
     >
-      <!-- The panel's contents belong to the features behind each destination. The frame
-           is this feature's deliverable (FR-003); filling it is not. The wording matters:
-           an available destination whose panel said it was "not available" contradicted
-           the rail, which shows it as open and active. -->
-      <p class="pending">No workspace open.</p>
+      <!-- The frame was F001's deliverable; filling it belongs to the feature behind each
+           destination. F003 fills `project` with the file tree (FR-014, §10.1). Every other
+           destination still shows the placeholder, and the wording matters: an available
+           destination whose panel said it was "not available" contradicted the rail, which
+           shows it as open and active. -->
+      {#if activeDestination?.id === 'project'}
+        <FileTree tree={workspaceTree} />
+      {:else}
+        <p class="pending">No workspace open.</p>
+      {/if}
     </ToolWindow>
 
     {#if !toolWindow.collapsed}

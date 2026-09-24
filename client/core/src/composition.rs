@@ -129,6 +129,7 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
     // does during a real outage.
     let inner: Arc<dyn WorkspaceProvider> = Arc::new(DisconnectedWorkspace);
     let workspace = WorkspaceAccess {
+        cache: ready.get(),
         register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
         provider: Arc::new(CachedWorkspace::new(
             inner,

@@ -325,20 +325,19 @@ Excluded from the default suite because it needs a real `sshd`, which SC-014 for
 
 ## Validation record
 
-Executed 2026-09-23 on the development machine (Linux, no display).
+Executed 2026-09-24 on the development machine (Linux, headless — see the note on the display).
 
-| Check                                                             | Result                                                                 |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `cargo test --workspace`                                          | **421 passed, 0 failed, 2 ignored** (the opt-in `sshd` pair)           |
-| `npm run test:unit`                                               | **42 passed**                                                          |
-| `cargo clippy --workspace --all-targets -- -D warnings`           | clean                                                                  |
-| `cargo fmt --all -- --check`                                      | clean                                                                  |
-| `npm run lint:ds`                                                 | no design-system violations                                            |
-| `npm run ds:sync`                                                 | 121 design tokens, 70 layout tokens, **no undefined token references** |
-| `npm run build`                                                   | frontend builds                                                        |
-| `cargo test -p apex-shell --test workspace_budget -- --nocapture` | all three budgets met, values below                                    |
-| `npm run e2e`                                                     | **could not run — needs a display**                                    |
-| `npm run gate:fidelity`                                           | **could not run — needs a display**                                    |
+| Check                                                   | Result                                                                            |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `cargo test --workspace`                                | **421 passed, 0 failed, 2 ignored** (the opt-in `sshd` pair)                      |
+| `npm run test:unit`                                     | **42 passed**                                                                     |
+| `npm run e2e`                                           | **24 spec files passed, 73 screenshots** under `reports/screenshots/<os>/F003/`   |
+| `npm run gate:fidelity`                                 | **pass** — three surfaces within 2px of the prototype, 0.067% of pixels differing |
+| `cargo clippy --workspace --all-targets -- -D warnings` | clean                                                                             |
+| `cargo fmt --all -- --check`                            | clean                                                                             |
+| `npm run lint:ds`                                       | no design-system violations                                                       |
+| `npm run ds:sync`                                       | 121 design tokens, 70 layout tokens, **no undefined token references**            |
+| `npm run build`                                         | frontend builds                                                                   |
 
 ### The measured values (A-NFR: printed, not merely compared)
 
@@ -353,23 +352,42 @@ cache a developer browsing a tree would not have. The compression figure is meas
 repository's own Rust sources: generated text compresses far better than code and would make the
 budget meaningless.
 
-### What could not be verified here, and why
+### Running the browser-driven gates headless
 
-Both browser-driven gates need a display. `tauri-driver` delegates to the platform WebDriver and
-initialises GTK, so it panics in `gtk::rt::init` before a session exists; the fidelity gate
-launches the shell for the same reason. **The three end-to-end specs in this feature are written
-but unexecuted** — they are deliverables, not evidence, until they run on a machine with a
-display or in CI.
+`tauri-driver` and the fidelity gate both need a display. **`xvfb-run` wrapping the command is not
+enough** — it did not survive here, and the driver died before binding, which surfaces as a
+WebDriver session timeout with no output because the gate spawns the driver with `stdio: 'ignore'`.
 
-One failure on the way there was real and is fixed: the application panicked at startup when the
-data directory did not exist, so the driver was waiting for a process that had already died. It
-now creates the directory, and falls back to an in-memory projection if the location cannot hold
-a database at all. The launch log shows maintenance running `Checking`, `Migrating { from: 0, to:
-1 }`, `Evicting`, `Ready`.
+A persistent display works:
 
-A second was a near miss worth recording: `npm run gate:fidelity | tail -12` reported `EXIT=0`,
-which was `tail`'s exit code rather than the gate's. Read the gate's own status, not the
-pipeline's — a pipe swallows the thing you are checking.
+```bash
+Xvfb :77 -screen 0 1600x1000x24 &
+export DISPLAY=:77
+npm run e2e
+npm run gate:fidelity
+```
+
+Two traps worth knowing, both of which produced a false reading before this was settled:
+
+- **`tauri-driver --port 4445` collides with itself.** It listens on 4444 and spawns the native
+  WebDriver on 4445; giving it 4445 makes the two fight and reports `FATAL: Unable to listen`
+  from the native driver, which reads like an environment problem and is not.
+- **`npm run gate:fidelity | tail -12` reports `tail`'s exit code, not the gate's.** It printed
+  `EXIT=0` for a run that had timed out. Read the gate's own status.
+
+### What running them actually caught
+
+`FileTree.svelte` was written and **never mounted**. Every Rust and unit test passed; the
+component simply was not in the tree, and only a running window could say so. The tool window's
+`project` destination now renders it, which is the slot F001 left for the feature behind each
+destination.
+
+An earlier draft of the greyscale check read the presentation map from a `window` global exposed
+under `import.meta.env.DEV`. The suite serves the production bundle, where that is stripped, so
+the assertion passed or failed depending on which build happened to be on disk. The exhaustive
+check over all six states belongs in `tests/unit/workspace-presentation.test.ts`, where every
+variant can be enumerated; the end-to-end specs assert what only a window can — that what is
+rendered carries a glyph and text and differs from its ground in luminance.
 
 ---
 

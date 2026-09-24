@@ -34,6 +34,8 @@ pub fn run() {
             cmd::workspace_open,
             cmd::workspace_delete,
             #[cfg(debug_assertions)]
+            cmd::workspace_seed_for_tests,
+            #[cfg(debug_assertions)]
             cmd::stub_set_connection,
         ])
         .setup(|app| {
