@@ -8,7 +8,7 @@ use crate::application::ports::bulk_transfer::BulkTransfer;
 use crate::application::ports::request_sender::RequestSender;
 use crate::application::ports::transport::Request;
 use crate::application::ports::workspace_provider::{
-    ProviderError, ProviderResult, WorkspaceProvider,
+    ProviderError, ProviderResult, Refusal, RefusalReason, WatchOutcome, WorkspaceProvider,
 };
 use crate::domain::request::RequestOutcome;
 use crate::domain::workspace::{
@@ -115,6 +115,34 @@ fn decode_base64(s: &str) -> Option<Vec<u8>> {
 
 #[async_trait]
 impl WorkspaceProvider for RemoteWorkspaceProvider {
+    async fn watch(&self, ws: &WorkspaceId, paths: &[RelPath]) -> ProviderResult<WatchOutcome> {
+        let params = wire::WatchParams {
+            workspace_id: ws.clone(),
+            paths: paths.iter().map(|p| p.as_str().to_string()).collect(),
+        };
+        let r: wire::WatchResult = self.call("workspace/watch", &params).await?;
+        Ok(WatchOutcome {
+            watching: r.watching,
+            refused: r
+                .refused
+                .into_iter()
+                .filter_map(from_wire_refusal)
+                .collect(),
+        })
+    }
+
+    async fn unwatch(&self, ws: &WorkspaceId, paths: &[RelPath]) -> ProviderResult<WatchOutcome> {
+        let params = wire::WatchParams {
+            workspace_id: ws.clone(),
+            paths: paths.iter().map(|p| p.as_str().to_string()).collect(),
+        };
+        let r: wire::UnwatchResult = self.call("workspace/unwatch", &params).await?;
+        Ok(WatchOutcome {
+            watching: r.watching,
+            refused: Vec::new(),
+        })
+    }
+
     async fn read_directory(
         &self,
         ws: &WorkspaceId,
@@ -306,4 +334,23 @@ mod tests {
             ProviderError::NotFound
         );
     }
+}
+
+/// A refusal whose path does not parse is dropped rather than trusted.
+///
+/// Every path off the wire is untrusted at this end regardless of what the engine checked
+/// (FR-014, Principle VI). A refusal is the engine telling us about a path we sent, so a
+/// malformed one means the two ends disagree about what was asked -- and acting on it would be
+/// acting on the engine's word about our own request.
+fn from_wire_refusal(r: apex_protocol::wire::WatchRefusal) -> Option<Refusal> {
+    use apex_protocol::wire::RefusalReason as Wire;
+    Some(Refusal {
+        path: RelPath::parse(&r.path).ok()?,
+        reason: match r.reason {
+            Wire::Capacity => RefusalReason::Capacity,
+            Wire::Excluded => RefusalReason::Excluded,
+            Wire::NotFound => RefusalReason::NotFound,
+            Wire::NotADirectory => RefusalReason::NotADirectory,
+        },
+    })
 }

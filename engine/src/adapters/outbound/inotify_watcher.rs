@@ -173,3 +173,30 @@ fn stat(root: &std::path::Path, relative: &str) -> (u64, i64) {
     let _ = SystemTime::now();
     (meta.len(), modified)
 }
+
+/// How the composition root obtains a watcher without naming this library.
+///
+/// The confinement guard permits `inotify` in this file only, and a composition root that
+/// constructed `InotifyWatcher` directly would be a second. Putting the platform decision in
+/// the platform adapter keeps the rule at exactly one file, which is the version of the rule
+/// worth having: any weakening is a judgement call, and a rule with one judgement call in it
+/// soon has two.
+pub fn factory() -> crate::adapters::outbound::watchers::WatcherFactory {
+    Box::new(|root| {
+        let watcher = InotifyWatcher::new(root).ok()?;
+        let clock: Box<dyn crate::application::ports::clock::Clock> = Box::new(SystemClock);
+        Some((Box::new(watcher) as Box<dyn FileWatcher>, clock))
+    })
+}
+
+/// The real clock. Beside the only adapter that needs one.
+struct SystemClock;
+
+impl crate::application::ports::clock::Clock for SystemClock {
+    fn now(&self) -> Millis {
+        std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as Millis)
+            .unwrap_or(0)
+    }
+}

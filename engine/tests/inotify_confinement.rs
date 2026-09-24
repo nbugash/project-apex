@@ -51,9 +51,12 @@ fn inotify_is_named_in_exactly_one_file() {
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.starts_with("//") && !l.starts_with("///") && !l.starts_with("//!"))
-            .filter(|l| *l != "pub mod inotify_watcher;")
             .collect::<Vec<_>>()
-            .join("\n");
+            .join("\n")
+            // The adapter's own name may be referenced anywhere -- a module declaration, a
+            // path in the composition root. What may not appear anywhere else is a use of the
+            // library itself, which is what the rule is actually about.
+            .replace("inotify_watcher", "");
         if !code.contains("inotify") && !code.contains("Inotify") {
             continue;
         }

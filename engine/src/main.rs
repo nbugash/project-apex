@@ -8,7 +8,6 @@ use apex_engine::adapters::inbound::rpc::{self, Action};
 use apex_engine::adapters::outbound::frame_writer::FrameWriter;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
 use apex_engine::adapters::outbound::watchers::{WatcherFactory, Watchers};
-use apex_engine::application::ports::clock::{Clock, Millis};
 use apex_engine::application::ports::file_system::FileSystem;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
 use apex_engine::session::SessionRegistry;
@@ -33,21 +32,13 @@ fn main() {
     // engine still builds and runs on a host with no inotify -- where the factory yields
     // nothing, `workspace/watch` is refused, and FR-027's degradation applies: browsing and
     // reading continue, and the loss is stated rather than silent.
-    let factory: WatcherFactory = Box::new(|root| {
-        #[cfg(target_os = "linux")]
-        {
-            use apex_engine::adapters::outbound::inotify_watcher::InotifyWatcher;
-            let watcher = InotifyWatcher::new(root).ok()?;
-            let clock: Box<dyn apex_engine::application::ports::clock::Clock> =
-                Box::new(SystemClock);
-            return Some((Box::new(watcher) as Box<_>, clock));
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = root;
-            None
-        }
-    });
+    // Linux gets a watcher; anything else gets none, and `workspace/watch` is refused with a
+    // reason rather than appearing to succeed (FR-027, A-WATCHLOCAL). The concrete library is
+    // named only inside its own adapter, which is what `inotify_confinement.rs` enforces.
+    #[cfg(target_os = "linux")]
+    let factory: WatcherFactory = apex_engine::adapters::outbound::inotify_watcher::factory();
+    #[cfg(not(target_os = "linux"))]
+    let factory: WatcherFactory = Box::new(|_root| None);
     let watchers = Watchers::new(factory, Arc::clone(&fs), Arc::clone(&writer), codec.clone());
 
     // A restart is announced, never inferred. The client learns about it because it was told,
@@ -97,18 +88,5 @@ fn main() {
                 }
             }
         }
-    }
-}
-
-/// The real clock. One line, in the composition root, because a port with one production
-/// implementation this small does not need a file of its own.
-struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now(&self) -> Millis {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as Millis)
-            .unwrap_or(0)
     }
 }
