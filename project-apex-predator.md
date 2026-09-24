@@ -374,13 +374,30 @@ found, `-32602` invalid params, `-32603` internal). Application codes occupy `-3
 | -32003 | File or directory not found |
 | -32004 | Write conflict: `baseSha256` does not match current content |
 | -32005 | Language server unavailable for the requested language |
-| -32006 | Task not found or already exited |
+| -32006 | Task not found |
 | -32007 | Payload exceeds the frame limit |
 | -32008 | Request cancelled by the client |
 | -32009 | Workspace root no longer exists — registered, but the directory is gone |
+| -32010 | Task identity is already running — refused rather than starting a second process |
+| -32011 | Command could not be started — not found, not executable, or `cwd` unusable |
 
 Every error carries a human-readable `message`. Errors that a user can act on carry a `data`
 object describing the remedy.
+
+`-32006` means the identity is unknown, and **not** that the task has finished. It formerly read
+"Task not found or already exited", which contradicted two requirements at once: stopping a task
+that has already stopped is a success, since the caller asked for it not to be running and it is
+not running, and a client reattaching to a task that finished while it was disconnected is
+entitled to learn how it finished rather than be told the task never existed. An implementation
+following the old wording literally would have failed both and passed review, because the wording
+was the specification.
+
+`-32010` and `-32011` exist because two refusals a client must tell apart had no way to be told
+apart. `-32010` says the identity is live — the correct response is to attach, not to retry — and
+without it the only candidate was `-32006`, whose meaning is the exact opposite. `-32011` says the
+command itself could not be started, which is the developer's mistake to fix and not the engine's
+failure; routing it through `-32003` would borrow a code reserved for paths inside a workspace to
+describe a program name resolved against `PATH`, which is not a workspace path at all.
 
 `-32009` is deliberately distinct from `-32001`, because the two demand **opposite** responses.
 `-32001` means the engine has never been told about this workspace and the client should register
@@ -470,6 +487,7 @@ discovers that when a resumption is refused.
 | Method | Kind | Params | Result |
 |---|---|---|---|
 | `workspace/register` | request | `workspaceId`, `path` | `{name, canonicalPath}` |
+| `workspace/close` | request | `workspaceId` | — |
 | `workspace/readDirectory` | request | `workspaceId`, `relativePath`, `cursor?`, `limit?` | `items[]` of `{name, type, size, modified}`, `nextCursor?` |
 | `workspace/stat` | request | `workspaceId`, `relativePath` | `{type, size, modified, sha256}` |
 | `workspace/readFile` | request | `workspaceId`, `relativePath`, `offset?`, `length?` | `{content, encoding, sha256, totalSize}` |
@@ -486,21 +504,6 @@ discovers that when a resumption is refused.
 
 `workspaceId` is mandatory on every workspace method. The original "formal" contract omitted
 it, which silently removed multi-workspace addressing.
-
-`execution/attach` exists because a task outlives the connection that started it (A-TASKLIFE). A
-client that reconnects, or that restarted, needs to reach a task it did not start in this session,
-and `runTask` starts one rather than finding one. Attaching is deliberately a **different call**
-from starting: a client racing its own reconnection must not silently start a second build under
-an identity that already has one, and an idempotent `runTask` would make those two outcomes
-indistinguishable at the call site.
-
-`pty` chooses between two output shapes, and the choice is exclusive because a terminal is one
-device. With `pty: true` the task is given a pseudo-terminal, a process asking whether it is
-attached to a terminal is told yes, and **its output arrives merged on `execution/onStdout`** —
-`onStderr` carries nothing, exactly as a real shell interleaves the two beyond separation. With
-`pty: false` the task gets separate pipes, `onStdout` and `onStderr` are distinguishable, and the
-process is not attached to a terminal. A terminal panel wants the first; a caller parsing a
-build's errors wants the second, at the cost every CI system pays.
 
 `workspace/watch` and `workspace/unwatch` exist because watching is scoped to what the developer
 has open (A-WATCHSCOPE), and the engine cannot infer that. Until they were added the catalogue had
@@ -541,6 +544,15 @@ against a **different** path it is an error, because two meanings for one identi
 what `workspaceId` exists to prevent. The registry is in memory and dies with the engine, so a
 client re-registers after a restart — `session/onRestart`'s `unpreserved` list is how it learns it
 must.
+
+`workspace/close` is the counterpart `workspace/register` never had. Closing a workspace must stop
+the tasks belonging to it and release its watches, and until this row existed the catalogue had no
+frame meaning "I am finished with this workspace" — leaving that obligation stated in §7.3 and
+unreachable through the protocol. It is deliberately **not** the same event as a dropped
+connection: under A-TASKLIFE a connection that drops leaves tasks running, because a laptop moving
+between networks must not kill a build, whereas closing the workspace is the developer saying they
+are done with it. Conflating the two would make the protocol unable to express the difference
+between an accident and an intention.
 
 `workspace/readDirectory` is **paged**. `limit` defaults to and is capped at 1000 entries, and
 `nextCursor` is present exactly when more entries follow. Entries are ordered
@@ -590,18 +602,78 @@ exists so the UI can tell "no completions because the server died" from "no comp
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd`, `env`, `pty` | `{pid}` |
-| `execution/attach` | request | `workspaceId`, `taskId` | `{pid, running, retained}` |
+| `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd`, `env`, `pty`, `cols?`, `rows?` | `{pid}` |
+| `execution/attach` | request | `workspaceId`, `taskId` | `{pid, running, retained, exitCode?, signal?}` |
+| `execution/list` | request | `workspaceId?` | `{tasks[]}` |
 | `execution/writeStdin` | notification | `taskId`, `data` | — |
 | `execution/resizePty` | notification | `taskId`, `cols`, `rows` | — |
 | `execution/terminate` | request | `taskId`, `signal` | — |
 | `execution/onStdout` | notification | `taskId`, `data` | — |
 | `execution/onStderr` | notification | `taskId`, `data` | — |
-| `execution/onExit` | notification | `taskId`, `exitCode`, `signal?` | — |
+| `execution/onExit` | notification | `taskId`, `exitCode?`, `signal?` | — |
 
 `writeStdin`, `resizePty`, `terminate` and `onExit` did not exist in the original contract,
 which made the integrated terminal write-only and left no way to stop a runaway process or
 learn that a build finished.
+
+`execution/attach` exists because a task outlives the connection that started it (A-TASKLIFE). A
+client that reconnects, or that restarted, needs to reach a task it did not start in this session,
+and `runTask` starts one rather than finding one. Attaching is deliberately a **different call**
+from starting: a client racing its own reconnection must not silently start a second build under
+an identity that already has one, and an idempotent `runTask` would make those two outcomes
+indistinguishable at the call site.
+
+`pty` chooses between two output shapes, and the choice is exclusive because a terminal is one
+device. With `pty: true` the task is given a pseudo-terminal, a process asking whether it is
+attached to a terminal is told yes, and **its output arrives merged on `execution/onStdout`** —
+`onStderr` carries nothing, exactly as a real shell interleaves the two beyond separation. With
+`pty: false` the task gets separate pipes, `onStdout` and `onStderr` are distinguishable, and the
+process is not attached to a terminal. A terminal panel wants the first; a caller parsing a
+build's errors wants the second, at the cost every CI system pays.
+
+`command` is an **argv vector**, not a shell line. The engine does not interpose `sh -c`: §7.3
+scopes this as process execution and not a shell, and a single string would make quoting the
+engine's problem for input it is specifically required not to interpret. A caller that wants a
+shell asks for one as `argv[0]`, which is a decision it has made rather than one made for it.
+
+`data` on `writeStdin`, `onStdout` and `onStderr` is **base64**. A JSON string holds Unicode text
+and a task's bytes are not text: a compiler emitting a byte sequence in the source file's own
+encoding, a binary written to stdout, and a file catted into a terminal are all ordinary and none
+of them survives a lossy decode, which substitutes U+FFFD and destroys the bytes it cannot read.
+`workspace/readFile` reached the same conclusion and carries an explicit `encoding` field; these
+payloads have no alternative encoding to select between, so it is fixed here instead of offered.
+
+A `taskId` is **unique across the engine**, not within a workspace. Six of the nine rows address a
+bare `taskId`, so a per-workspace identity would leave them unable to resolve a task at all. The
+`workspaceId` on `runTask` and `attach` records which workspace owns the task, not which namespace
+its name lives in — two workspaces both choosing `build` have named the same task, and the second
+`runTask` is refused rather than silently starting a second process under a live identity.
+
+`cols` and `rows` are optional on `runTask` and meaningful only when `pty` is true. A process
+reads its terminal width at startup, before any client has had an opportunity to resize it, so
+without them it reads whatever the pseudo-terminal happened to be created with rather than a value
+somebody chose. `resizePty` against a task started with `pty: false` is **silently ignored**:
+there is no terminal to resize, and a notification has no way to refuse.
+
+`execution/onExit` carries `exitCode` **or** `signal`, exactly one of the two and never both. A
+mandatory `exitCode` would leave a signalled death representable only through the `128 + n`
+convention, which is what a shell does for a human reading a number, not what a protocol should
+require a client to decode. An exit is two distinct states and the wire names which one occurred.
+
+`execution/attach`'s result carries `exitCode?` and `signal?` under the same rule. A client that
+reattaches to a task which finished while it was away learns how it finished from the response;
+`running: false` on its own says only that it is over. `retained` is a **byte count**, not the
+bytes themselves: the retention bound is larger than §4.1's frame cap, chunking is defined for
+notifications rather than results, and an exit delivered inside the result would arrive before the
+output that preceded it. The retained bytes are replayed as ordinary `onStdout` notifications
+after the response, in order, so one ordering rule covers live and replayed output alike.
+
+`execution/list` exists because `attach` takes an identity the caller must already know. A client
+that has lost its identities — a fresh install, a cleared profile, a crash before its store was
+written — has no route back to tasks that are still running, and under A-TASKLIFE those tasks keep
+running. Without enumeration they stay unreachable until A-EC2's idle stop ends the instance,
+which is precisely the abandoned process FR-025 forbids, arrived at by a client doing nothing
+wrong. `workspaceId` is optional: omitted, it lists every task the engine holds.
 
 ### Git
 
@@ -1214,20 +1286,31 @@ path. See Appendix B.
 the sole entry point: LSP multiplexer, DAP broker, process supervisor, file watcher and
 filesystem server. It speaks the protocol in §4 over stdio and nothing else.
 
-It runs child processes under cgroups (§7.3) so no single language server or build can
-destabilise it.
+It runs language servers under cgroups (§7.3) so no single server can destabilise it. Execution
+tasks are bounded per process instead, by resource limits and a process group (A-TASKLIMIT); the
+blanket claim that every child runs in a cgroup was true of the design §7.3 described before
+cgroup delegation was found to depend on provisioning F005 owns.
 
 ## 15.2 Availability
 
 Against the 99.9% target (§1.4), the engine tracks active task IDs, PID mappings and language
-server session state, so a transient crash can be recovered rather than requiring the developer
-to rebuild their session by hand.
+server session state in memory, so a client that **disconnects** and returns reattaches to work
+that kept running rather than rebuilding its session by hand (A-TASKLIFE).
+
+This does not extend to a crash. The map is memory and dies with the process, so a crashed engine
+loses every identity it held while the child processes it started keep running — reachable by pid
+and by nothing the protocol exposes. Recovering that needs the map to outlive the process, which
+nothing in the system does today; until it does, the honest statement is that a disconnection is
+survivable and a crash is not.
 
 ## 15.3 Updates
 
 The engine supports in-place binary replacement and re-execution so toolchain updates do not
 require the developer to intervene. This makes client/engine version skew a routine condition
 rather than an exception, which is why §3.8 is blocking rather than cosmetic.
+
+Running tasks are **terminated before the re-execution** and reported in `session/onRestart`'s
+`unpreserved` list. See A-TASKEXEC.
 
 ## 15.4 Cloud burst
 
@@ -2700,9 +2783,11 @@ disconnect loses nothing; stopping a build loses the work.
 The client already has the identity it needs. §4.8 has the client choose `taskId` on
 `execution/runTask`, so reattachment is a client that remembers what it started rather than a
 discovery protocol. §15.2 anticipates the rest: the engine tracks active task IDs and PID
-mappings "so a transient crash can be recovered rather than requiring the developer to rebuild
-their session by hand". This decision is that sentence applied to a dropped connection as well
-as a crash.
+mappings so a client that returns reattaches rather than rebuilding its session by hand. That
+section formerly claimed the same of a transient **crash**, and this record originally cited it
+on that basis; the claim was wrong, because the map is memory and dies with the process. §15.2
+has been narrowed accordingly. This decision is about a dropped connection, which the map does
+survive, and it neither needs nor provides crash recovery.
 
 **The consequence worth stating plainly.** This builds part of F020 `detached-engine` inside
 F010. F020 owns surviving a disconnection, and a task that survives one is that, for tasks. The
@@ -2841,6 +2926,43 @@ None foreseen. This is a property of the mechanism rather than a choice about it
 thing that would reverse it is a terminal abstraction that is not one device.
 
 ---
+
+## A-TASKEXEC — An engine re-execution terminates tasks and reports them (2026-09-24)
+
+**Decision.** Before the engine replaces its own binary and re-executes (§15.3), it terminates
+every running task using the same escalation `execution/terminate` uses, and names each one in the
+`unpreserved` list of the `session/onRestart` notification that follows. Tasks do **not** survive
+a re-execution.
+
+**Rationale.** A re-execution replaces the process image. The task set is memory and the
+pseudo-terminal descriptors are close-on-exec, so both are gone the moment `exec` succeeds — while
+the child processes are not gone at all. They keep running, still children of the same pid, now
+watched by nothing and reachable through nothing the protocol exposes. That is §7.3's FR-025
+prohibition reached through a supported operation rather than through a failure, and it is the
+worst of the three available outcomes because it is invisible: the developer sees the engine come
+back healthy and never learns that a build is still burning CPU with no way to stop it.
+
+The mechanism this decision uses already existed and was already addressed to this feature.
+`session/onRestart` carries `unpreserved` so the client can tell the developer what a restart
+cost, and `engine/src/session.rs` has carried the comment "F007 and F010 will have something to
+report here" since F002. F010's entry in that list is the task set. The decision is less a choice
+of mechanism than the discovery that the mechanism had been waiting for its second caller.
+
+**The alternative, and why it was rejected.** Descriptors can be carried across an `exec` by
+clearing `FD_CLOEXEC` and passing the identity-to-pid map through the environment, the way
+`APEX_SESSION_ID` already travels. That would let a build survive an engine update, which is
+strictly better for the developer in the moment. It was rejected because it makes every future
+change to the task set a compatibility problem between two versions of the engine — the image
+that opened the descriptors and the image that inherits them — for a benefit available only
+during an update the developer did not ask for and does not observe. A terminated task the
+developer is told about is a smaller harm than a surviving task whose owner and format are
+negotiated across a version boundary.
+
+**What this costs, stated plainly.** A developer whose twenty-minute build is running when the
+engine updates loses it. The mitigation is not in this record: an update is a client-initiated
+operation (§3.8), so a client that declines to update while tasks are running would avoid the
+cost entirely. That is a client policy and belongs with whichever feature owns update scheduling,
+not here.
 
 # Appendix B — Open Items
 

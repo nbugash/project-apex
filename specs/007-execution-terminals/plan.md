@@ -56,7 +56,33 @@ Linux-only by construction and sits behind a port, so nothing outside its adapte
 the channel will ever carry — the reason FR-012 exists and the thing Principle V measures. No
 frame exceeds 1 MiB (§4.1), so output is chunked by definition. A process that outruns the link
 is slowed, never truncated (FR-013). Per-process limits bound a single runaway; a tree that
-collectively exhausts is recorded as owed (A-TASKLIMIT).
+collectively exhausts is recorded as owed (A-TASKLIMIT). **The engine cannot receive a
+notification today**: `rpc.rs`'s `dispatch` reads `id` and returns `Action::Nothing` before the
+method match, so an id-less frame is dropped silently. `execution/writeStdin` and
+`execution/resizePty` are the catalogue's first client-to-engine notifications, so an id-less
+dispatch path is foundational work for this feature rather than part of any one story. (The same
+line reads `id` with `as_str()`, so a numeric id — legal under JSON-RPC 2.0 — is also dropped as
+though it were a notification. Noted, not fixed here: no client sends one.)
+
+**Fixed Quantities**: Four requirements say a value must be "a stated quantity fixed in the plan"
+— FR-006b (resource limits), FR-013a (the amount buffered before a process is slowed), FR-029a
+(the panel's retained history) — and research.md says the same of the chunker's two bounds. They
+are fixed here, with the reasoning, because a number chosen during implementation is a number
+nobody reviewed.
+
+| Quantity | Value | Why this value |
+|---|---|---|
+| Chunk size bound | **64 KiB** raw | §4.1 caps a frame at 1 MiB and base64 inflates by 4/3, so the true ceiling is 3/4 of the frame budget — about 786 KB, and a bound naively set to 1 MiB overflows by a third. 64 KiB sits an order of magnitude under that ceiling while keeping a 50 MiB burst to roughly 800 frames rather than the 6 400 an 8 KiB chunk would cost. |
+| Chunk time bound | **20 ms** | The size bound alone starves an interactive prompt, which never fills a chunk and would therefore never be sent. 20 ms is below the threshold at which a prompt reads as delayed, is negligible against the round-trip to the instance, and leaves almost all of SC-001's 500 ms to transport and render. Under a burst the size bound dominates, so this costs nothing where volume is high. |
+| Buffered before slowing | **4 MiB** per task | research.md makes backpressure the absence of a mechanism: the engine stops reading, the pseudo-terminal's buffer fills, and the process blocks in `write` as it would against any slow consumer. This is how much the engine holds before that happens. Generous enough that a bursty producer is never slowed by a brief stall, bounded per task so concurrency cannot make it unbounded. |
+| Panel retained history | **10 000 lines** per terminal | The library's default of 1 000 is too few to scroll back through a compile, which is the thing a developer most often wants to re-read. At roughly 200 bytes a line this is about 2 MB per terminal, which is what SC-024 measures against. |
+| Task address space | **16 GiB**, soft **and** hard | Under 128 GB this is fatal to a runaway allocator and generous to any real build, including a linker doing LTO on a large workspace. Both limits are set deliberately: a process may raise its own soft limit up to the hard one, so setting the soft limit alone makes the constraint advisory and a runaway task simply lifts it. This is invisible until the first measurement of a runaway finds it was never bounded. |
+| Task CPU time | **Not limited** | Deliberate. A legitimate build burns CPU for minutes and `RLIMIT_CPU` counts per process, so any value low enough to catch a spinning process is low enough to kill a real compile. The runaway that actually takes the instance down is memory; a process spinning on CPU stays visible in the task list and stoppable through `execution/terminate`. |
+| Core dumps | **Disabled** (`RLIMIT_CORE` = 0) | Not a tuning choice. FR-005a forbids a task's environment reaching any log or crash report, and a core dump is a crash report containing the whole environment. Leaving dumps enabled writes the thing FR-005a prohibits straight to disk. |
+| Process count | **Not limited** | `RLIMIT_NPROC` is per **user**, not per process, and under A-EC2 the engine runs as the same user as every task it starts. Setting it for a task bounds the developer's entire session, the engine included. A limit that can starve the engine is not a limit that protects it. |
+| Interrupt signal | `SIGINT` | What Ctrl-C sends. FR-018's interrupt is the developer asking the foreground process to stop, which is the signal every interactive program already handles. |
+| Stop escalation | `SIGTERM`, then `SIGKILL` after **5 s** | Sent to the process **group**, not the process, so a shell's children go with it — the process group is the whole reason FR-026 can be met without cgroups. Five seconds is long enough for a build to flush and remove partial output, short enough that a developer who asked twice is not left waiting. |
+| Developer shell | `$SHELL`, falling back to `/bin/sh` | The developer's own shell is what makes the terminal theirs; `/bin/sh` is guaranteed to exist when the variable is unset. Not a login shell: a login shell re-reads profile scripts whose side effects the developer did not ask for on every new terminal. |
 
 **Scale/Scope**: A build emitting tens of megabytes over minutes, on a 16 vCPU / 128 GB instance
 (§1). Concurrency is whatever the developer starts — two builds and a watcher is ordinary —

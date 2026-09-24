@@ -266,7 +266,12 @@ the task never stopped and no output was lost.
 - **FR-005**: A task MUST run as the developer's own user with no escalation (A-SEC, A-EC2).
 - **FR-005a**: A task's environment MUST NOT be written to any log or crash report. It is a
   common place for credentials, and A-OBS already requires the crash reporter to redact — this
-  states what it must redact here.
+  states what it must redact here. Core dumps MUST be disabled for a task process: a dump is a
+  crash report containing the entire environment, so leaving them enabled writes to disk exactly
+  what this requirement forbids. The task's **command** is deliberately not covered; a credential
+  passed as an argument is a real leak this requirement does not close, and redacting arguments
+  would remove the one field that makes a failed task diagnosable. Recorded as a known boundary
+  rather than left to be read as an oversight.
 - **FR-006**: A task MUST be constrained by per-process resource limits, inherited by its
   children, so that a single runaway process cannot exhaust the instance and take the engine with
   it (A-LSP names that outcome as the one to prevent; A-TASKLIMIT records what this catches).
@@ -392,8 +397,12 @@ the task never stopped and no output was lost.
 
 - **SC-001**: Output appears in the panel within 500 ms of the process writing it, measured at
   the interface boundary.
-- **SC-002**: A command emitting ANSI colour and cursor control renders identically to the same
-  command in a local terminal, in 100% of exercised cases.
+- **SC-002**: A command emitting ANSI colour and cursor control produces a terminal cell grid —
+  characters, foreground and background colour, and cursor position — matching a hand-written
+  expected grid for each exercised sequence, in 100% of exercised cases. Stated as a grid rather
+  than as "identical to a local terminal" because no local terminal exists to compare against:
+  the repository has no such oracle, and comparing the panel against the same library rendering
+  headlessly compares it with itself.
 - **SC-003**: Bytes written by a process arrive byte-for-byte identical, including non-UTF-8
   sequences, with zero substitutions.
 - **SC-004**: Output for one task arrives in the order produced, in 100% of exercised cases.
@@ -475,11 +484,13 @@ the task never stopped and no output was lost.
   because the change F004 exists to notice is a `git checkout` a developer types. Which shell,
   and whether it is a login shell, are plan decisions.
 
-- **A client that restarts, rather than reconnecting, remembers the tasks it started.** F002
-  already persists session state across a client restart, so extending what it persists costs
-  nothing and needs no protocol. The failure it leaves — a client whose stored state is lost
-  entirely cannot reach its running tasks — is bounded rather than permanent, because A-EC2 stops
-  the instance after thirty minutes without interactive traffic and reaps them.
+- **A client that restarts, rather than reconnecting, remembers the tasks it started.** The
+  durable client store is A-STATE's, decided for F000 `app-shell`; F002 owns engine re-execution
+  continuity, which is a different thing. A-STATE enumerates its payload as window geometry,
+  region layout, open document references and focus — task identities are not among them, so this
+  assumption requires extending an F000 decision record rather than relying on one. A client whose
+  stored state is lost entirely recovers through `execution/list` (§4.8), which exists for exactly
+  this case.
 
 - **There is no fixed limit on concurrent tasks.** They are bounded by the per-process limits
   FR-006 applies, which is a real bound rather than an arbitrary count, and one a developer
