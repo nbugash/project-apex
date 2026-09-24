@@ -1,0 +1,377 @@
+---
+description: "Task list for F010 execution-terminals"
+---
+
+# Tasks: Execution Terminals
+
+**Input**: Design documents from `/specs/007-execution-terminals/`
+
+**Prerequisites**: [plan.md](./plan.md), [research.md](./research.md), [data-model.md](./data-model.md),
+[contracts/](./contracts/), [architecture.md](./architecture.md), [design.md](./design.md),
+[quickstart.md](./quickstart.md)
+
+**Tests are required, not optional.** Constitution Principle VII binds every feature to unit,
+integration and end-to-end levels, FR-033 requires every behaviour to be verifiable with no remote
+host and no network, and A-TEST makes the standard binding. Test tasks below are deliverables.
+[quickstart.md](./quickstart.md)'s 28-row success-criterion table is the test inventory; its nine
+negative checks (§9) and seven mutations (§10) are deliverables of their own.
+
+**Every quantity below is [plan.md](./plan.md)'s *Fixed Quantities*.** No task chooses a number,
+and no test types one in: the chunker's size bound, the chunker's time bound, the retention bound
+and the panel's history bound are all read from the constant the source exports (quickstart §8).
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: may run in parallel — different file, no dependency on an incomplete task
+- **[US1]**–**[US5]**: the user story this task serves. Setup, Foundational and Polish carry none
+
+## Path Conventions
+
+Rust workspace: `protocol/`, `engine/` (crate `apex-engine`), `client/core/` (crate `apex-shell`).
+Webview: `client/ui/lib/<area>/` — **there is no `src/` level**. Rust test helpers live in each
+crate's `tests/common/`. Webview unit specs are in `tests/unit/` at the repository root, not under
+`client/ui/`. End-to-end specs: `tests/e2e/`. Performance specs: `tests/perf/`. Fixture programs
+are Cargo examples under `engine/examples/`, built by `cargo build --examples` and spawned from
+`target/debug/examples/`. Engine MSRV is **1.75** and the engine adds **no async runtime** — **no
+`async fn` appears in any engine task below**.
+
+---
+
+## Phase 1: Setup
+
+**Purpose**: two dependencies, the ten fixture programs quickstart requires `tasks.md` to create,
+and the one Principle I answer this feature is owed.
+
+- [ ] T001 Add `nix` to `engine/Cargo.toml` under `[target.'cfg(target_os = "linux")'.dependencies]` with the `term`, `process`, `resource` and `signal` features only, and a comment stating it is Linux-only and confined to `adapters/outbound/pty_runner.rs`. Do **not** add an async runtime: the existing comment in that file records that the engine stays synchronous because it is transferred on every first connect (A-BOOT, research.md *The pseudo-terminal mechanism*)
+- [ ] T002 [P] Add `@xterm/xterm` ^6 and `@xterm/addon-fit` to `package.json` dependencies. §8.3 names the library; Principle I names the appearance, and the library is themed to the prototype and never the reverse
+- [ ] T003 [P] Fixture programs for the stream and byte questions: `engine/examples/fixture_tty_streams.rs` (reports its own `isatty` verdict and writes a known string **loudly** to each stream — the loud stderr write is what makes SC-028's zero able to fail), `engine/examples/fixture_echo.rs` (reads input and echoes it back byte-for-byte, control bytes included), `engine/examples/fixture_binary.rs` (writes a known **non-UTF-8** byte sequence — without it SC-003 is vacuous, quickstart §10 mutation 6)
+- [ ] T004 [P] Fixture programs for the kernel questions: `engine/examples/fixture_winsize.rs` (reports its window size whenever it changes), `engine/examples/fixture_signals.rs` (reports the signal it caught and **keeps running** rather than dying quietly — US2.2 asserts it is alive 5 s later), `engine/examples/fixture_tree.rs` (spawns a child which spawns a grandchild, all three ignoring the signal their parent gets and outliving the parent unless something stops the **group** — a two-level fixture makes quickstart §10 mutation 2 invisible)
+- [ ] T005 [P] Fixture programs for the volume and failure questions: `engine/examples/fixture_bigline.rs` (writes a 4 MiB line with **no newline in it**), `engine/examples/fixture_burst.rs` (writes 50 MiB as fast as it can), `engine/examples/fixture_alloc.rs` (allocates until it is stopped, aborting when an allocation fails rather than carrying on — *Known gaps* 2), `engine/examples/fixture_crash.rs` (crashes on demand with a null dereference, not an exit code, so §9's core-dump check has a real crash to find no dump for)
+- [ ] T006 Record two Principle I answers in `specs/007-execution-terminals/spec.md` under a new `## Design deviations` heading. **(a)** FR-029 requires the panel to state that a task ended and how, and quickstart §11 requires a channel other than colour for it; the prototype's terminal dock renders its `BUILD SUCCESSFUL` line as a transcript row in the `OK` hue and supplies **no non-colour channel**, so the ended state needs written designer approval before it is rendered. **(b)** A-TERMPALETTE's consequence: a full sixteen-colour ANSI ramp is logged as **owed to the design system**, not owed by this feature. **This task gates T091 and T127 only.** Every other task proceeds without it
+- [ ] T007 [P] Add `engine/examples/` to the build the gate already runs by extending the `test` target's opening `cargo build -p apex-engine` in `Makefile` to `cargo build -p apex-engine --examples`. Several sections spawn the built binary and then spawn fixtures under it, so a stale example fails a test for a reason that has nothing to do with terminals (quickstart, *Prerequisites*)
+
+---
+
+## Phase 2: Foundational (blocking prerequisites)
+
+**Purpose**: the three things design found that are foundational rather than story work — the
+id-less dispatch path, the engine-side send queue and `WorkspaceRoots::deregister` — plus the wire
+vocabulary, the domain, the ports, the pure chunker, the `exec` hand-off and the fake runner.
+
+**⚠️ No user story phase may begin until this phase is complete.** plan.md's post-design verdict
+names the first three explicitly: without the id-less path the engine cannot receive a
+notification at all, so nothing in US1–US5 works; without the send queue SC-006 fails while every
+functional criterion passes; without `deregister`, `workspace/close` cannot close anything.
+
+### Protocol vocabulary
+
+- [ ] T008 Add `TaskId`, `RunTaskParams` (`workspace_id`, `task_id`, `command` argv, `cwd`, `env`, `pty`, `cols?`, `rows?`) and `RunTaskResult { pid }` to `protocol/src/wire.rs` per [contracts/task-methods.md](./contracts/task-methods.md), **snake_case on the wire with no `rename_all`**, matching the convention F002 established. **Two fields the artefacts still disagree about, and this task must not resolve them silently**: task-methods.md's parameter table marks `cwd` and `env` **required**, while data-model.md's *The types* block declares `cwd: Option<String>` ("the workspace root when absent") and `env` as `serde(default)`. Follow the contract, which is the normative one for the wire, and record the divergence on data-model.md rather than reading one of the two as settled
+- [ ] T009 Add `AttachParams`, `AttachResult { pid, running, retained: u64, exit_code: Option<i32>, signal: Option<SignalName> }`, `ListParams { workspace_id: Option<String> }`, `ListResult { tasks }` and `TaskSummary` to `protocol/src/wire.rs`. `TaskSummary` carries `task_id`, `workspace_id`, `command`, `pty`, `pid`, `running` and the ending — and **no `env`** and **no `retained`** (list guarantees 7 and the element note; depends on T008, same file)
+- [ ] T010 Add `WriteStdinParams { task_id, data }` (base64), `ResizePtyParams { task_id, cols, rows }`, `TerminateParams { task_id, signal: TerminateSignal }`, `TerminateSignal` with **per-variant** `#[serde(rename = "SIGINT"/"SIGTERM"/"SIGKILL")]` — not `rename_all = "UPPERCASE"`, which spells `"INT"` — and `WorkspaceCloseParams` to `protocol/src/wire.rs` (depends on T009, same file)
+- [ ] T011 Add `OutputParams { task_id, data }`, `ExitParams { task_id, exit_code: Option<i32>, signal: Option<SignalName> }` and `SignalName(pub String)` to `protocol/src/wire.rs`, with `#[serde(skip_serializing_if = "Option::is_none")]` on every field of the exactly-one-of pairs — absence rather than null is what makes §4.8's "exactly one of the two, never both and never neither" expressible at all (depends on T010, same file)
+- [ ] T012 Extend `wire::codes` in `protocol/src/wire.rs` with `TASK_NOT_FOUND = -32006`, `TASK_ALREADY_RUNNING = -32010` and `COMMAND_NOT_STARTED = -32011`, so no integer is ever written inline — that module's own doc comment already requires it, and a literal `-32010` in a match arm is a fact stated twice (depends on T011, same file)
+- [ ] T013 Add the signal **number to name** mapping to `protocol/src/wire.rs` as `SignalName::from_number`, total over the host's signals rather than a lookup in the three `terminate` accepts, formatting an unrecognised number as its own decimal rather than dropping it — a signal nobody anticipated is still how the task died. It lives in `protocol` because a signal's name is the wire's vocabulary, the way an error code is, and it may live neither in `domain/task.rs` (which may name no signal number) nor in `pty_runner.rs` (which may hold no protocol spelling) — design.md **[CONFLICT 7]** (depends on T012, same file)
+- [ ] T014 [P] Round-trip serialisation tests for every new wire type in `protocol/tests/task_wire.rs`, asserting the snake_case field names **explicitly** rather than round-tripping into Rust and back, since a symmetric bug survives a round trip. Assert that `signal` serialises as a **name** (`"SIGTERM"`, never `15`) — data-model.md's `Option<i32>` predates §4.8 fixing the encoding, design.md **[CONFLICT 2]** — that `exit_code` is **absent** rather than null on a signal death and vice versa, and that `SignalName::from_number` names a signal this feature never sends (`SIGSEGV`) and formats an unrecognised number
+
+### Engine domain
+
+- [ ] T015 [P] Implement `TaskId`, `Pid`, `Shape` (`Pty { cols, rows }` | `Pipes` — an enum rather than the wire's `pty` boolean, because FR-008a requires the choice to be **exclusive** and a bool plus two optional dimensions is a shape in which both can be set), `Stream`, `OutputStream`, `TaskSignal` (`Int`/`Term`/`Kill`, closed — the **sending** vocabulary only), `ExitStatus` (`Exited { code }` | `Signalled { signal: i32 }`, two distinct states and never one field carrying `128 + n`), `OutputChunk`, `TaskState` and `EnvOverrides` in `engine/src/domain/task.rs` per [data-model.md](./data-model.md). `EnvOverrides` is a **newtype whose own `Debug` elides its contents** — not a hand-written `Debug` on `Task`, which someone adding a field can defeat (design.md, *Error Handling*; FR-005a, invariant 22)
+- [ ] T016 Implement `Task` and `RetainedOutput` in `engine/src/domain/task.rs`. `Task` has **no window-size field**: the current size lives in the kernel's `winsize` and copying it would create a second authority that can disagree with the first. `RetainedOutput` holds a `VecDeque<OutputChunk>` — chunks and not a flat byte buffer, so a `pty: false` task's two streams stay separable across a detachment — plus `bytes_held` and `ending` (depends on T015, same file)
+- [ ] T017 Implement `TaskSet` in `engine/src/domain/task.rs`: `start` (refuses a key already present and starts **no second process** (FR-031c) — deliberately **not** idempotent, where F004's `WatchSet::acquire` is), `get`, `release`, `list(&self, ..)` ordered by `TaskId` for determinism only, `drain_for_workspace` and `drain_all`. One per engine, **not one per workspace**, and never given a reference to the transport (depends on T016, same file)
+- [ ] T018 Unit tests in `engine/src/domain/task.rs`: a second `start` under a live id is refused; `release` frees the id; draining twice yields nothing the second time; and `format!("{:?}", task)` contains **neither the key nor the value** of a sentinel environment variable — the assertion SC-025 rests on, and the one a `#[derive(Debug)]` silently breaks (depends on T017, same file)
+- [ ] T019 [P] Register `task` in `engine/src/domain/mod.rs`
+
+### Engine ports
+
+- [ ] T020 [P] Define the `TaskRunner` port in `engine/src/application/ports/task_runner.rs` per [contracts/runner-port.md](./contracts/runner-port.md), matched rather than redesigned: `TaskRunner` (`Send + Sync`), `TaskOutput` (**`Send` and deliberately not `Sync`** — one thread owns one descriptor), `TaskControl` (**`Send + Sync`** behind an `Arc`, so a keystroke never waits behind a blocked read — T12, T13), `SpawnRequest<'a>` carrying a `&ResolvedPath`, `SpawnedTask`, `ReadOutcome`, `Exit` (`Code(i32)` | **`Signal(i32)`**), `SpawnFailure`, `ControlError` and `ResourceLimits` with `FIXED`. `Exit::Signal` carries the **raw number**, not a `TaskSignal`: the send vocabulary is closed at three and the report vocabulary is open, and a segfaulting build is an ordinary case — design.md **[CONFLICT 3]** records this as the edit the port document owes. Record T12 and T13 in doc comments
+- [ ] T021 [P] Add `fn deregister(&self, id: &str) -> Result<(), RootError>` to `WorkspaceRoots` in `engine/src/application/ports/roots.rs`, returning `NotRegistered` for an id that is not there — which is exactly what makes a second `workspace/close` answer `-32001` rather than succeeding silently. The port offers `register` and `resolve` only today, so `workspace/close` cannot actually close anything (design.md **[CONFLICT 6]**, close guarantees 7 and 8)
+- [ ] T022 Implement `deregister` on `InMemoryRoots` in `engine/src/application/use_cases/workspace.rs` (depends on T021)
+- [ ] T023 [P] Test in `engine/tests/workspace_deregister.rs`: register, deregister, then `resolve` answers `NotRegistered`; a second `deregister` answers `NotRegistered` rather than succeeding; deregistering one workspace leaves another's registration intact
+- [ ] T024 [P] Register `task_runner` in `engine/src/application/ports/mod.rs`
+
+### The pure core — where the volume requirements are actually tested
+
+- [ ] T025 Implement `Chunker::accept`, `drain_due` and `next_deadline` in `engine/src/application/output.rs`, with the **64 KiB raw** size bound and the **20 ms** time bound as named `pub const`s the tests read. Pure: it names no descriptor, no thread and no syscall, is fed bytes and told the time by F004's `Clock` port, and `next_deadline` is the timeout the reader thread passes to `TaskOutput::read` so the thread owns no policy
+- [ ] T026 Unit tests in `engine/src/application/output.rs` for the size bound (FR-011, SC-005): a scripted 4 MiB run with no newline in it yields at least sixty-four chunks, each at or under the **exported constant** and never a literal `65536`, totalling exactly 4 194 304 bytes with zero truncation — a test carrying its own number passes after somebody changes the bound, and 64 KiB *is* `65536`, which makes this the easiest of the four bounds to get wrong (depends on T025, same file)
+- [ ] T027 Unit tests in `engine/src/application/output.rs` for the time bound: bytes below the size bound with nothing following are emitted once the fake clock advances 20 ms, and the assertion that matters is **at least one chunk** — an upper-bound-only suite passes when the time bound is deleted, which is quickstart §10's first mutation and the one that leaves a developer staring at an empty panel (depends on T026, same file)
+- [ ] T028 Unit tests in `engine/src/application/output.rs` for ordering (FR-010, SC-004): for one task, output order is the order accepted, across chunk boundaries and across streams; and a `Shape::Pty` task yields only `Stream::Stdout` (T3, SC-028) (depends on T027, same file)
+- [ ] T029 Implement `RetainedOutput::push` returning `Admission::{Accepted, AtBound}`, `drain`, `held_bytes`, `is_full` and `set_ending` in `engine/src/application/output.rs`, with the **4 MiB per task** bound as a named `pub const` (FR-013a's stated quantity, fixed in the plan and not judged per task). `Accepted` while held bytes are under the bound; `AtBound` once they reach it, at which point the caller stops reading and **nothing is dropped**. One structure with **no branch on `attached`** (depends on T028, same file)
+- [ ] T030 Unit tests in `engine/src/application/output.rs` for retention: at the bound `push` returns `AtBound` and drops zero bytes; `drain` is FIFO and empties; each drained chunk keeps its **own** `Stream`, so a replay uses the notification that chunk would have used live (invariant 14); `set_ending` is set once and delivered only after `drain` has emptied (FR-022, SC-011) (depends on T029, same file)
+- [ ] T031 [P] Register `output` in `engine/src/application/mod.rs`
+
+### The engine-side priority queue — §4.6 in the direction F010 floods
+
+- [ ] T032 Implement the outbound priority queue in `engine/src/adapters/outbound/send_queue.rs`: two classes, interactive traffic ahead of task output, draining to the `FrameWriter` F004 built. §4.6 requires priority queueing **per direction** and the only implementation of it is `client/core`'s send queue, which runs client-to-engine; `FrameWriter` is a `Mutex<Box<dyn Write + Send>>` and a mutex is first-come by acquisition, so a 50 MiB build acquires it roughly 800 times and a completion response queues behind it by arrival. **FIFO within a class**, or FR-010 and SC-004 break: the queue reorders across classes deliberately and within one never
+- [ ] T033 Make the queue the single path to `FrameWriter` in `engine/src/lib.rs` and `engine/src/adapters/outbound/watch_thread.rs`, so there is exactly one drain before a second producer arrives — the shape F004's T022 used when it introduced the writer. `engine/src/adapters/outbound/frame_writer.rs` itself is unchanged; it becomes the queue's drain (depends on T032)
+- [ ] T034 [P] Integration test in `engine/tests/send_queue.rs`: a task-class frame enqueued first is overtaken by an interactive-class frame enqueued after it; **two task-class frames keep their order**, which is the property FR-010 and SC-004 rest on and the one a priority queue most easily breaks; and two concurrent producers never interleave a frame
+
+### The id-less dispatch path — without it the engine cannot receive a notification at all
+
+- [ ] T035 Widen `dispatch` in `engine/src/adapters/inbound/rpc.rs` to read `id` as a `serde_json::Value` rather than with `.and_then(|i| i.as_str())`: **absent** routes to a new `dispatch_notification(tasks, method, params)` arm and is acted on, anything else routes to the request arm. Today it returns `Action::Nothing` **before the method match**, so `execution/writeStdin` and `execution/resizePty` — the catalogue's first client-to-engine notifications — cannot reach a handler at all. Reading `id` as a `Value` also stops a **numeric** id, legal under JSON-RPC 2.0, being misrouted as a notification, which the same line does today and which this widening fixes as a side effect (plan.md *Constraints*; design.md, *engine inbound*)
+- [ ] T036 [P] Test in `engine/tests/rpc_notification.rs`: a frame with no `id` reaches its handler and produces **zero** bytes on the wire; a frame with a **numeric** `id` is answered rather than dropped; an unknown notification method is dropped in silence, because §4.2 leaves nothing else to do
+
+### The `exec` hand-off A-TASKEXEC needs and does not supply
+
+- [ ] T037 Add a second environment variable beside `SESSION_ENV` in `engine/src/session.rs` carrying the terminated task ids across the re-execution, adopted in the same restarted branch of `SessionRegistry::new()` that adopts the identity, so `restart_notice()`'s `unpreserved` can be non-empty. `session/onRestart` is emitted by the **new** image and the ids are built in the old one; `APEX_SESSION_ID` is the only thing that crosses today, and `unpreserved` is hardcoded to `Vec::new()` under the comment that F007 and F010 will have something to report here. Without this, A-TASKEXEC reports an empty list and looks implemented (design.md **[CONFLICT 4]**)
+- [ ] T038 Unit test in `engine/src/session.rs`: ids set in the variable before `new()` appear in `restart_notice().unpreserved`; an **empty** variable yields an empty list and is distinguishable from an **absent** one, because an empty `unpreserved` is a positive assertion that nothing was lost (depends on T037, same file)
+
+### The fake runner — a contract obligation, not a test helper
+
+- [ ] T039 Implement `FakeRunner` in `engine/tests/common/fake_runner.rs` implementing `TaskRunner` with **no process at all**, reproducing everything [contracts/runner-port.md](./contracts/runner-port.md), *The fake*, requires: a scripted `(Stream, Vec<u8>)` and `Idle` sequence per task handed out one `read` at a time, including a scripted 4 MiB run with no newline; `Ended` only **after** the scripted bytes, with a case scripting bytes *after* the process is marked exited so T4 and FR-022 are tested rather than assumed; a settable `Exit::Code` or `Exit::Signal` including `SIGSEGV`, which a closed `Exit::Signal` would have made unrepresentable; a `read` that yields nothing forever; a recorded stdin buffer; a record of every resize and every signal **against the group rather than the pid**, since a fake recording only that `signal` was called tests half of FR-018; every `SpawnFailure` variant on demand; a **blockable** `read` so a signal can land while a read is outstanding (T13); and `Shape::Pty` yielding only `Stream::Stdout`. It lives beside the tests and never in `src/`, so it cannot be wired into a real composition by accident
+- [ ] T040 [P] Register `fake_runner` in `engine/tests/common/mod.rs` and add a self-test in `engine/tests/fake_runner_selftest.rs` asserting the fake itself honours T3, T4, T9 and T13 — `fake_fs_selftest.rs` is the precedent, and a double that quietly stops honouring its contract fails every test that trusts it for the wrong reason
+
+### Client port
+
+- [ ] T041 [P] Define `TaskProvider` in `client/core/src/application/ports/task_provider.rs` — `start`, `attach`, `list`, `write_stdin`, `resize`, `terminate`, `close_workspace` — as an `#[async_trait]`, which is `WorkspaceProvider`'s existing shape and is chosen because the concrete provider is selected at runtime and the trait must be `dyn`-compatible. `#[async_trait]` on the client and nothing async in the engine is not an inconsistency and the doc comment says so
+- [ ] T042 [P] Return `Unsupported(Owner::F015LocalMode)` from all seven methods in `client/core/src/adapters/outbound/local_tasks.rs`, with the research.md *Local mode is F015's* reasoning in a doc comment. A specified degradation rather than a gap, following A-WATCHLOCAL's precedent of a file rather than a silence
+- [ ] T043 [P] Register `task_provider` in `client/core/src/application/ports/mod.rs` and `local_tasks` in `client/core/src/adapters/outbound/mod.rs`
+
+**Checkpoint**: `cargo build --workspace` succeeds, `cargo clippy --workspace --all-targets -- -D warnings` is clean, the engine can receive a notification, the queue exists, a workspace can be deregistered, and no user story has begun.
+
+---
+
+## Phase 3: User Story 1 — Run a command and watch it work (P1) 🎯 MVP
+
+**Goal**: a developer runs a command and its output appears in a panel as it is produced —
+progress bars redrawing, colours intact — not in a lump when the command finishes.
+
+**Independent test**: start a command producing steady output and confirm the panel shows it
+progressively, with no remote host and no network.
+
+### Tests for User Story 1
+
+- [ ] T044 [P] [US1] Test in `engine/tests/task_streams.rs` for SC-028, both halves: a `pty: true` task reports `isatty` **true** and its `execution/onStderr` byte count is **0**, counted at the engine's outbound sink before serialisation; the **same** fixture with `pty: false` reports false and delivers its error output separately and distinguishably. The zero is the half that matters — an implementation that opens a pty and quietly keeps a separate pipe for errors passes every positive assertion here (FR-008, FR-008a, A-TASKSTREAM; uses `fixture_tty_streams`)
+- [ ] T045 [P] [US1] Test in `engine/tests/task_chunking.rs` for SC-005, **printing** total bytes and largest chunk: `fixture_bigline`'s 4 MiB with no newline is delivered whole, the largest chunk is at or under the raw bound **read from the constant the source exports**, the total is exactly 4 194 304 with zero truncation, and the serialised frame stays under §4.1's 1 MiB once base64 has inflated it by 4/3 — assert on the raw chunk **and** on the frame, since the first is the value somebody chose and the second is the limit that actually breaks
+- [ ] T046 [P] [US1] Test in `engine/tests/task_containment.rs` for FR-003 and invariant 24: a `cwd` escaping the workspace root is refused with `-32002` in **each** escape shape — lexical `..`, absolute, and a symlink that resolves outside — identically whether or not the target exists, with no pid allocated and no identity live; a `cwd` inside the root that is absent or is not a directory is `-32003`. Checked by the engine independently of the client (Principle VI, §4.7)
+- [ ] T047 [P] [US1] Test in `engine/tests/task_binary_output.rs` for SC-003: the digest of the bytes `fixture_binary` wrote equals the digest of the bytes decoded from `data`, which is base64, with **zero** U+FFFD anywhere in the delivered bytes. The fixture must write a sequence that is **not valid UTF-8** — with an ASCII-only fixture every substitution is a no-op and the criterion is vacuous (quickstart §10, mutation 6)
+- [ ] T048 [P] [US1] Measurement in `engine/tests/task_latency.rs` for SC-001: p99 over **at least 100** writes from the fixture timestamping its own write to the chunk crossing the client's inbound boundary, harness delay excluded, **printed** rather than only compared, against 500 ms. Measure it as **one** interval across the locally spawned engine — summing an engine-side p99 and a client-side p99 gives a p98 bound, and if that composition is used it must be reported as p98 and said so
+- [ ] T049 [P] [US1] Use-case test in `client/core/tests/observe_task.rs`: a chunk becomes panel input and an exit becomes panel input, and the bytes survive the inbound adapter byte-for-byte with zero substitutions — SC-003's client half, where a lossy decode to `String` would be invisible at the engine
+- [ ] T050 [P] [US1] Unit test in `tests/unit/terminal-render.test.ts`: `applyChunk` buffers across frames, so a chunk boundary falling **mid-escape-sequence** and one falling **mid-UTF-8-character** both render correctly once the next chunk arrives. A boundary is where the engine ended a frame and means nothing
+
+### Implementation for User Story 1
+
+- [ ] T051 [US1] Implement `PtyRunner` in `engine/src/adapters/outbound/pty_runner.rs` — **the only file in the repository that may name the pseudo-terminal**: the pty pair for `Shape::Pty` or three pipes for `Shape::Pipes`, `fork`/`exec` with the child made **leader of a new process group**, the controlling terminal, the window size at creation, `read` with a timeout it never overruns, `EIO` on the master mapped to `ReadOutcome::Ended` only after every byte has been returned, `write_stdin`, `resize`, `signal` **to the group**, and `waitpid` with the status **cached** so `reap` is idempotent and every caller after the first still sees `Some`. The child runs as the engine's own user with **no escalation and no set-uid path** (FR-005, A-SEC, A-EC2). Synchronous; no `async fn`
+- [ ] T052 [P] [US1] Structural guard in `engine/tests/pty_confinement.rs`: the pseudo-terminal's names appear in exactly one source file under `engine/src`, **comments included**, failing the build anywhere else — following `inotify_confinement.rs`, which caught its own author three times. Also assert the companion rules design.md states: `application/output.rs` names no descriptor, no thread and no syscall; `domain/task.rs` names no syscall and no signal number; `adapters/outbound/task_threads.rs` may name a thread but not a terminal. plan.md states the rule and prose does not fail a build (invariant 25)
+- [ ] T053 [US1] Implement `StartTask` in `engine/src/application/use_cases/task.rs`: resolve and contain `cwd` through `ResolvedPath::resolve`, refuse a live identity with `AlreadyRunning` **before anything is spawned**, merge the caller's `env` **over** the engine's inherited environment rather than replacing it, apply **80 × 24** when the client named neither `cols` nor `rows` — the use case and not the runner, so the quantity stays where FR-006b requires it and the port still invents no size (design.md **[CONFLICT 1]**) — spawn, insert the `Task`, and attach the starting connection. `StartRefusal::{NotRegistered, RootGone, PathRefused, NotFound, AlreadyRunning, CouldNotStart}` and register the module in `engine/src/application/use_cases/mod.rs`
+- [ ] T054 [US1] Implement `TaskService` in `engine/src/adapters/outbound/task_threads.rs`: one reader thread per task passing `Chunker::next_deadline()` as the read timeout, with **per-task locks** over each task's `Chunker` and `RetainedOutput` and the `Arc<dyn TaskControl>` handles reachable **without the map lock**. A single map-wide mutex satisfies every document as written and defeats the port's T12 and T13 in the same line of code — a 50 MiB build takes it roughly 800 times and an idle shell every 20 ms (architecture.md, *Component Architecture*)
+- [ ] T055 [US1] Dispatch `execution/runTask` in `engine/src/adapters/inbound/rpc.rs`, threading `tasks: Option<&TaskService>` through `dispatch` exactly as F004 threaded `watchers: Option<&_>`. That takes `dispatch` to seven parameters, which is one more than is comfortable and does not extend again — record in a comment that the next feature needing a collaborator introduces a `DispatchContext` rather than an eighth argument (depends on T035, T053)
+- [ ] T056 [US1] Emit `execution/onStdout` and `execution/onStderr` from `engine/src/adapters/outbound/task_threads.rs` through the send queue, one frame per chunk with `data` base64-encoded, **each chunk on the notification matching its own `Stream`**, and the writer's lock held for exactly one frame (depends on T054, T032)
+- [ ] T057 [US1] Wire the runner, the `TaskSet`, the `TaskService` and the queue into the engine composition root in `engine/src/lib.rs`, with no global singleton and the pty factory **inside** the adapter — F004's guard caught its own author on the composition root, and moving the factory into the adapter is how that was resolved rather than adding a judgement call to the rule
+- [ ] T058 [US1] Implement `ObserveTask` in `client/core/src/application/use_cases/observe_task.rs`: chunk to panel, exit to panel, never decoding output bytes into a `String` on the way
+- [ ] T059 [US1] Implement the notification inbound adapter in `client/core/src/adapters/inbound/task_notification.rs`, translating the wire payload into use-case input, decoding base64 exactly once and carrying no business rule; register it in `client/core/src/adapters/inbound/mod.rs`
+- [ ] T060 [US1] Implement `start` in `client/core/src/adapters/outbound/remote_tasks.rs` over the transport, and register the module in `client/core/src/adapters/outbound/mod.rs`
+- [ ] T061 [US1] Extend `LITERAL_TOKENS` in `scripts/ds-sync.mjs` with the terminal surface, anchored **structurally** on the prototype's `isTerminal` branch the way every other literal token is anchored, so a prototype change breaks one anchor loudly rather than silently matching an element that shares a number: `--vk-term-fs` (**12.5px** — a *third* font size, distinct from `--vk-fs` and `--vk-code`, which are both 13.5px at the signed-off density, and therefore a value `ds-sync` must extract rather than a component invent), `--vk-term-line-height` (1.6), `--vk-term-pad` (`2px 12px 12px`), `--vk-term-cursor-w` (7px), `--vk-term-cursor-h` (15px) and `--vk-term-cursor-blink` (`vkpulse 1.1s steps(1,end) infinite`)
+- [ ] T062 [US1] Extract the three semantic hues in `scripts/ds-sync.mjs` as `--vk-term-ansi-green`, `--vk-term-ansi-red` and `--vk-term-ansi-yellow`, anchored on the prototype's own `const ERR=…, WARN=…, OK=…` declaration — the constants its terminal transcript already uses — and emit all nine tokens into `client/ui/lib/ds/layout-tokens.css`, which is **generated and never hand-edited** and which `lint:ds` skips precisely because a generated token file necessarily holds the literals the lint forbids everywhere else. Hand-typing them into a component would make the application the source of truth for a value the prototype owns (design.md **[CONFLICT 5]**; depends on T061, same file)
+- [ ] T063 [US1] Implement `client/ui/lib/terminal/palette.ts` mapping ANSI names to resolved colours: read the tokens off the mounted element with `getComputedStyle` and hand the library resolved strings, because an `ITheme` cannot take a `var()` — and **re-read them when the theme changes**, since a cached palette is a panel that stops matching the rest of the window. Only the **three** hues the design system defines map to tokens; black and white map to `--color-bg` and `--color-text`, and **the remaining thirteen come from the library's own palette** (A-TERMPALETTE). **No colour is invented in this file** — inventing thirteen is the act Principle I exists to prevent, and SC-016 was narrowed to say so. The mapping lives here and nowhere else, which is what makes SC-016 checkable by reading one file (depends on T062)
+- [ ] T064 [US1] Implement `client/ui/lib/terminal/TerminalPanel.svelte`: one `@xterm/xterm` 6 instance per task with `@xterm/addon-fit`, `scrollback: 10000` (overriding the library's default of 1 000, which is too few to scroll back through a compile), `cursorStyle: 'block'` and `cursorBlink: true` — the same appearance the prototype's 7 × 15px block arrives at, by the mechanism that owns it, since xterm derives its cursor from cell metrics and cannot be given a size. The extracted cursor tokens govern the panel's **idle prompt** instead, the accent-coloured `shellPrompt` row the dock shows before a task is attached. The dock title switches on mode — `Terminal — build-01.euw1` against `Terminal — local` — which is the prototype's own behaviour and therefore binding. Buffer across frames (depends on T063)
+- [ ] T065 [US1] Implement `client/ui/lib/terminal/terminals.svelte.ts`: the panel set keyed by task id, **one instance per task** (FR-026), following `client/ui/lib/workspace/tree.svelte.ts` as the existing rune-backed store precedent
+- [ ] T066 [P] [US1] End-to-end spec in `tests/e2e/terminal-ansi.spec.ts` for SC-002: for each scripted sequence, the rendered **cell grid** — characters, foreground and background colour, and cursor position — equals a grid **written by hand** for that sequence, and the escape bytes appear in **zero** rendered cells. Stated as a hand-written grid because no local terminal exists to compare against, and comparing the panel against the same library rendering headlessly compares it with itself
+
+**Checkpoint**: US1 is independently testable — run a command, watch its output arrive progressively in a themed panel, with no remote host and no network.
+
+---
+
+## Phase 4: User Story 2 — Type back, and mean it (P1)
+
+**Goal**: the developer answers a prompt, interrupts a runaway process, and resizes the panel so a
+progress bar redraws at the new width.
+
+**Independent test**: run a command that prompts, answer it, and confirm the process received
+exactly what was typed; resize, and confirm the process observes the new dimensions.
+
+### Tests for User Story 2
+
+- [ ] T067 [P] [US2] Test in `engine/tests/task_input.rs` for SC-007: a string containing control bytes and a non-UTF-8 sequence written to a task's input comes back from `fixture_echo` **identical**, compared as bytes and not as a string. No line-ending translation, no encoding conversion, no trimming; and two frames are two writes in frame order
+- [ ] T068 [P] [US2] Test in `engine/tests/task_signals.rs` for SC-008 and the escalation contract, which are one check in two halves. **US2.2**: an interrupt to a `pty: true` task arrives as a signal — `fixture_signals` reports catching **`SIGINT`**, its recorded input contains **zero** `0x03` bytes, and it is **still running 5 s later**, because `SIGINT` deliberately does not escalate and a program that legitimately handles it must not be killed for having handled it. **US2.6**: a `SIGTERM` is caught and survived, and the process is gone after **5 s** by `SIGKILL` — assert **both** halves, still alive shortly before and gone shortly after, because an assertion only that it is gone eventually passes an implementation with no waiting period at all
+- [ ] T069 [P] [US2] Measurement in `engine/tests/task_resize.rs` for SC-009: p99 over **at least 100** alternating resizes, from the notification leaving the boundary to `fixture_winsize` reporting the new size, **printed** against 500 ms. Also **US2.3a** — `cols` and `rows` supplied at `runTask` are the dimensions the fixture reports at startup, before any resize is sent — and **US2.3b** — a resize sent to a `pty: false` task changes nothing, emits no error frame, and leaves the task running
+- [ ] T070 [P] [US2] Test in `engine/tests/task_process_group.rs` for SC-012 and SC-027: a `/proc` scan across **three generations** of `fixture_tree` after termination finds zero survivors at every depth. The fixture must spawn a **grandchild** and both descendants must ignore the signal their parent gets — a two-level fixture passes for an implementation that signals the direct child only, which is exactly the bug FR-006a exists to prevent (quickstart §10, mutation 2)
+- [ ] T071 [P] [US2] End-to-end spec in `tests/e2e/terminal.spec.ts`: run a command, type into it, resize the panel, and see it exit
+
+### Implementation for User Story 2
+
+- [ ] T072 [US2] Implement `WriteInput` and `ResizeTask` in `engine/src/application/use_cases/task.rs`. Both **return nothing by construction** — a notification has no response, so an unknown id, an exited task and a success are indistinguishable to the caller (§4.2). `ResizeTask` is a no-op for a `Shape::Pipes` task and for a `cols` or `rows` of zero, which is the value some programs read as "no terminal" (depends on T053, same file)
+- [ ] T073 [US2] Implement `StopTask` in `engine/src/application/use_cases/task.rs`: send **exactly the named signal first**, to the **group**; `Term` schedules `Kill` 5 s later on the `Clock` port; `Int` does **not** escalate; `Kill` has nothing to escalate to. Succeeds for a task that has already exited (FR-019) and does **not** release the identity — release follows delivery of the exit. `StopRefusal::NoSuchTask` only. The escalation is two `signal` calls with a `Clock` wait between them and is deliberately **not** behind the port, or the five seconds would be untestable without a real process that ignores `SIGTERM` (depends on T072, same file)
+- [ ] T074 [US2] Unit tests for the escalation in `engine/src/application/use_cases/task.rs` against `FakeRunner` and `FakeClock`: advancing to 4 999 ms records exactly one signal on the group and advancing to 5 001 ms records two; an `Int` records exactly one at any advance; and a signal issued while the fake's `read` is blocked takes effect without waiting for that read to return (T13) (depends on T073, same file)
+- [ ] T075 [US2] Dispatch `execution/writeStdin` and `execution/resizePty` on the **notification arm** in `engine/src/adapters/inbound/rpc.rs`, decoding `data` from base64 once. An unknown `taskId`, an exited task and a full buffer are all dropped in silence, and so is a `cols` or `rows` that is absent, zero or not an integer — there is no response to carry a refusal (depends on T035, T055, T072)
+- [ ] T076 [US2] Dispatch `execution/terminate` in `engine/src/adapters/inbound/rpc.rs`, refusing a `signal` outside the closed three with `-32602` **before anything reaches a syscall** — `ResolvedPath`'s reasoning applied to a second kind of untrusted input — and answering `-32006` for no live identity (depends on T075, T073)
+- [ ] T077 [US2] Implement `write_stdin`, `resize` and `terminate` in `client/core/src/adapters/outbound/remote_tasks.rs` (depends on T060, same file)
+- [ ] T078 [US2] Send keystrokes from `client/ui/lib/terminal/TerminalPanel.svelte` through xterm's `onData` as `execution/writeStdin`, base64-encoded without a lossy string round trip. With `pty: true` a `0x03` is the interrupt, because the line discipline turns it into `SIGINT` for the foreground process group; with `pty: false` there is no line discipline and the interrupt must be `execution/terminate` with `SIGINT` — **the panel branches on the shape it chose**, which follows from A-TASKSTREAM and is stated nowhere else (depends on T064, same file)
+- [ ] T079 [US2] Send `execution/resizePty` on every `@xterm/addon-fit` fit in `client/ui/lib/terminal/TerminalPanel.svelte`, and again after a successful `attach`, because attaching deliberately has **no side effect on the process** and a client that forgets leaves it laying out to the old width (attach guarantee 9; depends on T078, same file)
+- [ ] T080 [P] [US2] Unit test in `tests/unit/terminal-input.test.ts`: a keystroke carrying a control byte and a non-UTF-8 sequence is base64-encoded byte-for-byte, with zero substitutions introduced on the way out of the panel
+
+**Checkpoint**: US1 and US2 both work — a real terminal rather than a transcript.
+
+---
+
+## Phase 5: User Story 3 — Know how it ended (P1)
+
+**Goal**: the developer learns whether the command succeeded, and the instance is not left holding
+a process nobody is watching.
+
+**Independent test**: run a command that exits non-zero and confirm the code is reported; run one
+that is killed by a signal and confirm that is distinguishable from an exit code.
+
+### Tests for User Story 3
+
+- [ ] T081 [P] [US3] Test in `engine/tests/task_lifecycle.rs` for SC-010 and §9's exit-shape check: a task exiting 7 yields `exitCode` 7 — not "non-zero" — and **no `signal` key at all**; a task killed by a signal yields `signal` as a **name** (`SIGKILL`, never `9`) and **no `exitCode`**. Assert on which field is **present**, not on its value: a client reading `exitCode` from a signalled death gets `null` or `0` depending on the serialiser and both read as success. Both fixtures must run in the **same** suite, and a frame carrying both keys or neither is a protocol error rather than a guess
+- [ ] T082 [P] [US3] Test in `engine/tests/task_start_failure.rs` for SC-015: a command that does not exist fails the `runTask` request with **`-32011`** — never `-32003`, which §4.4 reserves for a path inside a workspace — carrying `data.reason` from the `SpawnFailure` variant and **no environment**; and **zero** `execution/onExit` frames carry that id. Every `SpawnFailure` variant maps to `-32011`. Also **US3.7**: provoke an unstartable command and a start under a live identity in one run and assert on the **codes**, `-32011` and `-32010`, neither of them `-32006` — a message is prose and a code is the contract
+- [ ] T083 [P] [US3] Test in `engine/tests/task_ordering.rs` for SC-004 and SC-011: a monotonically numbered fixture stream reassembles with zero gaps and zero transpositions; and across **100 runs** the index of the final chunk is below the index of the exit at the outbound sink, with the delivered byte count equal to the written one. The fixture must write **immediately before exiting, without flushing and waiting** — a fixture that sleeps after its last write hands the delivery path all the slack it needs and the scenario passes for an implementation that reorders (quickstart §10, mutation 4)
+- [ ] T084 [P] [US3] Test in `engine/tests/task_workspace_close.rs` for SC-013: `workspace/close` on a workspace holding three running tasks leaves **zero** of its processes alive, counted in `/proc` and including children, while a task in a **second** workspace is still running — which is what proves the close was scoped rather than total. The response is written **after** the last of them has ended; the escalations run concurrently so the bound is about five seconds for the workspace rather than five per task; a second close is `-32001`; and `-32009` is **never** returned, because refusing to stop the tasks of a deleted directory strands exactly what FR-025 forbids
+- [ ] T085 [P] [US3] Test in `engine/tests/task_leak.rs` for SC-014: the live-identity count and the child-process count read before and after **100** start-and-exit cycles are identical. A leak of one identity or one process per cycle is invisible in a single pass and unmistakable in a hundred
+
+### Implementation for User Story 3
+
+- [ ] T086 [US3] Build the ending in `engine/src/adapters/outbound/task_threads.rs`: `reap()` once, `Exit::Code` to `exit_code`, `Exit::Signal(i32)` named for the wire through `protocol`'s total mapping, and the **other key absent rather than null**. The engine adapter converts at the point it builds the notification, so the number never leaves the adapter and the name never enters the pty (design.md **[CONFLICT 3]**, **[CONFLICT 7]**; depends on T056, T013)
+- [ ] T087 [US3] Deliver the retained output **before** the ending in `engine/src/adapters/outbound/task_threads.rs`: drain to empty, then `execution/onExit`, then `TaskSet::release` — the identity is released once the exit has been delivered and not before, which is what makes FR-023 and SC-014 hold and what lets a client terminate and then attach to collect the last output (depends on T086, same file)
+- [ ] T088 [US3] Implement `CloseWorkspace` in `engine/src/application/use_cases/task.rs`: `drain_for_workspace`, `Term` then `Kill` after 5 s on the `Clock` with the escalations running **concurrently**, release the workspace's watches, **`deregister` the workspace**, and write the response after the last task has ended. `CloseRefusal::NotRegistered` — including a second close, which is `-32001` and is *not* FR-019 generalising, because a workspace never closes itself and the races differ (depends on T073, T022, same file)
+- [ ] T089 [US3] Dispatch `workspace/close` in `engine/src/adapters/inbound/rpc.rs` (depends on T076, T088)
+- [ ] T090 [US3] Implement `close_workspace` in `client/core/src/adapters/outbound/remote_tasks.rs` (depends on T077, same file)
+- [ ] T091 [US3] Render the ending in `client/ui/lib/terminal/TerminalPanel.svelte` — state that the task ended **and how**, rather than simply stopping (FR-029), reading `signal` first and **never manufacturing `128 + n`** for a signal death, which would rebuild one layer up the convention the protocol just spent a field preserving. An `onExit` carrying both fields or neither is surfaced as an error, never as `Exited{0}` (depends on T079, **depends on T006**)
+- [ ] T092 [US3] Unit test for scope in `engine/src/application/use_cases/task.rs` against `FakeRunner`: closing workspace A signals every task of A exactly once, on the **group**, and zero tasks of workspace B; and a close whose tasks are blocked in `write` against a full retention buffer still completes at five seconds, which is T13 doing the work (depends on T088, same file)
+
+**Checkpoint**: an exit is reported, distinguishably, and nothing is left running that nobody is watching.
+
+---
+
+## Phase 6: User Story 4 — A build must not freeze the editor (P2)
+
+**Goal**: a build emits tens of megabytes; the developer keeps typing, navigating and opening
+files, and none of it stalls.
+
+**Independent test**: start a process emitting output far faster than a developer could read, and
+confirm interactive actions continue to meet their budget throughout.
+
+### Tests for User Story 4
+
+- [ ] T093 [P] [US4] Measurement in `engine/tests/task_budget.rs` for SC-006: interactive requests issued throughout a 50 MiB burst, **printed** p99 over **at least 100** samples against §1.4's 250 ms, measured at the transport boundary with any harness-injected delay excluded. The burst drives the real chunker, the real send queue and the real `FrameWriter`, with a recording transport counting and timing what crosses. This is the measurement the whole architecture exists to pass, and it is the one failure that would compile, pass every functional criterion and fail nothing else — if it fails, the finding is about the seam
+- [ ] T094 [P] [US4] Measurement in `engine/tests/task_retention.rs` for SC-021, **printing** bytes held and bytes delivered: delivered equals written with zero bytes dropped, and **bytes held** stays at or under the 4 MiB constant the source exports. The assertion must be on **bytes held** — an implementation that buffers everything also loses nothing, so a delivered-bytes-only check passes the mutation happily (quickstart §10, mutation 3). Run it twice, once attached and once with **no client attached**, and assert the two are identical (FR-031a, US4.2a)
+- [ ] T095 [P] [US4] Measurement in `engine/tests/task_limits.rs` for SC-026, **printing** the interval from the crossing allocation to the exit notification against 2 000 ms: `fixture_alloc` under **16 GiB** of address space, soft **and** hard, is **denied the allocation** — a limit on address space is not a kill, and the denial is what protects the instance — and the engine answers a subsequent request. Where the environment refuses to apply the limit at all the criterion is **skipped**, and a skipped criterion appears in the validation record as a skip rather than a pass (*Known gaps* 2)
+- [ ] T096 [P] [US4] Measurement in `tests/perf/terminal-budget.spec.ts` for SC-024, **printing** the lines and bytes the panel retains after a 50 MiB burst against the **10 000-line** bound read from the source, and asserting the panel answers input throughout
+- [ ] T097 [P] [US4] Unit test in `tests/unit/terminal-history.test.ts`: the scrollback bound (FR-029a) is **read from the exported constant** rather than typed into the test, and a burst past it evicts rather than growing — an unbounded history makes a long build a memory leak on the developer's own machine
+- [ ] T098 [P] [US4] End-to-end spec in `tests/e2e/terminal-responsive.spec.ts` for US4.3: output driven at the panel faster than it renders, and the panel still answering input
+
+### Implementation for User Story 4
+
+- [ ] T099 [US4] Stop reading at the retention bound in `engine/src/adapters/outbound/task_threads.rs`: on `Admission::AtBound` the reader thread stops calling `read`, the pseudo-terminal's kernel buffer fills, and the process blocks in its next `write`. **Nothing is dropped, nothing is marked and nothing is announced** — there is no drop path to get wrong and no gap notification to render. Reading resumes once the attachment has drained, and the behaviour is identical while detached, because a process must not discover it is unobserved by being treated differently (depends on T087)
+- [ ] T100 [US4] Classify frames in `engine/src/adapters/outbound/send_queue.rs`: a task's output on the bulk class, every request response and every other notification on the interactive class. This is the half of FR-012 that did not exist before F010, and SC-006 measures it (depends on T032, T056)
+- [ ] T101 [US4] Apply `ResourceLimits::FIXED` between fork and exec in `engine/src/adapters/outbound/pty_runner.rs`: 16 GiB of address space set as **both** the soft and the hard limit, because a process may raise its own soft limit up to the hard one and a soft-only ceiling is one the bounded process simply removes — invisible until the first measurement of a runaway finds it was never bounded (quickstart §10, mutation 7) — and `RLIMIT_CORE` at **0**, which is FR-005a's requirement rather than a tuning choice, since a dump is a crash report carrying the whole environment. CPU time, file size and process count are deliberately **not** set, and a limit the kernel refuses is `SpawnFailure::LimitRefused` and never a task that started (depends on T051, same file)
+- [ ] T102 [US4] Keep the panel responsive under volume in `client/ui/lib/terminal/TerminalPanel.svelte`: write through the library's asynchronous write queue rather than synchronously per chunk, and hold scrollback at the 10 000-line bound (depends on T091, same file)
+
+**Checkpoint**: a 50 MiB build runs and the editor stays inside its budget, measured and printed.
+
+---
+
+## Phase 7: User Story 5 — Come back to a build that kept going (P2)
+
+**Goal**: the connection drops mid-build; the developer reconnects, the build is still running, the
+panel fills in what they missed, and it carries on.
+
+**Independent test**: start a long-running task, sever the connection, restore it, and confirm the
+task never stopped and no output was lost. The disconnection is **the transport closing while the
+engine stays up** — killing the engine is testing F020 and will fail for the right reason.
+
+### Tests for User Story 5
+
+- [ ] T103 [P] [US5] Test in `engine/tests/task_detach.rs` for SC-018: the transport closes with the engine still running; the task's process is still present afterwards; exits **attributable to the close** are counted and the count is **0**. The task must have no reason of its own to exit during the window, or the check cannot fail
+- [ ] T104 [P] [US5] Test in `engine/tests/task_reattach.rs` for SC-019, SC-020 and SC-022: `retained` equals the bytes written while detached and is counted **at the moment the drain begins**, never as a high-water mark; those bytes arrive as ordinary notifications **after** the response, in order, and **before** anything produced since — checked as a **sequence, not as a set**, since presence alone passes for an implementation that appends the missed bytes after the live stream; a `pty: false` run replays each chunk on **its own stream's** notification; a task that exited while detached attaches with `running: false` and exactly one of `exitCode`/`signal`; attaching twice delivers nothing twice and answers `retained: 0`; attaching to a live task while naming a **different** registered workspace is **`-32001`** rather than serviced; attaching to an identity never started is **`-32006`**; and a second `runTask` under a live identity is **`-32010`** with the **process count under that identity unchanged** — assert on the process count, not on the error, since an implementation that spawns and then reports an error passes an error-only assertion (quickstart §10, mutation 5)
+- [ ] T105 [P] [US5] Test in `engine/tests/task_list.rs` for SC-023's engine half: an omitted `workspaceId` enumerates **every** task the engine holds across every workspace; a present one filters and an unknown one is `-32001` rather than an empty list; released identities are absent and a task that ended but has not been delivered is present with `running: false` and its ending; **no element carries `env`**; the order is by `taskId`; listing touches the runner **zero times**; and `-32009` is never returned
+- [ ] T106 [P] [US5] Test in `engine/tests/task_reexec.rs` for A-TASKEXEC and §9's re-execution check: with three tasks running, `session/restart` leaves **zero** of their processes alive counted in `/proc`, **and** all three ids appear in `session/onRestart`'s `unpreserved`. Both halves are required — an implementation that names an id and leaves its process running produces exactly the outcome A-TASKEXEC exists to prevent and passes any assertion written against the list alone. The result is written and flushed **before** the `exec`, because afterwards there is no process
+- [ ] T107 [P] [US5] Integration test in `client/core/tests/task_reconnect.rs`: the reattachment sequence runs in order — handshake, register, watch, `execution/list` **only** if the identities were lost, `attach` per remembered id, then `resizePty` per attached task — and a `-32006` is surfaced to the developer as "the task is gone" rather than retried
+- [ ] T108 [P] [US5] Integration test in `client/core/tests/task_restart.rs` for SC-023's client half: every identity in the reloaded store attaches after a client restart
+- [ ] T109 [P] [US5] Integration test in `client/core/tests/task_summary.rs` for FR-032: the developer is told which tasks survived, how the finished ones finished and what was missed, taken from the per-task `running`/`retained`/`exitCode`/`signal` results — not inferred from a panel that resumed or did not
+- [ ] T110 [P] [US5] Extend `client/core/tests/session_migration.rs` with the store's new payload: a stored task identity survives a client restart and a store written by the previous shape still loads. The test that proves SC-023's second half must **discard** the store entirely rather than ignore it — a harness that keeps the identities in a variable and calls `list` for form's sake is testing nothing
+
+### Implementation for User Story 5
+
+- [ ] T111 [US5] Implement `AttachTask` in `engine/src/application/use_cases/task.rs`: resolve the id, `-32001` for a workspace that does not own it and for an unregistered one, `-32006` for no live identity, `retained` counted **at the drain**, the response ordered **before** the first replayed chunk, and **no side effect on the process** — it does not resize, write or signal (depends on T088, same file)
+- [ ] T112 [US5] Implement `ListTasks` in `engine/src/application/use_cases/task.rs` as a pure read over `TaskSet` that touches the port **zero** times, answering `-32007` when the engine's own listing would exceed §4.1's frame cap — the method is unpaged and §4.8 accepts that, and the remedy is to filter by `workspaceId` (depends on T111, same file)
+- [ ] T113 [US5] Implement `DrainAllTasks` in `engine/src/application/use_cases/task.rs`: `drain_all`, the same `Term`-then-`Kill` escalation across every workspace, and the terminated ids returned as the input to `unpreserved` (depends on T112, same file)
+- [ ] T114 [US5] Dispatch `execution/attach` and `execution/list` in `engine/src/adapters/inbound/rpc.rs` (depends on T089, T112)
+- [ ] T115 [US5] Replay the retained output after the attach response in `engine/src/adapters/outbound/task_threads.rs`, **each chunk on the notification its own stream would have used when live**, with the live reader resuming **behind** the drain and never beside it, and the `onExit` following the replay for a task that had already ended, after which the identity is released (depends on T099, T111)
+- [ ] T116 [US5] Keep the task set independent of the transport in `engine/src/session.rs`: a dropped connection sets `attached` false and changes nothing else — zero tasks are terminated by it, and the `TaskSet` is never handed a reference to the transport, or invariant 12 would pass for the wrong reason (depends on T057)
+- [ ] T117 [US5] Call `DrainAllTasks` before the `exec` in `engine/src/session.rs` and `engine/src/main.rs`, handing its ids across through T037's variable so the new image's `session/onRestart` names them. The result of `session/restart` is written and flushed before the `exec`; anything still buffered is answered `-32000` first (depends on T037, T113)
+- [ ] T118 [US5] Implement `attach` and `list` in `client/core/src/adapters/outbound/remote_tasks.rs` (depends on T090, same file)
+- [ ] T119 [US5] Drive the reattachment sequence in `client/core/src/application/use_cases/observe_connection.rs`: re-register, re-watch, call `execution/list` **only** when the identities were lost — a client that has them and lists first has spent a round trip learning what it knew — then `attach` per remembered id, then `resizePty` per attached task, because attach deliberately sets no size (depends on T058)
+- [ ] T120 [US5] Extend **A-STATE** in `project-apex-predator.md`'s Appendix A so the durable client store's payload includes task identities. A-STATE enumerates window geometry, region layout, open document references and focus, and FR-031d needs more — this widens an F000 decision record rather than relying on one, and it is recorded before the code that depends on it
+- [ ] T121 [US5] Persist and reload task identities in `client/core/src/adapters/outbound/json_session_store.rs` per T120's amended payload (FR-031d; depends on T120)
+- [ ] T122 [US5] Render the reconnection summary in `client/ui/lib/terminal/terminals.svelte.ts` — which tasks survived, how the finished ones finished, and how much was missed, taken from `attach`'s `retained` count rather than from a per-frame marker, because a replayed frame is deliberately indistinguishable from a live one and a flag would exist only to be ignored or to be branched on and show a seam that is not in the build's output (FR-032; depends on T065, T119)
+- [ ] T123 [US5] Add the reattachment leg to `tests/e2e/terminal.spec.ts`: sever the transport, restore it, and watch the panel fill in what was missed **before** anything produced since, then carry on (depends on T071, same file)
+
+**Checkpoint**: a task outlives its connection, and a returning client is told what it missed rather than inferring it.
+
+---
+
+## Phase 8: Polish and cross-cutting concerns
+
+- [ ] T124 [P] Test in `engine/tests/task_env_redaction.rs` for SC-025 and two of §9's checks: a sentinel value that could only have come from the environment appears in **zero** captured log lines and **zero** crash payloads, exercised on **both** the successful-start path and the `-32011` failed-start path — the failure path is where the request is most likely to be logged whole. And `fixture_crash` leaves **zero** core files in the task's working directory and the host's configured dump location, with `ulimit -c` read and **recorded** before the run, because on a host whose limit is already zero the check passes without the engine having done anything
+- [ ] T125 [P] Unit test in `tests/unit/terminal-palette.test.ts` for SC-016's source half: `palette.ts` maps exactly **three** ANSI names to design-system tokens, maps black and white to `--color-bg` and `--color-text`, defers the remaining thirteen to the library's palette, and contains **zero** raw colour values of its own
+- [ ] T126 [P] End-to-end spec in `tests/e2e/terminal-tokens.spec.ts` for SC-016's rendered half, following `token-conformance.spec.ts`: the computed colour of the success, error and warning slots equals the extracted token value, and the remaining thirteen equal **the library's default** — asserted as the library's default rather than left unasserted, so a hand-typed hex that happens to look right still fails. The assertion is on computed style because the library's palette lives in a dependency `lint:ds` cannot see
+- [ ] T127 [P] End-to-end spec in `tests/e2e/terminal-a11y.spec.ts`: the panel's ended state is distinguishable in **greyscale** — a channel other than colour, following `rail-greyscale.spec.ts` and F003's `cache-verification.spec.ts` — and everything the panel makes actionable is keyboard-reachable, following `rail-keyboard.spec.ts`. `lint:ds` can see neither (**depends on T006**)
+- [ ] T128 [P] Run `make no-network` and record the outcome for SC-017, noting in the record that F010's suite deliberately spawns real **local** processes, that this is not a network dependency, and that a future tightening of the check which forbids spawning would fail this feature for the wrong reason (*Known gaps* 4)
+- [ ] T129 [P] Run the seven mutation checks from [quickstart.md](./quickstart.md) §10 and record the outcome — the first four at minimum: delete the chunker's 20 ms time bound (`task_latency` and the `--lib output` sub-threshold case must fail), remove the process group (`task_process_group` must fail), let the reader read past the 4 MiB bound (`task_retention`'s **held-bytes** assertion must fail), deliver the exit before the last chunk (`task_ordering` must fail), make `runTask` attach when the identity is live (`task_reattach`'s process count must fail), encode output as a lossy UTF-8 string (`task_binary_output` must fail), and set the memory limit soft only (`task_limits` must fail). Each must fail **with the assertion expected** rather than with a compile error. **The first is the one that matters** — every volume test still passes when the time bound goes, while a shell printing a prompt emits nothing; if nothing fails, that absence is the finding
+- [ ] T130 [P] Audit the nine negative checks in [quickstart.md](./quickstart.md) §9 and confirm, for each, that the fixture condition which lets it fail is actually present — a loud stderr write, a producer that outruns the bound for long enough to fill it, a grandchild, a live engine behind a closed transport, a task still **running** at the second `runTask`, a sentinel exercised on both start paths, a real crash on a host that would otherwise dump, both exit shapes in one suite, and processes counted as well as `unpreserved` read. Record the confirmation in quickstart.md's *Validation record*
+- [ ] T131 [P] Update `docs/engine.md` with the `TaskRunner` port and its one adapter, the reader thread per task, the pure chunker and its two bounds, the retention bound and how backpressure works by the absence of a mechanism, and the **engine-side send queue** — the component §4.6 required in this direction and nothing built
+- [ ] T132 [P] Update `docs/transport.md` with the id-less dispatch path and the two client-to-engine notifications that motivated it, and `docs/app-shell.md` with the task identities A-STATE's store now carries
+- [ ] T133 Record the seven printed measurements from [quickstart.md](./quickstart.md) §8 in its *Validation record*, in the shape §8 gives, with the number beside its bound rather than a bare PASS — a gate that says only PASS tells nobody how much headroom is left
+- [ ] T134 Verify `make gate` is green, then mark F010 complete in `specs/features-map.md`
+
+---
+
+## Dependencies
+
+```text
+Setup (T001-T007)
+   └─> Foundational (T008-T043)                      ← blocks every story
+          │   id-less dispatch T035-T036 ─┐
+          │   send queue       T032-T034 ─┼─ the three plan.md names as foundational
+          │   deregister       T021-T023 ─┘
+          ├─> US1 (T044-T066)   🎯 MVP
+          │      ├─> US2 (T067-T080)   needs US1's runner, service and panel
+          │      │      └─> US3 (T081-T092)   needs US2's StopTask for the close escalation
+          │      │             ├─> US4 (T093-T102)   needs US3's delivery order before retention
+          │      │             └─> US5 (T103-T123)   needs US3's CloseWorkspace seam in rpc.rs
+          └─────────────────────────────────> Polish (T124-T134)
+```
+
+T006 gates only T091 and T127. Every other task is unblocked by it.
+
+The stories are **not** independent of one another here, and that is a property of the feature
+rather than a failure to decompose it: `engine/src/application/use_cases/task.rs`,
+`engine/src/adapters/inbound/rpc.rs`, `engine/src/adapters/outbound/task_threads.rs`,
+`client/core/src/adapters/outbound/remote_tasks.rs` and
+`client/ui/lib/terminal/TerminalPanel.svelte` are each one file that four stories extend. Every
+such chain is sequential above and marked with the task it follows. US2, US3, US4 and US5 are each
+independently **testable** once their predecessor lands; they are not independently **startable**.
+
+## Parallel opportunities
+
+- **Setup**: T002–T005 and T007 are five different files and run together
+- **Foundational**: T015, T019, T020, T021, T024, T031, T041, T042, T043 run together — nine different files; T014, T023, T034, T036, T040 likewise, five different test files. The `protocol/src/wire.rs` chain (T008–T013) and the `engine/src/application/output.rs` chain (T025–T030) are deliberately **not** parallel: each is one file, and marking them `[P]` would be the false claim F004 recorded shipping seventeen times across F000, F002 and F018
+- **US1**: all seven test tasks T044–T050 in parallel, plus T052 and T066 — nine different files, the largest block in the feature
+- **US2**: T067–T071 in parallel, plus T080
+- **US3**: T081–T085 in parallel — five different test files
+- **US4**: T093–T098 in parallel — six different files
+- **US5**: T103–T110 in parallel — eight different test files
+- **Polish**: T124–T132 in parallel; T133 and T134 gate on the runs above and are sequential
+
+The `task.rs` use-case tasks (T053, T072, T073, T074, T088, T092, T111, T112, T113), the
+`rpc.rs` dispatch tasks (T035, T055, T075, T076, T089, T114), the `task_threads.rs` tasks (T054,
+T056, T086, T087, T099, T115), the `remote_tasks.rs` tasks (T060, T077, T090, T118) and the
+`TerminalPanel.svelte` tasks (T064, T078, T079, T091, T102) are each one file and none is `[P]`.
+The whole list is checked mechanically — `python3 scripts/pipeline.py verify --phase tasks`
+reports zero duplicate ids, zero malformed lines and zero pairs of `[P]` tasks editing one file.
+
+## Implementation strategy
+
+**MVP is Setup + Foundational + US1 (T001–T066).** It delivers the feature's whole point — a
+command runs on the host and the developer watches it work, in a panel themed from the prototype —
+and it is independently shippable. Note that the MVP is unusually expensive here because three
+things plan.md found are foundational rather than story work: the engine cannot receive a
+notification at all today, the outbound direction has no priority queue, and a workspace cannot be
+deregistered. None of the three is US1's, and all three block it.
+
+Stop after US1 and the terminal is a live log. US2 makes it a terminal. US3 makes it honest about
+how things ended and stops it leaking processes. US4 is the one that proves the architecture — it
+is the first feature to put real volume through F004's writer seam, and SC-006 is the criterion
+that would otherwise fail alone while everything else passed. US5 is what makes a dropped link
+survivable.
