@@ -27,7 +27,7 @@ and *Directory rename with a subtree*. Rationale lives there and is not restated
 | event | `toPath` | string, workspace-relative | **exactly when** `event` is `renamed` |
 | event | `type` | `file` or `directory` | on `created` and `modified` |
 | event | `size` | integer, bytes | on `created` and `modified`, for a file |
-| event | `modified` | integer, epoch milliseconds | on `created` and `modified` |
+| event | `modified` | integer, Unix seconds | on `created` and `modified` |
 
 **The notification carries an array.** One flush of the coalescer is one frame: everything whose
 window closed at the same instant travels together. §4.6 makes this one pipe and one queue, and a
@@ -36,7 +36,10 @@ whatever interactive request is queued behind it (FR-016). It is also what makes
 upper bound on the 256-path threshold a real frame-size constraint rather than an aggregate across
 frames that never approach the cap.
 
-`type`, `size` and `modified` are the same entry metadata `workspace/readDirectory` returns. They
+`type`, `size` and `modified` are the same entry metadata `workspace/readDirectory` returns. **In the same units**: `modified` is
+Unix seconds, as `FsEntryWire` already uses. Found during implementation, where the first draft
+wrote milliseconds — which would have made "the same metadata a listing returns" false in the one
+way a reader would not check. They
 are present because without them a `created` event cannot produce a row: `files` declares
 `size_bytes`, `remote_modified_at` and `is_directory` all `NOT NULL`, so US1's first acceptance
 scenario would require a follow-up `stat` that FR-020 forbids. This is metadata, not content —

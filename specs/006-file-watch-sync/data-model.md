@@ -506,7 +506,7 @@ pub struct FileEvent {
     to_path:       Option<String>,   // skip_serializing_if; present exactly for Renamed
     kind:          Option<EntryKind>,// serialised as `type`; on Created and Modified
     size:          Option<u64>,      // on Created and Modified, for a file
-    modified:      Option<i64>,      // epoch milliseconds, on Created and Modified
+    modified:      Option<i64>,      // Unix SECONDS, on Created and Modified
 }
 pub enum FileEventKind { Created, Modified, Deleted, Renamed }            // lowercase on the wire
 

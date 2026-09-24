@@ -51,6 +51,16 @@ struct Script {
     stall_ms: Option<u64>,
     close_mid_frame: bool,
     reorder: usize,
+    /// Emit one **caller-supplied** frame this many milliseconds in, unprompted.
+    ///
+    /// The body comes from `APEX_MOCK_FRAME` and this process never looks at it. That is
+    /// the whole point: F004 is the first feature whose traffic includes a frame the engine
+    /// originates, and a double that knew how to send a named event would be a second
+    /// engine. `the_mock_implements_no_engine_method` fails the build if any §4.8 method
+    /// name appears in this directory -- it caught the first draft of this very comment --
+    /// so the name lives in the calling test's string and the mock carries only the
+    /// framing, which is what this file is for.
+    notify_ms: Option<u64>,
 }
 
 impl Script {
@@ -65,6 +75,7 @@ impl Script {
                 Some(("reorder", v)) => s.reorder = v.parse().unwrap_or(0),
                 Some(("malformed", v)) => s.malformed = Some(v.parse().unwrap_or(0)),
                 Some(("oversized", v)) => s.oversized = Some(v.parse().unwrap_or(0)),
+                Some(("notify", v)) => s.notify_ms = Some(v.parse().unwrap_or(0)),
                 _ => match part {
                     "malformed" => s.malformed = Some(0),
                     "oversized" => s.oversized = Some(0),
@@ -95,6 +106,27 @@ fn main() {
         // Then close, which is what `ssh` does once ServerAliveCountMax is exceeded. The
         // transport sees EOF; there is no second signal for it to see.
         return;
+    }
+
+    // An unprompted frame, on its own thread, so it can arrive while a request is in
+    // flight -- which is the case worth exercising and the one a reply-shaped directive
+    // cannot produce.
+    if let Some(ms) = script.notify_ms {
+        if let Ok(frame) = std::env::var("APEX_MOCK_FRAME") {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                // Locked for the whole frame. `Stdout::write_all` may issue several writes,
+                // and a frame interleaved with a reply is a corrupt stream rather than a
+                // slow one.
+                let stdout = std::io::stdout();
+                let mut held = stdout.lock();
+                let _ =
+                    held.write_all(format!("{HEADER}{}\r\n\r\n{frame}", frame.len()).as_bytes());
+                let _ = held.flush();
+            });
+        } else {
+            eprintln!("mock: notify= set with no APEX_MOCK_FRAME; nothing to send");
+        }
     }
 
     let mut stdin = std::io::stdin();

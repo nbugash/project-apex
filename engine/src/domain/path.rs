@@ -39,6 +39,18 @@ impl ResolvedPath {
         &self.0
     }
 
+    /// Build one without resolving. **Tests only**, and deliberately so.
+    ///
+    /// The invariant this type exists for is that no path exists by which unchecked input
+    /// becomes a `ResolvedPath` in a shipped binary, and `#[cfg(test)]` keeps that exactly
+    /// true: this function is not compiled into one. The alternative -- making every type
+    /// that holds a resolved path generic so tests can substitute a string -- would spread
+    /// the weakening across the codebase instead of confining it to one line here.
+    #[cfg(test)]
+    pub fn for_test(p: PathBuf) -> Self {
+        Self(p)
+    }
+
     /// Canonicalise a workspace root. Done once, at registration, so the per-request check is a
     /// resolve and a prefix comparison rather than a second canonicalisation of the root.
     pub fn canonical_root(root: &Path, fs: &dyn FileSystem) -> Result<CanonicalRoot, PathRefusal> {

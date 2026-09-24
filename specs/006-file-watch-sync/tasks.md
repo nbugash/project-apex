@@ -32,9 +32,9 @@ Rust workspace: `protocol/`, `engine/`, `client/core/`. Webview: `client/ui/lib/
 **Purpose**: the one dependency, the test double that cannot yet carry a server-initiated frame,
 and the one design answer this feature is owed.
 
-- [ ] T001 Add `inotify = "0.11"` to `[dependencies]` in `engine/Cargo.toml`, with a comment stating it is Linux-only and confined to one adapter. Do **not** add an async runtime: the existing comment in that file records that the engine stays synchronous because it is transferred on every first connect
-- [ ] T002 Add a `notify=<ms>` directive to `client/core/tests/mock_daemon/main.rs` that writes a **caller-supplied opaque frame** (read from `APEX_MOCK_FRAME`) after the given delay. The mock must not know what it is sending — `the_mock_implements_no_engine_method` at line 251 fails the build if any §4.8 method name appears in that directory, and the method name must therefore live in the calling test's string
-- [ ] T003 [P] Document the `notify` directive in the table in `client/core/tests/mock_daemon/README.md`, stating why it carries an opaque frame rather than a named method
+- [X] T001 Add `inotify = "0.11"` to `[dependencies]` in `engine/Cargo.toml`, with a comment stating it is Linux-only and confined to one adapter. Do **not** add an async runtime: the existing comment in that file records that the engine stays synchronous because it is transferred on every first connect
+- [X] T002 Add a `notify=<ms>` directive to `client/core/tests/mock_daemon/main.rs` that writes a **caller-supplied opaque frame** (read from `APEX_MOCK_FRAME`) after the given delay. The mock must not know what it is sending — `the_mock_implements_no_engine_method` at line 251 fails the build if any §4.8 method name appears in that directory, and the method name must therefore live in the calling test's string
+- [X] T003 [P] Document the `notify` directive in the table in `client/core/tests/mock_daemon/README.md`, stating why it carries an opaque frame rather than a named method
 - [ ] T004 Record the Principle I answer for the changed-on-host tab marker in `specs/006-file-watch-sync/spec.md` under a new `## Design deviations` heading. The prototype binds the 6px tab dot to `t.dirty → var(--color-accent)` meaning *unsaved local changes*; FR-023a needs a distinct marker. **This task gates T085 and T086 only.** Every other task proceeds without it
 
 ---
@@ -48,19 +48,19 @@ migration. Every user story depends on all of it.
 
 ### Protocol vocabulary
 
-- [ ] T005 Add `WatchParams`, `WatchResult`, `Refusal` and `RefusalReason` to `protocol/src/wire.rs` per [data-model.md](./data-model.md) *Wire types*, snake_case on the wire with no `rename_all`, matching the convention F002 established
-- [ ] T006 Add `FileEventParams` carrying `events[]`, and `FileEventKind` with `created`/`modified`/`deleted`/`renamed`, to `protocol/src/wire.rs`. `created` and `modified` carry `type`, `size`, `modified`; only `renamed` sets `to_path`. The event identifies its workspace, what happened and where, and carries entry metadata but never bytes or a hash (FR-010, FR-013a; depends on T005, same file)
-- [ ] T007 Add `InvalidateAllParams` to `protocol/src/wire.rs` and extend `wire::codes` with the constants it is missing — `-32000`, `-32004`, `-32005`, `-32006`, `-32008` — so no integer is ever written inline, which that module's own doc comment already requires (depends on T006, same file)
-- [ ] T008 [P] Round-trip serialisation tests for every new wire type in `protocol/tests/watch_wire.rs`, asserting the snake_case field names explicitly rather than round-tripping into Rust and back — a symmetric bug survives a round trip
+- [X] T005 Add `WatchParams`, `WatchResult`, `Refusal` and `RefusalReason` to `protocol/src/wire.rs` per [data-model.md](./data-model.md) *Wire types*, snake_case on the wire with no `rename_all`, matching the convention F002 established
+- [X] T006 Add `FileEventParams` carrying `events[]`, and `FileEventKind` with `created`/`modified`/`deleted`/`renamed`, to `protocol/src/wire.rs`. `created` and `modified` carry `type`, `size`, `modified`; only `renamed` sets `to_path`. The event identifies its workspace, what happened and where, and carries entry metadata but never bytes or a hash (FR-010, FR-013a; depends on T005, same file)
+- [X] T007 Add `InvalidateAllParams` to `protocol/src/wire.rs` and extend `wire::codes` with the constants it is missing — `-32000`, `-32004`, `-32005`, `-32006`, `-32008` — so no integer is ever written inline, which that module's own doc comment already requires (depends on T006, same file)
+- [X] T008 [P] Round-trip serialisation tests for every new wire type in `protocol/tests/watch_wire.rs`, asserting the snake_case field names explicitly rather than round-tripping into Rust and back — a symmetric bug survives a round trip
 
 ### Engine domain and ports
 
-- [ ] T009 [P] Implement `WatchId`, `Watch`, `WatchSet`, `RawEvent`, `RawKind` (including `Overflow`) and `FileEvent` in `engine/src/domain/watch.rs` per [data-model.md](./data-model.md). `WatchSet` insert and remove are idempotent, and its unit tests assert that adding the same directory twice yields one watch
-- [ ] T010 [P] Define the `FileWatcher` port in `engine/src/application/ports/file_watcher.rs` — `watch`, `unwatch`, `poll`, `held` — with `WatchError` carrying `CapacityExhausted`, `NotADirectory` and `Gone`, per [contracts/watcher-port.md](./contracts/watcher-port.md). `Send` but not `Sync` (W8), and the reason recorded in a doc comment
-- [ ] T011 [P] Define the `Clock` port in `engine/src/application/ports/clock.rs` returning monotonic `Millis`. Milliseconds rather than `Instant` so a fake clock is a number, which is what makes the volume tests arithmetic instead of sleeping
-- [ ] T012 [P] Register the new modules in `engine/src/application/ports/mod.rs`
-- [ ] T013 [P] Implement `ExclusionSet` in `engine/src/application/exclusions.rs`: `.gitignore` files plus the fixed built-in set from §10.3 (`.git/`, `node_modules/`, `target/`, `dist/`, `build/`, `.venv/`, `__pycache__/`). No per-workspace configuration (FR-006, FR-009)
-- [ ] T014 [P] Unit tests for `ExclusionSet` in `engine/tests/exclusions.rs` covering a nested `.gitignore`, a negation (`!`), and a path that is excluded by the built-in set but absent from every `.gitignore`
+- [X] T009 [P] Implement `WatchId`, `Watch`, `WatchSet`, `RawEvent`, `RawKind` (including `Overflow`) and `FileEvent` in `engine/src/domain/watch.rs` per [data-model.md](./data-model.md). `WatchSet` insert and remove are idempotent, and its unit tests assert that adding the same directory twice yields one watch
+- [X] T010 [P] Define the `FileWatcher` port in `engine/src/application/ports/file_watcher.rs` — `watch`, `unwatch`, `poll`, `held` — with `WatchError` carrying `CapacityExhausted`, `NotADirectory` and `Gone`, per [contracts/watcher-port.md](./contracts/watcher-port.md). `Send` but not `Sync` (W8), and the reason recorded in a doc comment
+- [X] T011 [P] Define the `Clock` port in `engine/src/application/ports/clock.rs` returning monotonic `Millis`. Milliseconds rather than `Instant` so a fake clock is a number, which is what makes the volume tests arithmetic instead of sleeping
+- [X] T012 [P] Register the new modules in `engine/src/application/ports/mod.rs`
+- [X] T013 [P] Implement `ExclusionSet` in `engine/src/application/exclusions.rs`: `.gitignore` files plus the fixed built-in set from §10.3 (`.git/`, `node_modules/`, `target/`, `dist/`, `build/`, `.venv/`, `__pycache__/`). No per-workspace configuration (FR-006, FR-009)
+- [X] T014 [P] Unit tests for `ExclusionSet` in `engine/tests/exclusions.rs` covering a nested `.gitignore`, a negation (`!`), and a path that is excluded by the built-in set but absent from every `.gitignore`
 
 ### The coalescer — pure, and where the volume requirements are actually tested
 
