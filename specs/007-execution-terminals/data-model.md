@@ -79,10 +79,11 @@ FR-001, FR-002, FR-003, FR-005, FR-006, FR-006a.
 | `limits` | `ResourceLimits` | Applied to the child, inherited by its children (FR-006) |
 | `state` | `TaskState` | `Running`, or a terminal `ExitStatus`. See *State transitions* |
 | `retained` | `RetainedOutput` | The bounded buffer, and after the end, the terminal status awaiting delivery |
-| `attached` | `bool` | Whether a client is currently receiving this task's output. Orthogonal to `state` |
+| `attached` | `bool` | Whether a client is currently receiving this task's output. **One attachment per task** (architecture.md), so a boolean and not a count. Orthogonal to `state` |
 
 **There is no window-size field, and that is deliberate.** `runTask` now carries `cols?` and
-`rows?` (§4.8) and `resizePty` changes them afterwards, but the current size lives in the kernel's
+`rows?` (§4.8), the use case supplies **80 × 24** when the client names neither (plan.md, *Fixed
+Quantities*), and `resizePty` changes them afterwards — but the current size lives in the kernel's
 `winsize` on the pseudo-terminal, which is the thing a process reads with `TIOCGWINSZ`. Copying it
 into `Task` would create a second authority that can disagree with the first, and nothing in this
 feature reads it back — `execution/list` does not report a size, and a reattaching client sends its
@@ -166,6 +167,18 @@ not indexed by, scoped to, or cleared with the transport: a dropped connection s
 false on the tasks that had a viewer and changes nothing else. Nothing in this type knows what a
 connection is.
 
+**Where the lock lives is part of this shape, not an implementation detail left to the
+composition root.** A single map-wide mutex satisfies every sentence above and defeats
+runner-port.md's T12 and T13 in one line: the reader thread would take it to append each chunk to
+its task's `RetainedOutput` — roughly 800 times for a 50 MiB build, and every 20 ms for an idle
+shell — while `writeStdin` took the same lock to find that task's `TaskControl`, so a keystroke
+would wait behind a blocked read and a `workspace/close` would not reach a task blocked in `write`.
+architecture.md places them: **per-task mutable state behind per-task locks, with the
+`TaskControl` handles reachable without the map lock**. The map's own lock covers membership —
+`start`, `release`, `drain_*` and the snapshot `list` reads — and nothing else. F004's
+`Mutex<HashMap<..>>` in `watchers.rs` is the precedent for the shape and not for the granularity,
+because F004's watch thread never takes it.
+
 | Invariant | Source |
 |---|---|
 | An id present in the set is live or awaiting delivery; an id absent from it is free | FR-023 |
@@ -215,10 +228,15 @@ the threshold at which a prompt reads as delayed and leaves almost all of SC-001
 transport and render; under a burst the size bound dominates and the time bound costs nothing.
 
 **A chunk carries no sequence number, and ordering is structural rather than checkable.** One
-reader thread owns one task's descriptor and one `FrameWriter` holds the lock for exactly one
-frame, so chunks reach the wire in the order they were read and the transport preserves it. That
-satisfies FR-010 and SC-004. The cost is worth naming: a client cannot *detect* a lost or
-reordered chunk, because there is nothing to compare. This is acceptable for the same reason A-REQ
+reader thread owns one task's descriptor, the engine's outbound priority queue (plan.md,
+`engine/src/adapters/outbound/send_queue.rs`) is FIFO **within** a class and all of a task's output
+is one class, and one `FrameWriter` holds the lock for exactly one frame. So chunks reach the wire
+in the order they were read and the transport preserves it, which satisfies FR-010 and SC-004. The
+queue's two classes reorder **across** classes deliberately — that is what §4.6 asks it for — and
+must not reorder within one, or this paragraph stops being true.
+
+The cost is worth naming: a client cannot *detect* a lost or reordered chunk, because there is
+nothing to compare. This is acceptable for the same reason A-REQ
 is — an in-flight request dies with its connection, and a connection that loses bytes without
 dying is not a failure mode this transport has — but it does mean FR-031b's "in order, before
 anything produced since" is a property of how the engine emits on reattachment, verifiable at the
@@ -236,10 +254,24 @@ own, in Key Entities, and FR-021 makes it testable. §4.8 now carries the same s
 pub enum ExitStatus {
     /// The process ran to completion and returned this code.
     Exited { code: i32 },
-    /// The process was killed. `signal` is the number that killed it.
+    /// The process was killed. `signal` is the number the kernel delivered — **any** signal the
+    /// host defines, not only the three a client may ask `terminate` to send. Named for the wire.
     Signalled { signal: i32 },
 }
 ```
+
+**`Signalled` holds a number and must be able to produce a name for any of them.** The wire carries
+the signal's name (§4.8) and this type carries what `waitpid` reported, so the mapping from the one
+to the other is the adapter's and must be **total over the host's signals** rather than a lookup in
+the three-variant vocabulary `execution/terminate` accepts. `SIGSEGV` from a compiler bug, `SIGPIPE`
+from a closed pager, `SIGHUP`, and `SIGKILL` from the out-of-memory killer are all ordinary deaths a
+build meets, none of them is a signal this feature sent, and FR-020, FR-021 and SC-010 require the
+one that actually killed the task to be reported in 100% of exercised cases. The send-side
+vocabulary and the report-side vocabulary are **different sets**: closed at three where a client
+chooses, open where the kernel does (runner-port.md, `TaskSignal` and `Exit`). The wire type is
+therefore a string and not an enum (design.md, `SignalName`), and what a `Signalled` may **not**
+become is an `Exited` carrying `128 + n`: the conversion §4.8 exists to prevent is the one a missing
+name would tempt an implementer into.
 
 | Rule | Source |
 |---|---|
@@ -304,17 +336,17 @@ written to a task nobody is draining therefore reaches the retention bound on it
 asserts frame sizes and passes either way, but a test written to assume the whole line is buffered
 before any assertion runs is a test that passes for the wrong reason.
 
-**Replay on reattachment is the part where the catalogue's wording and SC-028 disagree**, and this
-document takes the reading that keeps the requirement. §4.8 says the retained bytes "are replayed
-as ordinary `onStdout` notifications after the response, in order". For a `pty: true` task that is
-exactly right, because there is one device and `onStderr` is never emitted at all (A-TASKSTREAM,
-SC-028). For a `pty: false` task it is not: the buffer holds `Stdout` and `Stderr` chunks
-separately — that is why it is a queue of chunks rather than a flat byte buffer — and replaying
-both on `onStdout` merges the two streams that FR-008a made exclusive and SC-028 measures. **The
-rule this document states is that each retained chunk is replayed on the notification matching its
-own `stream`**, which is what "ordinary notifications" ought to mean and what keeps live and
-replayed output identical in shape as well as in order. §4.8's sentence should say so; the
-discrepancy is recorded, not worked around.
+**Replay on reattachment is per stream, and §4.8 now says so.** The catalogue's earlier wording had
+the retained bytes replayed "as ordinary `onStdout` notifications", which was exactly right for a
+`pty: true` task — one device, and `onStderr` never emitted at all (A-TASKSTREAM, SC-028) — and
+wrong for a `pty: false` one, whose buffer holds `Stdout` and `Stderr` chunks separately. That is
+why `chunks` is a queue of chunks rather than a flat byte buffer. §4.8 has since been amended to the
+reading this document had taken: the bytes are replayed "as ordinary `onStdout` and `onStderr`
+notifications — **each chunk on the notification its own stream would have used when live** — in
+order", with the reason stated as well, that replaying everything on `onStdout` "would merge the two
+streams for a `pty: false` task, which is the separation that task asked for by not requesting a
+terminal". The question is closed; live and replayed output are identical in shape as well as in
+order, and SC-028 measures it.
 
 **Lifetime.** With its `Task`. It is memory, never a file (plan.md, Storage), and it dies with the
 process.
@@ -388,7 +420,16 @@ camelCase in the tables and the wire carries snake_case. `wire.rs` implements th
 special — no params or result struct carries `#[serde(rename_all)]`, the Rust field names are
 already snake_case, and the only renames in the file are `kind` → `type` (a Rust keyword
 collision) and the lowercase variants of `EntryKind`. F010's types follow by naming their fields
-snake_case and adding no attribute. `taskId` is `task_id`, `exitCode` is `exit_code`.
+snake_case and adding no `rename_all` to any params or result struct. `taskId` is `task_id`,
+`exitCode` is `exit_code`.
+
+**Two attributes F010 does add, both on values rather than on field names.** `TerminateSignal`
+carries a **per-variant** `#[serde(rename = "SIGINT")]` and so on, because the wire spells the
+signal's full name and `#[serde(rename_all = "UPPERCASE")]` over `Int`/`Term`/`Kill` would emit
+`"INT"` — a spelling no type checker catches and every worked example rejects. And the optional
+`exit_code`/`signal` pair carries `#[serde(skip_serializing_if = "Option::is_none")]`, without
+which the absent half serialises as `null` and §4.8's "exactly one of the two, never both and never
+neither" becomes inexpressible (design.md).
 
 ### Output is bytes, and a JSON wire cannot carry bytes
 
@@ -427,6 +468,22 @@ expansion before the JSON envelope. Three consequences follow:
 ### The types
 
 ```rust
+// ---- signals on the wire ----    (§4.8: the NAME, never the number)
+/// What a payload REPORTS: any signal the host defines, including ones this feature never
+/// sends — SIGSEGV, SIGPIPE, SIGHUP, SIGKILL from the out-of-memory killer. A string, because
+/// the reporting vocabulary is open (see `ExitStatus`).
+pub struct SignalName(pub String);
+
+/// What `execution/terminate` ACCEPTS: a closed vocabulary of three (§4.8, FR-017).
+/// Per-variant renames and **not** `#[serde(rename_all = "UPPERCASE")]`, which would emit
+/// `"INT"` where the wire requires `"SIGINT"`.
+#[derive(Serialize, Deserialize)]
+pub enum TerminateSignal {
+    #[serde(rename = "SIGINT")]  Int,
+    #[serde(rename = "SIGTERM")] Term,
+    #[serde(rename = "SIGKILL")] Kill,
+}
+
 // ---- execution/runTask ----      (request)
 pub struct RunTaskParams {
     workspace_id: WorkspaceId,
@@ -447,7 +504,7 @@ pub struct AttachResult {
     running:   bool,
     retained:  u64,                     // BYTE COUNT, not bytes. Replayed after the response.
     exit_code: Option<i32>,             // exactly one of these two when running is false,
-    signal:    Option<i32>,             // and neither when it is true
+    signal:    Option<SignalName>,      // and neither when it is true
 }
 
 // ---- execution/list ----         (request)
@@ -461,7 +518,7 @@ pub struct TaskSummary {
     pid:          i32,
     running:      bool,
     exit_code:    Option<i32>,          // same rule as AttachResult
-    signal:       Option<i32>,
+    signal:       Option<SignalName>,
 }
 
 // ---- execution/writeStdin ----   (notification)
@@ -471,7 +528,7 @@ pub struct WriteStdinParams { task_id: TaskId, data: String }   // base64
 pub struct ResizePtyParams { task_id: TaskId, cols: u16, rows: u16 }
 
 // ---- execution/terminate ----    (request)
-pub struct TerminateParams { task_id: TaskId, signal: ??? }     // UNRESOLVED — see below
+pub struct TerminateParams { task_id: TaskId, signal: TerminateSignal }  // a NAME — see below
 // result: empty
 
 // ---- execution/onStdout, execution/onStderr ----  (notifications)
@@ -481,7 +538,7 @@ pub struct OutputParams { task_id: TaskId, data: String }       // base64
 pub struct ExitParams {
     task_id:   TaskId,
     exit_code: Option<i32>,             // exactly one of the two is present,
-    signal:    Option<i32>,             // never both and never neither (§4.8)
+    signal:    Option<SignalName>,      // never both and never neither (§4.8)
 }
 
 // ---- workspace/close ----        (request)
@@ -508,8 +565,11 @@ invariant a test asserts, which is the honest place for a constraint that spans 
 
 **`cols` and `rows` are optional on `runTask` and meaningful only when `pty` is true**, which §4.8
 now states along with the reason: a process reads its terminal width at startup, before any client
-has had an opportunity to resize it, so without them it reads whatever the pseudo-terminal
-happened to be created with rather than a value somebody chose. They are `u16` and non-zero — the
+has had an opportunity to resize it. **Omitted, they default to 80 × 24** (§4.8; plan.md, *Fixed
+Quantities*), and the default is applied **in the use case** rather than by the runner, so the port
+still invents nothing and the quantity stays where FR-006b requires it. Specifically not the
+kernel's own 0 × 0, which is a size no display has and the one value `resizePty` refuses. They are
+`u16` and non-zero — the
 width and height of a terminal are unsigned shorts in the structure the kernel takes, so a wider
 type would only widen the range of values that must be rejected, and zero is meaningless where
 some programmes divide by it. §4.8 states the optionality and the pty-only meaning; the type and
@@ -545,22 +605,28 @@ and no signal; it is now `{pid, running, retained, exitCode?, signal?}` under th
 exactly-one-of rule as `onExit`. §4.8 states the reasoning in the same terms: "`running: false` on
 its own says only that it is over."
 
-**`AttachParams::workspace_id` is now redundant, and a mismatch has no defined answer.** With
+**`AttachParams::workspace_id` confirms ownership, and a mismatch is refused with `-32001`.** With
 `taskId` engine-unique (§4.8), the engine resolves the task from the id alone; the `workspaceId`
 confirms something it already knows. The catalogue keeps the parameter — it "records which
-workspace owns the task" — but does not say what happens when a client attaches with the **wrong**
-one. Three answers are available and they are not equivalent: `-32001` if the named workspace is
-unregistered, `-32006` if the pair is treated as the key, or silence if the field is decorative.
-This document does not choose; it is a contract question (contracts/task-methods.md) and it became
-visible only once the id stopped being per-workspace. The safe reading, and the one Principle VI
-points at, is that a mismatch is refused rather than ignored — an argument the engine accepts and
-disregards is one a client can be wrong about forever.
+workspace owns the task" — and now states what happens when a client attaches with the **wrong**
+one: the request is **refused with `-32001`, not ignored**. Three answers had been available and
+they are not equivalent; §4.8 chose the one Principle VI points at, and gave the reason this
+document had reached — "a client that believes a task belongs to a different workspace than it does
+is a client whose state has diverged, and silently servicing the request would leave it diverged".
+An argument the engine accepts and disregards is one a client can be wrong about forever. The same
+code therefore covers two conditions on `attach`, an unregistered workspace and a non-owning one,
+and contracts/task-methods.md states both in its error table.
 
 ### `execution/list`, and the record this document chooses
 
 §4.8 adds the method, fixes its params (`workspaceId?`, omitted meaning every task the engine
-holds) and names its result `{tasks[]}` **without defining the record**. The shape is chosen here
-and justified, because there is nowhere else it is stated.
+holds) and names its result `{tasks[]}`. When this section was written the catalogue stopped there
+and the record was chosen here; §4.8 has since named the element itself — "`taskId`,
+`workspaceId`, `command`, `pty`, `pid`, `running`, and `exitCode?`/`signal?` under the same
+exactly-one rule as `onExit`", and no `env` — which is field for field what was derived below. The
+derivation is kept because the justification is not stated in the catalogue and each field's
+absence is as deliberate as its presence; **the catalogue is now the source, and this is why each
+of its fields is there.**
 
 The method exists because `attach` takes an identity the caller must already know. A client that
 has lost its identities — a fresh install, a cleared profile, a crash before its store was
@@ -585,8 +651,9 @@ Three fields are deliberately **absent**:
 - **`retained`.** A byte count changes with every read, so a value in a listing is stale before the
   client has read it. `attach` reports it at the moment the replay begins, which is the only moment
   it is true.
-- **`attached`.** Whether more than one client may attach at once is undetermined — spec.md says so
-  — and under one client the answer is "me" or "nobody", which the caller already knows.
+- **`attached`.** With one attachment per task (architecture.md) the answer is "me" or "nobody",
+  which the caller already knows; spec.md leaves many-viewers as a scope question, and a listing
+  field would have to be re-specified the moment it stopped being a boolean.
 - **`env` and `cwd`.** `env` is unloggable under FR-005a with SC-025 asserting zero, and a listing
   is the easiest way for it to reach a log at the other end. `cwd` is a path inside the workspace
   that nothing in FR-031d or SC-023 needs.
@@ -609,18 +676,30 @@ connection sets `attached` false and nothing else; `workspace/close` calls
 `drain_for_workspace(ws)` and terminates each member. The watch half belongs to F004's `WatchSet`
 and is named here only because one frame drives both.
 
-### `TerminateParams::signal` still has no stated encoding
+### `TerminateParams::signal` is a name, and §4.8 has settled it
 
-plan.md now fixes the **signals**: an interrupt is `SIGINT`, a stop is `SIGTERM` escalating to
+plan.md fixes the **signals**: an interrupt is `SIGINT`, a stop is `SIGTERM` escalating to
 `SIGKILL` after 5 seconds, and both go to the process **group** rather than the process (Fixed
 Quantities; FR-015, FR-017, FR-018, SC-027). That answers the question spec.md's Assumptions put in
 the plan's hands.
 
-What it does not answer is how the parameter is **written on the wire**. A name (`"SIGTERM"`) and a
-number (`15`) are both defensible and they are not interchangeable across a protocol boundary; §4.8
-names the parameter and not its type. This is the last undetermined field in the execution wire
-surface, it is a contract decision rather than a quantity, and it belongs in
-contracts/task-methods.md. This document records it rather than minting it.
+How the parameter is **written on the wire** was the one thing left, and §4.8 now answers it:
+`signal` — on `terminate`, and on `onExit` and `attach` where they report one — is the signal's
+**name**, `SIGINT`, `SIGTERM`, `SIGKILL`, and not its number. The reasoning is portability rather
+than taste: "signal numbers differ between platforms and the client is not always on the engine's",
+a client on macOS or Windows composing a stop request should not have to know Linux's numbering,
+and "an unrecognised name can be refused whereas an unrecognised number is indistinguishable from a
+valid one". The engine is the only party that needs the number and the only one that has it
+natively.
+
+Two consequences for the types above, and they are not the same consequence. **Sending** is closed
+at three, so `TerminateParams::signal` is the `TerminateSignal` enum and anything else is `-32602`
+before it reaches a syscall — `ResolvedPath`'s reasoning applied to a second kind of untrusted
+input. **Reporting** is open, so `signal` on `ExitParams`, `AttachResult` and `TaskSummary` is a
+`SignalName` string: the task may have been killed by something nobody asked for. And the enum's
+serialisation is per-variant `#[serde(rename = "SIGINT")]` rather than
+`#[serde(rename_all = "UPPERCASE")]`, which would emit `"INT"` — a difference no type checker
+catches and every worked example in contracts/task-methods.md would fail on.
 
 ### Error codes
 
@@ -635,9 +714,10 @@ from the module.
 | `-32006` | **Task not found** | `attach` and `terminate` against an id the engine does not hold. **Not** `writeStdin` or `resizePty` — see below | `TASK_NOT_FOUND` |
 | `-32010` | Task identity is already running — refused rather than starting a second process | `runTask` against a live id (FR-031c, SC-022) | `TASK_ALREADY_RUNNING` |
 | `-32011` | Command could not be started — not found, not executable, or `cwd` unusable | `runTask` when the spawn fails (FR-004, SC-015) | `COMMAND_NOT_STARTED` |
-| `-32001` | Workspace not registered | `runTask`, `attach`, `list` with a `workspaceId`, `workspace/close` | Already present |
+| `-32001` | Workspace not registered — **and**, on `attach`, a `workspaceId` that does not own the named task (§4.8) | `runTask`, `attach`, `list` with a `workspaceId`, `workspace/close` | Already present |
 | `-32002` | `cwd` escapes the workspace root | `runTask` (FR-003) | Already present |
 | `-32009` | Workspace registered, root gone | `runTask` | Already present |
+| `-32007` | Payload exceeds the frame limit | `execution/list`, whose result is **unpaged** and can exceed §4.1's cap (§4.8) | Already present |
 
 **`-32006` is now "Task not found" and nothing else**, and §4.4 explains what the narrowing fixed:
 the old wording, "Task not found or already exited", contradicted two requirements at once.
@@ -666,6 +746,16 @@ and a programme name resolved against `PATH` is not a workspace path at all. A c
 be started is the developer's mistake to fix, not the engine's failure, and SC-015 requires it to
 be reported as a start failure in 100% of cases and as a task exiting in zero — which is only
 testable if it has a code of its own.
+
+**`-32007` is the one code F010 can answer against a result the engine built itself.** Every other
+entry above refuses something a client asked for; this one refuses the engine's own listing.
+`execution/list` is **unpaged** — unlike `workspace/readDirectory`, which caps at a thousand entries
+and returns a cursor — so its result is bounded only by how many tasks one developer has started,
+and a large enough set exceeds §4.1's 1 MiB frame. §4.8 accepts that rather than paging it, on the
+grounds that the realistic count is tens, and records it "because the arithmetic does not care". It
+is carried here for the same reason: a failure mode a client can meet is one the error table should
+name, and a client that receives `-32007` from a listing cannot recover by retrying the same call.
+No code is added for it — `PAYLOAD_TOO_LARGE` already exists in the module.
 
 **Neither the added methods nor the added codes increment `protocolVersion`.** A-PROTOVER and §4.8
 are explicit that adding a method does not, and that both ends MUST ignore what they do not
@@ -729,10 +819,17 @@ attachment is meaningless because the task is gone. The one combination that can
 `Starting` and `Detached`: a task is created by a request, so a client is present at its birth by
 construction.
 
-**Whether more than one client may be attached at once is undetermined**, and spec.md says so
-itself: "Two panels on one task. Whether a task has one viewer or many is a scope question." The
-`attached: bool` on `Task` is the honest minimum that satisfies every stated requirement. A count
-would be needed the moment the answer is "many"; nothing here forecloses that.
+**One attachment per task, which is what `attached: bool` means and what the contracts' "each
+attachment" phrasing resolves to.** spec.md leaves the multiplicity open as a scope question — "Two
+panels on one task. Whether a task has one viewer or many is a scope question" — and architecture.md
+closes it for F010 at one. The boolean is therefore the model rather than a placeholder for a count,
+and "what has been sent" is not per-attachment bookkeeping: it is the **FIFO drain** of the single
+`RetainedOutput`, which is the only thing the engine tracks. Under one viewer the two readings
+coincide, so contracts/task-methods.md's `attach` guarantee 7 and contracts/task-events.md's
+guarantees 8 and 14 are satisfied by the drain and must not be read as requiring state nothing
+builds. A count would be needed the moment the answer is "many", and with it a second question this
+model does not answer — whether a second viewer replays what the first already took; nothing here
+forecloses either, and neither is F010's.
 
 ### Which transitions a client can see
 
@@ -828,6 +925,15 @@ What that means for this data model:
   naming F007 and F010 as its future callers, gets F010's entry: the task identities that were
   terminated. An empty `unpreserved` is a **positive assertion that nothing was lost** (§4.8), so
   leaving it empty after terminating a build is a lie the protocol has a field to avoid.
+- **The ids need a channel across the `exec`, and A-TASKEXEC now names it.** The list is drained by
+  the **old** image and `session/onRestart` is emitted by the **new** one, and the only thing
+  crossing today is `APEX_SESSION_ID`; `SessionRegistry::new()` hardcodes `unpreserved: Vec::new()`
+  in both branches, so a straight reading of the decision produces an empty list and reports
+  nothing — "it would look implemented and deliver none of its value". The terminated ids therefore
+  travel the way the session identity already does, as **a second environment variable**, adopted
+  in the same branch that adopts the identity: a channel proven across exactly this boundary,
+  needing no new mechanism. That is work F010 owes `session.rs` (plan.md, Project Structure); the
+  decision supplies the channel and not the code.
 - FR-025 holds across the update path, because nothing is left running that nothing can reach.
 
 The rejected alternative is recorded in A-TASKEXEC and is not reopened here: carrying the
@@ -880,8 +986,9 @@ Four requirements and one research decision say a value must be **a stated quant
 plan** — FR-006b (resource limits), FR-013a (the amount buffered before a process is slowed),
 FR-029a (the panel's retained history), FR-011 by way of research.md's *Chunking, ordering, and
 what is pure* (the chunker's two bounds). plan.md's **Fixed Quantities** table now states all of
-them, with the reasoning attached. They are reproduced here only where an entity above depends on
-one; the table is the source and this document does not restate its justifications.
+them, with the reasoning attached. All of them are reproduced here, including the two no entity
+above depends on, because a quantity missing from this table reads as a quantity nobody fixed; the
+plan is the source and this document does not restate its justifications.
 
 | Quantity | Value | Used by |
 |---|---|---|
@@ -892,16 +999,24 @@ one; the table is the source and this document does not restate its justificatio
 | Task address space | 16 GiB, soft and hard | `ResourceLimits` (FR-006, SC-026) |
 | Task CPU time | not limited | `ResourceLimits` (FR-006b) |
 | Core dumps | disabled, `RLIMIT_CORE` = 0 | `ResourceLimits` (FR-005a) |
+| File size | not limited | `ResourceLimits` — declined explicitly, not omitted (FR-006b) |
 | Process count | not limited | `ResourceLimits` (FR-006b) |
+| Default terminal size | 80 × 24 | `RunTaskParams::cols`/`rows` when absent, applied in the use case (§4.8) |
 | Interrupt signal | `SIGINT` | `execution/terminate` (FR-015) |
 | Stop escalation | `SIGTERM`, then `SIGKILL` after 5 s, to the process **group** | `execution/terminate`, A-TASKEXEC (FR-017, FR-018, SC-027) |
 | Developer shell | `$SHELL`, falling back to `/bin/sh`, not a login shell | `Task::command` (spec Assumptions) |
 
+All thirteen of plan.md's rows are reproduced, including the two that bound nothing in this
+document — *File size*, declined explicitly rather than forgotten, and *Default terminal size*,
+which is the row whose earlier absence let this document say the size a client omits is one nobody
+chose. A table two rows short of its source is a table a reader trusts and should not.
+
 Two of these were raised by this document as gaps and are now closed by the plan rather than by
 this file: the **soft-and-hard** rule on the address-space limit, which the plan states and
 justifies in the same terms used above, and the **core-dump** setting, which FR-005a requires
-rather than the plan choosing. One thing the plan fixes is a value and not an encoding: the signals
-are named, and how `terminate` writes one on the wire remains the contract's to settle.
+rather than the plan choosing. The one thing the plan fixes that is a value and not an encoding —
+the signals themselves — now has its encoding too, and it came from §4.8 rather than from here:
+the wire carries the name.
 
 ---
 
@@ -914,7 +1029,7 @@ Things a test should be able to break and find something wrong.
 | 1 | Starting under a live `TaskId` is refused with `-32010` and produces no second process | `TaskSet::start` rejects a present key | FR-031c, SC-022 |
 | 2 | A command that cannot be started fails the request with `-32011` and emits no `onExit` | No `Task` is inserted until the spawn returns a pid | FR-004, SC-015 |
 | 3 | Output arrives byte-for-byte, including invalid UTF-8 | `Vec<u8>` in the domain, base64 on the wire; no `String` on the path | FR-009, SC-003 |
-| 4 | Output for one task arrives in the order produced | One reader thread per task; `FrameWriter` holds the lock for one frame | FR-010, SC-004 |
+| 4 | Output for one task arrives in the order produced | One reader thread per task; the send queue is FIFO within its class; `FrameWriter` holds the lock for one frame | FR-010, SC-004 |
 | 5 | No chunk produces a frame over §4.1's cap, including for output with no line break | The 64 KiB raw size bound, an order of magnitude under the 786 KB base64 ceiling | FR-011, SC-005 |
 | 6 | With `pty: true`, `onStderr` carries zero bytes and `isatty` is true | One device; the runner gives the child one descriptor | FR-008, A-TASKSTREAM, SC-028 |
 | 7 | With `pty: false`, the two streams are separable and `isatty` is false | Separate pipes | FR-008, FR-008a, SC-028 |
@@ -946,8 +1061,8 @@ Invariant 12 is the one that would silently pass for the wrong reason if the `Ta
 given a reference to the connection. It is asserted by dropping the transport and then reading the
 set, never by asserting that no terminate was called.
 
-Invariant 14 is the one §4.8's current wording would let fail. The catalogue says the retained
-bytes are replayed "as ordinary `onStdout` notifications"; for a `pty: false` task that merges two
-streams SC-028 requires separated. The test writes to both streams, detaches, reattaches, and
-counts bytes per notification method — which is the only way to catch a replay that was written to
-the sentence rather than to the requirement.
+Invariant 14 is the one an earlier §4.8 would have let fail, and the catalogue has since been
+amended to require it: each retained chunk is replayed "on the notification its own stream would
+have used when live". The test is unchanged and is still worth writing this way — it writes to both
+streams, detaches, reattaches, and counts bytes per notification method — because the failure it
+catches is a replay that merges them, which every other assertion about order and volume passes.

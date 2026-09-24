@@ -12,7 +12,7 @@ of truth for the catalogue; this document states the guarantees its table has no
 added — `execution/attach`, `execution/list` and `workspace/close`; `runTask` gained `cols?` and
 `rows?`; `attach`'s result gained `exitCode?` and `signal?`; `onExit` became `exitCode?` plus
 `signal?`; §4.4 narrowed `-32006` to "Task not found" and added `-32010` and `-32011`; plan.md's
-*Fixed Quantities* table fixed eleven values four requirements said it owed. Every row, code and
+*Fixed Quantities* table fixed thirteen values four requirements said it owed. Every row, code and
 quantity cited below was read from those files, not carried from a summary of them. What this
 contract previously listed as *Amendments still required* has been applied in full; what is left
 is in *What was open here, and is not any more*, whose two entries have both since been closed.
@@ -118,17 +118,19 @@ unchanged, and it now covers three rows rather than one.
    guarantee 4.
 7. **`cols` and `rows` size the terminal at creation, and are meaningful only when `pty` is
    true** (§4.8). A process reads its terminal width at startup, before any client has had an
-   opportunity to resize it; without these the process reads whatever the pseudo-terminal
-   happened to be created with. They are ignored for `pty: false`, where there is no terminal to
+   opportunity to resize it; without these the process reads the size the engine created the
+   pseudo-terminal with. They are ignored for `pty: false`, where there is no terminal to
    size — the same tolerance `resizePty` extends for the same reason (guarantee 3 there).
 
-   **When they are absent the size is one nobody chose, and §4.8 says so in as many words.** The
-   engine sets no window size, so on Linux the pseudo-terminal is created 0×0 and a process
-   reading its width before the first `resizePty` reads zero — which is the value `resizePty`
-   deliberately refuses to set, because some programs read it as "no terminal". A client that
-   passes `pty: true` and omits both SHOULD send `execution/resizePty` before the process can
-   read its width, and a client that knows its panel's dimensions SHOULD simply pass them.
-   The absent case defaults to 80 x 24 (§4.8); see *What was open here, and is not any more*.
+   **When they are absent the terminal is created 80 x 24, and §4.8 says so in as many words**:
+   "Omitted, they default to **80 by 24** — the conventional terminal size, and specifically not
+   the kernel's own default of zero by zero, which is both a size no display has and the one value
+   `resizePty` refuses." plan.md's *Fixed Quantities* carries the row, and the engine applies it in
+   the use case rather than in the runner, so the quantity is one FR-006b's plan fixed and not one
+   the adapter invented (runner-port.md, `Shape::Pty`). A client that knows its panel's dimensions
+   SHOULD still pass them, because 80 x 24 is a size somebody chose and not the client's; a client
+   that omits them and later learns its width sends `execution/resizePty`, which is the ordinary
+   path and no longer a repair. See *What was open here, and is not any more*, item 1.
 8. **The task runs in its own process group** (FR-006a), which is what makes terminating it
    terminate what it spawned (FR-018, SC-027) rather than only the command named.
 9. **The task runs under per-process resource limits** (FR-006, FR-006b, A-TASKLIMIT): 16 GiB of
@@ -197,9 +199,14 @@ Each fails the whole call. No process is started and no identity becomes live.
 3. **Delivery order after a successful attach is fixed** (FR-031b, FR-022, SC-019, SC-020):
    **the response first**, then everything retained in the order produced, then anything produced
    since, then — if the task has ended — `execution/onExit`. Nothing produced after the attach
-   overtakes anything retained. §4.8 states the same ordering from the other side: "the retained
-   bytes are replayed as ordinary `onStdout` notifications after the response, in order, so one
-   ordering rule covers live and replayed output alike."
+   overtakes anything retained. §4.8 states the same ordering from the other side, and now states
+   which method each replayed chunk uses: "the retained bytes are replayed after the response as
+   ordinary `onStdout` and `onStderr` notifications — **each chunk on the notification its own
+   stream would have used when live** — in order, so one ordering rule covers live and replayed
+   output alike." That per-stream rule is what SC-028 measures for a `pty: false` task: replaying
+   both streams on `onStdout` would merge the separation that task asked for by not requesting a
+   terminal. For a `pty: true` task it is the same sentence with nothing to choose, because
+   `onStderr` never carries a byte (A-TASKSTREAM).
 4. **A task that has already exited attaches successfully.** `running` is `false`, `retained` is
    what is still owed, and the exit follows as `onExit` once that output has been delivered
    (FR-031b, US5 scenario 3, SC-020). Attaching to an exited task is **not** an error, and §4.4's
@@ -218,8 +225,13 @@ Each fails the whole call. No process is started and no identity becomes live.
    engine does not keep. A `taskId` that **is** live but under another workspace is not this
    condition and is not this code — it is `-32001` (*What is shared*, above).
 7. **Attaching twice is not an error and delivers nothing twice.** A client that re-attaches
-   having already received the retained output receives `retained: 0`. The engine tracks what an
-   attachment has been sent, not what exists.
+   having already received the retained output receives `retained: 0`. What the engine tracks is
+   **what is still owed, as the FIFO drain of the one retention buffer** — not per-attachment
+   bookkeeping. There is **one attachment per task** (architecture.md; `Task::attached` is a
+   boolean, data-model.md), so "what this attachment has been sent" and "what has not been drained"
+   are the same fact, and a reader must not take the phrasing as requiring state the engine does
+   not keep. Many viewers on one task remains a scope question spec.md leaves open, and it is the
+   answer that would make the two diverge.
 8. **`pid` is returned for a task that has exited.** It is the id the process had. §15.2's PID
    mapping is what makes reattachment after an engine restart possible at all, and a client that
    cannot see the pid of a task it is being told about cannot reconcile with the host.
@@ -321,8 +333,20 @@ client to render "1.2 MB missed" for a task it has not attached to and is owed n
 | Code | Condition |
 |---|---|
 | `-32001` | `workspaceId` present, and unknown or unregistered |
+| `-32007` | The listing itself exceeds §4.1's frame cap. The method is **unpaged** and §4.8 accepts that its result can (see below) |
 | `-32601` | This engine predates `execution/list`. The client redeploys (§3.8, A-BOOT) |
 | `-32602` | `workspaceId` present and not a string |
+
+**`-32007` is the engine refusing its own answer, and it is reachable here and nowhere else in this
+contract.** §4.8 states the arithmetic and accepts it: the method is unpaged, "unlike
+`workspace/readDirectory`, which caps at a thousand entries and returns a cursor", so its result is
+"bounded only by how many tasks one developer has started, and a large enough set would exceed
+§4.1's frame cap and answer `-32007` against the engine's own listing. That is accepted because the
+realistic count is tens, and recorded because the arithmetic does not care." It is carried in the
+table for the same reason: a client that meets it cannot recover by retrying the identical call,
+and the remedy — filter by `workspaceId`, which is the one parameter this method has — is only
+obvious once the code is named. Guarantee 9's "there is no `nextCursor`" is the same fact from the
+other side.
 
 **`-32009` is not returned by this method**, and that is deliberate. A workspace whose root has
 been deleted may still hold running tasks, and refusing to enumerate them would strand exactly
@@ -477,9 +501,11 @@ dropped as though it were a notification; no client sends one.
    resize, and a notification has no way to refuse. It is not an error, and a client switching
    shapes must not have to special-case its panel code.
 4. **A resize is never inferred.** Between the start and the first resize a process reads the size
-   `runTask` was given in `cols` and `rows` — or, if the client omitted them, a size nobody chose
-   (`runTask` guarantee 7). The engine derives dimensions from nothing else: not from a previous
-   task, not from an attaching client, not from a default of its own.
+   `runTask` was given in `cols` and `rows` — or, if the client omitted them, the 80 x 24 §4.8
+   defaults to and plan.md fixes (`runTask` guarantee 7). The engine derives dimensions from
+   nothing else: not from a previous task, not from an attaching client, and not from a default of
+   its own — 80 x 24 is the specification's default, which is what makes applying it a rule rather
+   than an inference.
 
 ### Errors
 
@@ -616,7 +642,8 @@ Frames are snake_case and length-prefixed per §4.1; headers omitted.
 ```
 
 `cargo` reads 132 columns at startup and lays its progress bar out to the panel the developer is
-actually looking at. Omit `cols` and `rows` and it reads a size nobody chose (guarantee 7).
+actually looking at. Omit `cols` and `rows` and it reads 80 x 24, which is a size somebody chose
+and not the one on screen (guarantee 7).
 Output follows as `execution/onStdout` (task-events.md); `onStderr` carries nothing for the life
 of this task (A-TASKSTREAM, SC-028).
 
@@ -836,7 +863,7 @@ five seconds later and the result would have arrived then (plan.md). A second
 | That a `workspace/close` result means that workspace's tasks have ended (guarantee 3) | That their `onExit` frames have already been delivered, or that the workspace is still registered |
 | That a `writeStdin` frame was written to the pipe | That the process received it. A notification reports nothing, including failure (guarantee 1) |
 | That a `pty: true` task's `0x03` is an interrupt (guarantee 4) | That the same holds with `pty: false`, where it is a literal byte |
-| That `cols` and `rows` on `runTask` sized the terminal | That omitting them yields a sensible default — it yields a size nobody chose (guarantee 7) |
+| That `cols` and `rows` on `runTask` sized the terminal, and that omitting them yields 80 x 24 (guarantee 7) | That 80 x 24 is the panel's size — it is the specification's default, and a client whose panel differs still owes a `resizePty` |
 | That `-32006` means no live identity | That the task never existed — it may have run, exited and been collected (FR-023) |
 | That a dropped connection leaves tasks running (A-TASKLIFE) | That `workspace/close` does — it is the opposite event, and ends them (FR-024) |
 

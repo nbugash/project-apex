@@ -612,7 +612,7 @@ exists so the UI can tell "no completions because the server died" from "no comp
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd`, `env`, `pty`, `cols?`, `rows?` | `{pid}` |
+| `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd?`, `env?`, `pty`, `cols?`, `rows?` | `{pid}` |
 | `execution/attach` | request | `workspaceId`, `taskId` | `{pid, running, retained, exitCode?, signal?}` |
 | `execution/list` | request | `workspaceId?` | `{tasks[]}` |
 | `execution/writeStdin` | notification | `taskId`, `data` | — |
@@ -640,6 +640,14 @@ attached to a terminal is told yes, and **its output arrives merged on `executio
 `pty: false` the task gets separate pipes, `onStdout` and `onStderr` are distinguishable, and the
 process is not attached to a terminal. A terminal panel wants the first; a caller parsing a
 build's errors wants the second, at the cost every CI system pays.
+
+`cwd` and `env` are both optional, and their absent cases are the ones a caller most often wants.
+An omitted `cwd` is the workspace root, which is where a build usually runs; an omitted `env` means
+the task inherits the engine's environment unchanged, and a supplied one is merged **over** that
+inheritance rather than replacing it. Replacement would be the more obvious reading of a bare
+parameter and is the wrong default: a task started with a single variable set would lose `PATH`
+and `HOME` and fail for a reason that looks nothing like its cause. The row formerly marked both
+mandatory, which would have refused a caller who wanted exactly the defaults.
 
 `command` is an **argv vector**, not a shell line. The engine does not interpose `sh -c`: §7.3
 scopes this as process execution and not a shell, and a single string would make quoting the

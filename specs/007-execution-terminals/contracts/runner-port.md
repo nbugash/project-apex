@@ -185,12 +185,13 @@ pub enum Shape {
     ///
     /// The dimensions are needed at creation: a terminal has a size before anything resizes
     /// it. §4.8's `runTask` now carries `cols?` and `rows?` for exactly this, so the use case
-    /// passes what the client chose. **When the client chooses nothing, nothing chooses for
-    /// it**: neither §4.8 nor plan.md's *Fixed Quantities* fixes a fallback, so the use case
-    /// passes zero and the terminal is created 0×0 — the one value `execution/resizePty`
-    /// deliberately refuses to set (task-methods.md, `runTask` guarantee 7, and *What remains
-    /// open*, item 1). The port does not invent a size, because a size nobody chose is not the
-    /// port's to choose.
+    /// passes what the client chose — and **80 × 24 when the client chose nothing**, which §4.8
+    /// states and plan.md's *Fixed Quantities* fixes (task-methods.md, `runTask` guarantee 7,
+    /// and *What was open here, and is not any more*, item 1). Both values reach this port
+    /// already decided: the fallback is applied in the use case, so the port still invents no
+    /// size and the quantity stays where FR-006b requires it. What the port must never be
+    /// passed is 0 × 0, the kernel's own default for a new pseudo-terminal — a size no display
+    /// has, and the one value `execution/resizePty` deliberately refuses to set.
     Pty { cols: u16, rows: u16 },
     /// Three pipes. `isatty` is false and the two output streams stay distinguishable.
     Pipes,
@@ -221,21 +222,40 @@ pub enum ReadOutcome {
 
 /// How a task ended. **Two states, not one field with a convention** (spec, Key Entities;
 /// FR-021, SC-010). A shell's `128 + n` is exactly what this type exists to make unwritable.
+///
+/// **`Signal` carries the raw number, not a `TaskSignal`, and the asymmetry is the point.**
+/// `TaskSignal` is what a client may ask this feature to *send*, and it is closed at three.
+/// What *kills* a task is the host's whole vocabulary: `SIGSEGV` from a compiler bug, `SIGPIPE`
+/// from a closed pager, `SIGHUP`, `SIGKILL` from the out-of-memory killer. FR-020 requires "the
+/// signal that killed it" and SC-010 requires a signal death distinguishable in 100% of
+/// exercised cases, so a segfaulting build — an ordinary case, not an exotic one — must be
+/// reportable. A three-variant `Signal` has no value to put in it, and the shapes that remain
+/// are both forbidden: dropping the death, or encoding it as `Code(139)`, which is the `128 + n`
+/// convention this type exists to make unwritable. The adapter names the number for the wire
+/// (§4.8: the name, never the number); `data-model.md`'s `ExitStatus::Signalled { signal: i32 }`
+/// is the same value one layer up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
     Code(i32),
-    Signal(TaskSignal),
+    Signal(i32),
 }
 
 /// The signals this feature sends. A closed enum, so the port cannot be handed an arbitrary
 /// integer from a wire frame — the same reasoning `ResolvedPath` applies to paths.
+///
+/// **It closes the *sending* vocabulary only.** This type is the parameter of
+/// `TaskControl::signal` and of nothing else: it is where a caller *chooses* a signal, which is
+/// the one place an open set would let a wire frame pick a syscall's argument. What a task was
+/// *killed* by is `Exit::Signal(i32)`, open by necessity — see `Exit`. Two vocabularies, two
+/// directions, and conflating them costs FR-020 the signals nobody asked for.
 ///
 /// **The vocabulary is closed at three and the escalation is fixed** (§4.8; plan.md, *Fixed
 /// Quantities*). `Int` is FR-015's interrupt — `SIGINT`, what Ctrl-C sends; `Term` is FR-017's
 /// stop; `Kill` is FR-018's guarantee that it ends. The wire carries the **name** and not the
 /// number, because numbers differ between platforms and the client is not always on the engine's;
 /// this enum is where the name stops and the number begins, and the number exists only inside the
-/// adapter.
+/// adapter. On the wire it is `protocol`'s `TerminateSignal`, whose variants carry per-variant
+/// `#[serde(rename = "SIGINT")]` and not `rename_all = "UPPERCASE"`, which would spell `"INT"`.
 ///
 /// A `Term` escalates to a `Kill` after **5 s**, sent to the process group; an `Int` does not
 /// escalate, because a program that legitimately handles it must not be killed for having handled
@@ -304,7 +324,7 @@ the environment (guarantee T10, FR-005a, SC-025).
 | T6 | `read` never blocks longer than `timeout`. A chunk due in 40 ms is flushed in 40 ms, whatever the process is doing | FR-011, SC-001 |
 | T7 | Not reading is the only backpressure. The port never buffers on the caller's behalf, never drops, and never signals the producer to slow down | FR-013, SC-021 |
 | T8 | `signal` reaches the process group, so every descendant receives it at any depth | FR-006a, FR-018, SC-027 |
-| T9 | `reap` is idempotent and non-blocking, and reports `Exit::Signal` for a signal death rather than an encoded code | FR-020, FR-021, SC-010 |
+| T9 | `reap` is idempotent and non-blocking, and reports `Exit::Signal` for a signal death rather than an encoded code — carrying **whichever** signal the kernel delivered, including ones this feature never sends | FR-020, FR-021, SC-010 |
 | T10 | Nothing the port returns, logs or formats carries the environment. `SpawnRequest`'s `Debug` redacts `env`; `SpawnFailure` has no field it could occupy | FR-005a, SC-025 |
 | T11 | The port makes no delivery decision. It reports what the process wrote; what reaches the wire is decided above it | FR-010, FR-011, Principle VIII |
 | T12 | `TaskOutput` is `Send` and not `Sync`; `TaskControl` is `Send + Sync` — see below | FR-012, SC-006 |
@@ -446,7 +466,9 @@ a real process produces rarely and a test must produce every run.
   *Output arriving after the process has exited* edge case, and it is unreachable on demand with a
   real process.
 - **A settable exit**, `Exit::Code` or `Exit::Signal`, so SC-010's "distinguishable in 100% of
-  cases" is a unit test and does not require killing anything.
+  cases" is a unit test and does not require killing anything — including a signal this feature
+  never sends, `SIGSEGV`, which is the case a closed `Exit::Signal` would have made unrepresentable
+  and which a real process obliges only by crashing.
 - **A `read` that yields nothing forever**, so the retention bound and the decision to stop
   reading are exercised (FR-013, FR-013a, SC-021) without a process capable of outrunning a link.
 - **A recorded stdin buffer.** SC-007 asserts bytes reach the process byte-for-byte; the fake is
@@ -484,13 +506,16 @@ against the fake.
 
 ## What is NOT behind this port
 
-**The wire.** The reader thread serialises notifications itself and writes them through the
-`FrameWriter` F004 built (`engine/src/adapters/outbound/frame_writer.rs`), which holds the output
-mutex for exactly one frame. The port yields bytes; `task_threads.rs` turns chunks into frames.
-What that thread must not do is hold the mutex for longer than one frame: §4.6 makes this one pipe
-and one queue, and FR-012 forbids output delaying interactive traffic. **That is a measurement
-obligation under Principle V, not a comment** — and F010 is the first feature to put real volume
-through the seam, so SC-006 measures the writer as much as the runner.
+**The wire.** The reader thread serialises notifications itself and hands them to the engine's
+outbound priority queue (`engine/src/adapters/outbound/send_queue.rs`, new in plan.md's Structure
+Decision), which drains to the `FrameWriter` F004 built
+(`engine/src/adapters/outbound/frame_writer.rs`), and the writer holds the output mutex for exactly
+one frame. The port yields bytes; `task_threads.rs` turns chunks into frames. What that path must
+not do is hold the mutex for longer than one frame, and — the half F004's seam does not
+provide — it must not let a task's output take its turn ahead of a completion response: §4.6
+requires priority queueing **in both directions** and a mutex orders by acquisition. **That is a
+measurement obligation under Principle V, not a comment** — and F010 is the first feature to put
+real volume through the seam, so SC-006 measures the queue and the writer as much as the runner.
 
 **The session and the identity.** `TaskId`, the live set, refusing an identity that is already
 running (FR-031c), releasing one whose exit has been delivered (FR-023) and knowing which

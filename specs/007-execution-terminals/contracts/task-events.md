@@ -45,7 +45,7 @@ of them a task ever uses is decided once, by `pty`, at `runTask` (guarantee 4).
 |---|---|---|---|
 | param | `taskId` | string | yes |
 | param | `exitCode` | integer | **exactly when** the task ended with a code — **guarantee 9** |
-| param | `signal` | string, signal name | **exactly when** the task was killed by a signal |
+| param | `signal` | string, signal name — **any** signal the host defines, not only the three `terminate` accepts | **exactly when** the task was killed by a signal |
 
 Wire spelling: `task_id`, `exit_code`, `signal`. **Exactly one of the two is present** (§4.8);
 the other key is absent from `params` rather than present and null.
@@ -134,13 +134,15 @@ the other key is absent from `params` rather than present and null.
    The obligation reaches the port: `read` returns `Ended` only after every byte has been returned
    (runner-port.md, guarantee T4).
 
-8. **An exit is reported exactly once to each attachment that has not already received it**
-   (FR-020, SC-010, SC-020). A client attached when the task ends is told then. A client that was
-   away is told when it attaches, after the retained output (task-methods.md, `execution/attach`
-   guarantee 3) — and is told **how** it ended in the attach response itself, which is a second
-   statement of the same fact and not a second delivery. The notification is not re-sent to an
-   attachment that already has it, and re-attaching after collecting it yields `-32006` — the
-   identity was released (FR-023).
+8. **An exit is reported exactly once to the attachment that has not already received it**
+   (FR-020, SC-010, SC-020). There is **one attachment per task** (architecture.md), so "the
+   attachment" is the client currently receiving this task's output and the boolean data-model.md
+   carries is the whole of the bookkeeping. A client attached when the task ends is told then. A
+   client that was away is told when it attaches, after the retained output (task-methods.md,
+   `execution/attach` guarantee 3) — and is told **how** it ended in the attach response itself,
+   which is a second statement of the same fact and not a second delivery. The notification is not
+   re-sent to an attachment that already has it, and re-attaching after collecting it yields
+   `-32006` — the identity was released (FR-023).
 
 9. **A signal death is a distinct state, not a conventional exit code** (FR-021, SC-010, §4.8).
    The spec's Key Entities are explicit: an exit is "a code, or a signal. **Distinct states, not
@@ -157,20 +159,44 @@ the other key is absent from `params` rather than present and null.
    preserving. A process that genuinely exits with code 130 is then indistinguishable from one
    killed by `SIGINT`, which is the exact failure SC-010 measures.
 
+   **The vocabulary here is open, and `execution/terminate`'s is closed. They are different
+   sets.** A client may ask for `SIGINT`, `SIGTERM` or `SIGKILL` and nothing else (task-methods.md,
+   `terminate` guarantee 5, `-32602` otherwise), because that is where a client *chooses*. What
+   *kills* a task is the host's whole vocabulary: `SIGSEGV` from a compiler bug, `SIGPIPE` from a
+   closed pager, `SIGHUP`, `SIGKILL` from the out-of-memory killer. FR-020 asks for "the signal
+   that killed it" and SC-010 asks for it in 100% of exercised cases, and a segfaulting build is an
+   ordinary case. So a client MUST NOT validate this field against the three it may send, and MUST
+   NOT fall back to an exit code for a name it does not recognise — an unrecognised signal name is
+   still a signal death, and rendering it as a code is guarantee 9's prohibition by another route.
+
    A frame carrying both keys, or neither, is malformed. There is no state it could describe —
    `Exit` has two variants and no third (runner-port.md) — so a client treats it as a protocol
    error rather than guessing which field to believe.
 
 10. **Output delivery does not delay interactive traffic** (FR-012, §4.6, Principle V, SC-006).
-    The reader thread holds the frame writer's mutex for one frame at a time and releases it —
-    which is what the writer was built for, and which makes this a claim about how long the lock
-    is held rather than about how fast the reader is. §4.6's outbound priority queue puts editor
-    and LSP traffic ahead of a build's output. SC-006 measures it under 50 MiB and **prints the
-    measurement rather than asserting a threshold** (A-NFR).
+    This guarantee rests on two things, and only one of them existed before F010.
 
-    This is a measurement obligation, not a comment. A terminal is the highest-volume producer the
-    channel will ever carry, and it is the failure mode the whole architecture exists to prevent
-    (§1.5, US4).
+    The one that existed: the reader thread holds the frame writer's mutex for one frame at a time
+    and releases it, which is what the writer was built for, and which makes half of this a claim
+    about how long the lock is held rather than about how fast the reader is.
+
+    The one F010 builds: **an engine-side outbound priority queue**
+    (`engine/src/adapters/outbound/send_queue.rs`, plan.md's Structure Decision), which puts
+    editor, LSP and command traffic ahead of a task's output and drains to that writer. §4.6 now
+    states the rule **per direction**, and the engine-to-client half had no implementation —
+    `FrameWriter` is a `Mutex<Box<dyn Write + Send>>` and a mutex is first-come by acquisition, so
+    a 50 MiB build acquires it roughly 800 times and a completion response takes its turn by
+    arrival. The priority-queued behaviour A-PRI implements in `client/core`'s send queue runs
+    client-to-engine and does nothing for this direction. This guarantee therefore depends on a
+    **new component**, not on existing behaviour, and it is unmet until that component exists. The
+    queue is FIFO within a class, which is what keeps guarantee 3 true: it reorders across classes
+    deliberately and within one never.
+
+    SC-006 measures it under 50 MiB and **prints the measurement rather than asserting a
+    threshold** (A-NFR). This is a measurement obligation, not a comment. A terminal is the
+    highest-volume producer the channel will ever carry, and it is the failure mode the whole
+    architecture exists to prevent (§1.5, US4) — and the one that would compile, pass every
+    functional criterion, and fail only SC-006.
 
 11. **A producer that outruns the link is slowed once 4 MiB is held; nothing is ever dropped**
     (FR-013, FR-013a, SC-021, plan.md). When retained output for a task reaches 4 MiB the reader
@@ -213,7 +239,9 @@ the other key is absent from `params` rather than present and null.
     attaches the client that started it; `execution/attach` attaches one that did not.
     `execution/list` attaches nothing — a client that enumerates and does not attach receives no
     frames about what it enumerated. A client that has neither started nor attached an identity
-    receives nothing about it.
+    receives nothing about it. With one attachment per task (guarantee 8) "attached" is a state of
+    the task and not a set, so this is a rule about which frames exist at all rather than about
+    fan-out.
 
 15. **The identity is released after the exit has been delivered** (FR-023, SC-014). Until then it
     is live and cannot be reused (task-methods.md, `runTask` guarantee 2), and it is still listed
@@ -243,6 +271,7 @@ Stated as a table because every row is a way an implementation has gone wrong be
 | That the first `retained` bytes after an attach are the replay (guarantee 13) | That any individual frame announces itself as replayed — none does, and none should |
 | That `onExit` means the task ended and its output is complete (guarantee 7) | That the process's children ended — only `terminate` on the group does that (FR-018, SC-027) |
 | That `signal` present means a signal death (guarantee 9) | An exit code from it. Neither by reading `128 + n`, which the wire no longer carries, nor by computing one for a panel to show |
+| That the name in `signal` is the signal that actually killed the task (guarantee 9) | That it is one of the three `execution/terminate` accepts — `SIGSEGV`, `SIGPIPE`, `SIGHUP` and an out-of-memory `SIGKILL` all arrive here and none can be sent |
 | That `exit_code: 0` means the command reported success | That the build is correct — an exit code is the process's claim, not the engine's |
 | That the identity is released once the exit arrives (guarantee 15) | That it is released before then — a terminated task keeps its identity until its exit is delivered (FR-019, FR-023) |
 | That retained output arriving after an attach is what was missed (guarantee 13) | That the absence of retained output means nothing happened — `retained: 0` also describes a task that has produced nothing yet |
@@ -398,9 +427,11 @@ oldest and mark the gap — on the grounds that a build log with a silent hole i
 that took longer.
 
 **Anything the panel does.** Rendering ANSI, the bounded scrollback — 10 000 lines per terminal,
-fixed in plan.md (FR-029a) — the design-system palette (FR-030) and staying responsive under load
-(FR-028) are the client's, and the panel is an inbound adapter in `client/ui/lib/terminal/`. The
-engine does not know what a colour is.
+fixed in plan.md (FR-029a) — the palette (FR-030: the three semantic hues the design system
+defines come from tokens, the remaining ANSI colours from the terminal library's own palette as a
+recorded exception, A-TERMPALETTE, which is what the narrowed SC-016 measures) and staying
+responsive under load (FR-028) are the client's, and the panel is an inbound adapter in
+`client/ui/lib/terminal/`. The engine does not know what a colour is.
 
 **A notification for a task the engine could not start.** FR-004 and SC-015 put that failure in
 `runTask`'s response as `-32011`, and in zero `onExit` frames. An engine that answered `runTask`

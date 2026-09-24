@@ -814,6 +814,17 @@ contract is that it follows the restart, and moving it before the `exec` would m
 by `ARG_MAX` and a developer's task count is tens, so the bound is not reached by working. This is
 work F010 owes `session.rs`; A-TASKEXEC does not supply it.
 
+**[CONFLICT 7] — the signal number to name mapping had nowhere to live.** `Exit::Signal(i32)`
+carries whatever the kernel delivered and the wire carries a name, so something must hold the
+table. It cannot be `task.rs`, which may name neither a syscall nor a signal number, and it must
+not be `pty_runner.rs`, which would put a protocol spelling inside the pty adapter. It belongs in
+`protocol`, beside the wire types that consume it: a signal's name is the wire's vocabulary, the
+same way an error code is, and `protocol` is the crate both sides already share for exactly that.
+The engine adapter converts at the point it builds the notification, and the mapping is total over
+the host's signals rather than a lookup in the three `terminate` accepts — an unrecognised number
+formats as its own decimal rather than being dropped, because a signal nobody anticipated is still
+how the task died.
+
 **[CONFLICT 5] — the design system has no ANSI palette.** FR-030 requires the panel's colours,
 "including the colours ANSI names", to come from the design system; SC-016 requires zero raw
 values. The signed-off system defines `--color-bg`, `--color-surface`, `--color-text`,
@@ -832,10 +843,16 @@ hues and supplies them as **raw hex in its own markup** — `#7fa98f` success, `
   have no source at all** — not in the design system, not in the prototype. Black and white map to
   `--color-bg` and `--color-text`, and the brights to the neutral ramp, defensibly. The three
   remaining hues cannot be derived from one accent ramp without inventing them, which is the raw
-  value SC-016 forbids. **This design does not invent them.** Either the prototype is extended to
-  carry a terminal palette — a Principle I act, visible and reviewable, and the cheaper of the two
-  — or SC-016 is narrowed to the slots a palette exists for. This is a specification decision, not
-  a design one, and it blocks the SC-016 task rather than the FR-027 one.
+  value SC-016 forbids. **This design does not invent them.**
+
+**Resolved, after this document raised it: A-TERMPALETTE.** The specification decision was taken
+rather than left open. The three hues the prototype states are extracted as tokens, exactly as the
+closed half above describes. The remaining slots come from the terminal library's own palette, as
+a named and recorded exception, and a full sixteen-colour ramp is logged as owed to the design
+system rather than owed by this feature. SC-016 was narrowed to match: it now measures that the
+three defined hues resolve to tokens, and records the library's palette as the accepted source for
+the rest. Nothing here blocks a task; extending the prototype remains the better long-term answer
+and is a design act, not this feature's.
 
 **[CONFLICT 6] — `workspace/close` needs a port method that does not exist.** close guarantee 7
 says the call deregisters the workspace, and `WorkspaceRoots` (`engine/src/application/ports/roots.rs`)
