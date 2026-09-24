@@ -2990,6 +2990,14 @@ prohibition reached through a supported operation rather than through a failure,
 worst of the three available outcomes because it is invisible: the developer sees the engine come
 back healthy and never learns that a build is still burning CPU with no way to stop it.
 
+**What this needs that does not exist yet.** The ids are drained by the **old** image and
+`session/onRestart` is emitted by the **new** one, and the only thing crossing the `exec` today is
+`APEX_SESSION_ID`. `SessionRegistry::new()` hardcodes `unpreserved: Vec::new()` in both branches,
+so a straight reading of this decision produces an empty list and reports nothing — it would look
+implemented and deliver none of its value. The terminated ids travel the way the session identity
+already does, as a second environment variable: a channel proven across exactly this boundary,
+needing no new mechanism.
+
 The mechanism this decision uses already existed and was already addressed to this feature.
 `session/onRestart` carries `unpreserved` so the client can tell the developer what a restart
 cost, and `engine/src/session.rs` has carried the comment "F007 and F010 will have something to
@@ -3011,6 +3019,36 @@ engine updates loses it. The mitigation is not in this record: an update is a cl
 operation (§3.8), so a client that declines to update while tasks are running would avoid the
 cost entirely. That is a client policy and belongs with whichever feature owns update scheduling,
 not here.
+
+## A-TERMPALETTE — A terminal needs sixteen colours; the system defines three (2026-09-24)
+
+**Decision.** The three semantic hues the prototype states — `#7fa98f` success, `#d4736a` error,
+`#c9a96a` warning — are extracted into design tokens by `ds-sync` like any other prototype value,
+and the terminal is themed with them. The remaining ANSI colours come from the terminal library's
+own palette, as a **named, recorded exception** rather than a silent one. A full sixteen-colour
+ramp is owed to the design system and is not F010's to invent.
+
+**Rationale.** A terminal renders sixteen ANSI colours plus a default foreground and background.
+The signed-off design system defines two accent ramps, a nine-step neutral ramp and structural
+colours — no red, green, yellow, blue, magenta or cyan. The prototype's terminal uses three hues
+and states them as raw hex in its own markup, which makes those three extractable on exactly the
+grounds every layout token was extracted. Blue, magenta, cyan and the eight bright variants have
+no source anywhere in the signed-off material.
+
+That leaves three routes and one of them is honest. Inventing thirteen colours puts a designer's
+decision in an engineer's commit, which is what Principle I exists to prevent, and would be the
+largest unreviewed addition to the design system to date. Extending the prototype is the correct
+act, but it is a design act and not this feature's. Using the library's palette for what the
+system does not define is smaller than either, reversible in one file once the ramp exists, and —
+the deciding point — it is the only one of the three that leaves a visible marker saying a
+decision is still outstanding.
+
+**The consequence, stated plainly.** SC-016 was written as "zero raw colour values" and has been
+narrowed: it now measures that the three hues the system defines are taken from tokens, and
+records the library's default palette as the accepted source for the rest. A criterion asserting
+zero raw values while thirteen of sixteen colours have no token to use is unmeetable, and the
+failure mode of an unmeetable criterion is that somebody satisfies it by inventing the tokens —
+which is the outcome this record exists to prevent.
 
 # Appendix B — Open Items
 

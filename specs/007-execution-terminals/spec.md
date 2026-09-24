@@ -439,7 +439,13 @@ the task never stopped and no output was lost.
   running processes returns to its starting value.
 - **SC-015**: A command that cannot be started is reported as a start failure in 100% of
   exercised cases, and as a task exiting in zero.
-- **SC-016**: The panel's colours resolve entirely to design-system tokens, with zero raw values.
+- **SC-016**: The panel's chrome and the three semantic hues the design system defines — success,
+  error and warning — resolve entirely to design-system tokens, with zero raw values. The
+  remaining ANSI colours resolve to the terminal library's own palette, which is the recorded
+  source for them (A-TERMPALETTE). Formerly "zero raw values" without qualification, which was
+  unmeetable: a terminal renders sixteen ANSI colours and the signed-off system defines three, so
+  the only way to satisfy the criterion as written was to invent thirteen — the act Principle I
+  exists to prevent, and the reason the criterion was narrowed rather than the palette extended.
 - **SC-018**: A task running when the connection drops is still running afterwards, in 100% of
   exercised cases, with zero terminated by the disconnection alone.
 - **SC-019**: A client reattaching receives every byte produced while it was away, in order and

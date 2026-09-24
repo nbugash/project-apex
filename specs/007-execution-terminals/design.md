@@ -461,6 +461,45 @@ selected at runtime and the trait must be `dyn`-compatible. `LocalTasks` returns
 `Unsupported(Owner::F015LocalMode)` for all seven, which is a specified degradation rather than a
 gap (research.md, *Local mode is F015's*; §13.2 as amended).
 
+### The webview, and which way the theming runs
+
+§8.3 names the library; Principle I names the appearance; **the library is themed to the prototype,
+never the reverse**, and `@xterm/xterm`'s default palette is a violation like any other raw value.
+Four consequences shape `TerminalPanel.svelte` and `palette.ts`:
+
+1. **The prototype specifies a third font size.** Its terminal dock is JetBrains Mono at
+   **12.5px**, line-height **1.6**, padding **2px 12px 12px** — and 12.5px is neither `--vk-fs`
+   nor `--vk-code`, both of which are 13.5px. A component that wrote `font-size: 12.5px` would be
+   the application asserting a value the prototype owns, which is the exact failure `ds-sync.mjs`
+   exists to prevent. So `ds-sync.mjs` gains a terminal surface, anchored structurally on the
+   `isTerminal` branch the way every other surface is anchored, emitting `--vk-term-fs`,
+   `--vk-term-line-height`, `--vk-term-pad`, `--vk-term-cursor-w`, `--vk-term-cursor-h` and
+   `--vk-term-cursor-blink`. Anchoring on structure means a prototype change breaks one anchor
+   loudly rather than silently matching an element that shares a number.
+2. **`ITheme` cannot take a `var()`.** xterm resolves colours to a canvas, not to CSS, so
+   `palette.ts` reads the tokens off the mounted element with `getComputedStyle` and hands xterm
+   resolved strings — and re-reads them when the theme changes, because a cached palette is a panel
+   that stops matching the rest of the window. The mapping from ANSI name to token lives in
+   `palette.ts` and nowhere else, which is what makes SC-016 checkable by reading one file.
+3. **The extracted cursor is the panel's, not xterm's.** The prototype's 7 × 15px block on
+   `vkpulse 1.1s steps(1,end) infinite` sits in a 20px line box (12.5 × 1.6), so it is not a cell.
+   xterm derives its own cursor from cell metrics and cannot be given a size. The tokens therefore
+   govern the panel's **idle prompt** — the accent-coloured `shellPrompt` row the dock shows before
+   a task is attached — and xterm is configured `cursorStyle: 'block'`, `cursorBlink: true`, which
+   is the same appearance arrived at by the mechanism that owns it.
+4. **Scrollback is 10 000 lines per terminal** (plan.md, FR-029a), overriding the library's default
+   of 1 000, which is too few to scroll back through a compile — the thing a developer most often
+   wants to re-read. At roughly 200 bytes a line that is about 2 MB per terminal, which is what
+   SC-024 measures and prints.
+
+`@xterm/addon-fit` computes cols and rows from the element; the panel sends `execution/resizePty`
+on every fit, and again after a successful `attach`, because attaching deliberately has no side
+effect on the process and a client that forgets leaves the process laying out to the old width
+(attach guarantee 9). The dock title switches on mode — `Terminal — build-01.euw1` against
+`Terminal — local` — which is the prototype's own behaviour and therefore binding.
+`TerminalPanel.svelte` buffers across frames: a chunk boundary may fall mid-character or
+mid-escape-sequence and means nothing.
+
 ## Sequence Diagrams
 
 Starting a task, and its first output (US1, FR-001, FR-007, SC-001):
@@ -805,45 +844,6 @@ Result<(), RootError>`**, returning `NotRegistered` for an id that is not there 
 what makes a second close `-32001` rather than a silent success. It is a one-method widening of an
 F003 port, named here so tasks.md orders it before the `workspace/close` arm rather than
 discovering it during implementation.
-
-### The webview, and which way the theming runs
-
-§8.3 names the library; Principle I names the appearance; **the library is themed to the prototype,
-never the reverse**, and `@xterm/xterm`'s default palette is a violation like any other raw value.
-Four consequences shape `TerminalPanel.svelte` and `palette.ts`:
-
-1. **The prototype specifies a third font size.** Its terminal dock is JetBrains Mono at
-   **12.5px**, line-height **1.6**, padding **2px 12px 12px** — and 12.5px is neither `--vk-fs`
-   nor `--vk-code`, both of which are 13.5px. A component that wrote `font-size: 12.5px` would be
-   the application asserting a value the prototype owns, which is the exact failure `ds-sync.mjs`
-   exists to prevent. So `ds-sync.mjs` gains a terminal surface, anchored structurally on the
-   `isTerminal` branch the way every other surface is anchored, emitting `--vk-term-fs`,
-   `--vk-term-line-height`, `--vk-term-pad`, `--vk-term-cursor-w`, `--vk-term-cursor-h` and
-   `--vk-term-cursor-blink`. Anchoring on structure means a prototype change breaks one anchor
-   loudly rather than silently matching an element that shares a number.
-2. **`ITheme` cannot take a `var()`.** xterm resolves colours to a canvas, not to CSS, so
-   `palette.ts` reads the tokens off the mounted element with `getComputedStyle` and hands xterm
-   resolved strings — and re-reads them when the theme changes, because a cached palette is a panel
-   that stops matching the rest of the window. The mapping from ANSI name to token lives in
-   `palette.ts` and nowhere else, which is what makes SC-016 checkable by reading one file.
-3. **The extracted cursor is the panel's, not xterm's.** The prototype's 7 × 15px block on
-   `vkpulse 1.1s steps(1,end) infinite` sits in a 20px line box (12.5 × 1.6), so it is not a cell.
-   xterm derives its own cursor from cell metrics and cannot be given a size. The tokens therefore
-   govern the panel's **idle prompt** — the accent-coloured `shellPrompt` row the dock shows before
-   a task is attached — and xterm is configured `cursorStyle: 'block'`, `cursorBlink: true`, which
-   is the same appearance arrived at by the mechanism that owns it.
-4. **Scrollback is 10 000 lines per terminal** (plan.md, FR-029a), overriding the library's default
-   of 1 000, which is too few to scroll back through a compile — the thing a developer most often
-   wants to re-read. At roughly 200 bytes a line that is about 2 MB per terminal, which is what
-   SC-024 measures and prints.
-
-`@xterm/addon-fit` computes cols and rows from the element; the panel sends `execution/resizePty`
-on every fit, and again after a successful `attach`, because attaching deliberately has no side
-effect on the process and a client that forgets leaves the process laying out to the old width
-(attach guarantee 9). The dock title switches on mode — `Terminal — build-01.euw1` against
-`Terminal — local` — which is the prototype's own behaviour and therefore binding.
-`TerminalPanel.svelte` buffers across frames: a chunk boundary may fall mid-character or
-mid-escape-sequence and means nothing.
 
 ## Persistence Mapping
 

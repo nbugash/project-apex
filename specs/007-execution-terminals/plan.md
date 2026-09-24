@@ -147,7 +147,8 @@ engine/src/
 │   └── use_cases/
 │       └── task.rs                  # NEW: StartTask, AttachTask, WriteInput, Resize, Stop
 └── adapters/
-    ├── inbound/rpc.rs               # + the execution/* dispatch
+    ├── inbound/rpc.rs               # + the execution/* dispatch, + an id-less path so a
+    │                                 #   notification can reach a handler at all
     └── outbound/
         ├── pty_runner.rs            # NEW: the ONLY file naming the pty mechanism
         ├── task_threads.rs          # NEW: a reader per task, writing through the send queue
@@ -160,19 +161,32 @@ client/core/src/
 │   └── use_cases/observe_task.rs    # NEW: chunk -> panel, exit -> panel
 └── adapters/
     ├── inbound/task_notification.rs # NEW: notification -> use-case input
-    └── outbound/remote_tasks.rs     # NEW: the methods over the transport
+    ├── outbound/remote_tasks.rs     # NEW: the methods over the transport
+    └── outbound/local_tasks.rs      # NEW: the local provider runner-port.md names
 
 client/ui/lib/
 ├── terminal/
 │   ├── TerminalPanel.svelte         # NEW: one per task, themed from the prototype
-│   └── palette.ts                   # NEW: ANSI names -> design-system tokens
+│   ├── panels.ts                    # NEW: the panel set, one instance per task (FR-026)
+│   └── palette.ts                   # NEW: the three hues the system defines -> tokens;
+│                                    #      the rest from the library (A-TERMPALETTE)
 └── ds/layout-tokens.css             # + terminal font size, line height, cursor, padding
 
 scripts/ds-sync.mjs                  # + extract the prototype's terminal dimensions
 
+engine/tests/
+└── pty_confinement.rs               # NEW: guards the one-file rule (Principle VIII)
+
 tests/e2e/
 └── terminal.spec.ts                 # NEW: run, type, resize, exit, reattach
 ```
+
+Two additions to existing files that are easy to miss because they are not new files.
+`application/ports/roots.rs` gains `deregister`: `WorkspaceRoots` offers `register` and `resolve`
+only, so `workspace/close` cannot actually close anything and a second close cannot answer
+`-32001` rather than succeeding silently. And `session.rs` gains a second environment variable
+carrying the terminated task ids across the re-execution, without which A-TASKEXEC reports an
+empty list and looks implemented (see that record).
 
 **Structure Decision**: The existing three-crate workspace plus the webview, with no new crate.
 The pty adapter is a file inside `engine`, not a crate: one implementation, one consumer, no
