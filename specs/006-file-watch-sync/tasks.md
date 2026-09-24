@@ -35,7 +35,7 @@ and the one design answer this feature is owed.
 - [X] T001 Add `inotify = "0.11"` to `[dependencies]` in `engine/Cargo.toml`, with a comment stating it is Linux-only and confined to one adapter. Do **not** add an async runtime: the existing comment in that file records that the engine stays synchronous because it is transferred on every first connect
 - [X] T002 Add a `notify=<ms>` directive to `client/core/tests/mock_daemon/main.rs` that writes a **caller-supplied opaque frame** (read from `APEX_MOCK_FRAME`) after the given delay. The mock must not know what it is sending — `the_mock_implements_no_engine_method` at line 251 fails the build if any §4.8 method name appears in that directory, and the method name must therefore live in the calling test's string
 - [X] T003 [P] Document the `notify` directive in the table in `client/core/tests/mock_daemon/README.md`, stating why it carries an opaque frame rather than a named method
-- [ ] T004 Record the Principle I answer for the changed-on-host tab marker in `specs/006-file-watch-sync/spec.md` under a new `## Design deviations` heading. The prototype binds the 6px tab dot to `t.dirty → var(--color-accent)` meaning *unsaved local changes*; FR-023a needs a distinct marker. **This task gates T085 and T086 only.** Every other task proceeds without it
+- [X] T004 Record the Principle I answer for the changed-on-host tab marker in `specs/006-file-watch-sync/spec.md` under a new `## Design deviations` heading. The prototype binds the 6px tab dot to `t.dirty → var(--color-accent)` meaning *unsaved local changes*; FR-023a needs a distinct marker. **This task gates T085 and T086 only.** Every other task proceeds without it
 
 ---
 
@@ -159,7 +159,7 @@ invalidation, a stale tree, no refetch, and interactions still inside budget.
 - [X] T057 [US2] Implement `mark_stale` over `files.stale` in `client/core/src/adapters/outbound/sqlite/mod.rs`, marking a whole workspace in one statement
 - [X] T058 [US2] Handle `invalidateAll` in `client/core/src/application/use_cases/apply_file_event.rs`: mark stale, discard nothing, fetch nothing (depends on T042)
 - [X] T109 [US2] Mark every open tab's cached content unproven on a wholesale invalidation, in `client/core/src/application/use_cases/apply_file_event.rs`. The bulk rule discards the individual events, so without this a branch switch that rewrites a file the developer has open reports nothing about it, and FR-023 admits no exception for how the change arrived (FR-023b, SC-004a; depends on T058, same file)
-- [ ] T059 [US2] Re-read a stale region only when the developer navigates into it, in `client/core/src/application/use_cases/cached_workspace.rs`
+- [X] T059 [US2] Re-read a stale region only when the developer navigates into it, in `client/core/src/application/use_cases/cached_workspace.rs`
 - [X] T060 [P] [US2] Render staleness by dimming in `client/ui/lib/workspace/FileTree.svelte` following the prototype's own treatment — "Dimmed rows are stale … They are never waited on" — using existing tokens and no raw values (Principle I)
 
 **Checkpoint**: a branch switch produces one invalidation and no flood.
@@ -178,9 +178,9 @@ without the file being altered underneath them and without focus moving.
 
 - [X] T061 [P] [US3] Integration test in `client/core/tests/unproven.rs`: an event naming a cached file sets `unproven`, discards zero blobs and triggers zero fetches (FR-019a, SC-006a)
 - [X] T107 [P] [US3] Test in `client/core/tests/unproven_idempotent.rs`: marking an already-unproven blob changes nothing and causes **zero** second fetches. The hash already disagrees and the file is already unproven ([file-events.md](./contracts/file-events.md) obligation 17, spec edge case)
-- [ ] T062 [P] [US3] Integration test in `client/core/tests/unproven_offline.rs`: an unproven blob is still served while disconnected, presented as possibly stale (FR-019b, SC-006b)
+- [X] T062 [P] [US3] Integration test in `client/core/tests/unproven_offline.rs`: an unproven blob is still served while disconnected, presented as possibly stale (FR-019b, SC-006b)
 - [X] T063 [P] [US3] Test in `client/core/tests/rename_subtree.rs` asserting the separator boundary: renaming `src` rewrites `src` and everything under `src/`, and leaves `src-generated` **untouched**. Assert on the returned row count, not only on spot checks
-- [ ] T064 [P] [US3] Test in `client/core/tests/rename_subtree_atomic.rs`: a rewrite that fails partway rolls back entirely, leaving a consistent stale projection rather than a half-renamed one
+- [X] T064 [P] [US3] Test in `client/core/tests/rename_subtree_atomic.rs`: a rewrite that fails partway rolls back entirely, leaving a consistent stale projection rather than a half-renamed one
 - [X] T065 [P] [US3] Test in `client/core/tests/rename_own_row.rs`: the renamed directory's **own** row gets its caller-derived parent, not the `substr` arithmetic that works for its descendants — one formula would set the directory's parent to itself
 
 ### Implementation for User Story 3
@@ -189,10 +189,10 @@ without the file being altered underneath them and without focus moving.
 - [ ] T067 [US3] Clear `unproven` when a hash comparison runs, in `client/core/src/application/use_cases/cached_workspace.rs`, so the existing check is the only thing that decides (depends on T059)
 - [X] T068 [US3] Implement `rename_subtree` in `client/core/src/adapters/outbound/sqlite/mod.rs` with the exact-row plus `LIKE 'from/%'` match expressed as an explicit range comparison, in one transaction, with the `CASE` that gives the renamed row its own parent (depends on T066)
 - [X] T069 [US3] Create `client/ui/lib/workspace/watched.svelte.ts`, deriving the watched set from `WorkspaceTree`'s expanded nodes and the `OpenDocumentReference[]` tab list. Send **file** paths for tabs so the engine keeps their folder watched after a collapse, which is what makes an open tab reportable however the tree is arranged (FR-003c, FR-023)
-- [ ] T070 [US3] Apply rename events to the tree in `client/ui/lib/workspace/tree.svelte.ts`, moving the entry rather than removing and re-adding it so cached content survives (FR-021, depends on T048)
+- [X] T070 [US3] Apply rename events to the tree in `client/ui/lib/workspace/tree.svelte.ts`, moving the entry rather than removing and re-adding it so cached content survives (FR-021, depends on T048)
 - [X] T071 [P] [US3] Unit test in `tests/unit/tab-watch-paths.test.ts`: opening a file whose folder is collapsed still contributes a watched path, and closing its last tab removes it (FR-023, FR-024a)
 - [ ] T100 [P] [US3] End-to-end spec in `tests/e2e/file-watch-no-tab.spec.ts`: a change to a file with **no open tab** produces no interruption (FR-024, US3 acceptance 4), a file open from a collapsed folder **is** reported, and a file whose last tab has closed is reported in zero cases (SC-001b). T090 covers the unfocused-tab case only
-- [ ] T101 [P] [US3] Test in `client/core/tests/rename_blob_survives.rs`: after a rename the cached content blob of the renamed file is still present and still addressable at the new path (SC-008, FR-021). T063 tests the paths; this tests the blob, which is why FR-021 exists
+- [X] T101 [P] [US3] Test in `client/core/tests/rename_blob_survives.rs`: after a rename the cached content blob of the renamed file is still present and still addressable at the new path (SC-008, FR-021). T063 tests the paths; this tests the blob, which is why FR-021 exists
 
 **Checkpoint**: an open file that changes on the host is reported; one with no tab is not.
 
@@ -208,27 +208,27 @@ capacity, and confirm resources are returned and the developer is told in every 
 
 ### Tests for User Story 4
 
-- [ ] T105 [P] [US4] Test in `engine/tests/unwatch_race.rs`: an event already in flight for a path the client has just unwatched is dropped rather than delivered ([file-events.md](./contracts/file-events.md) obligation 12, spec edge case "a folder collapsed while its files are changing")
-- [ ] T106 [P] [US4] Test in `engine/tests/reconnect_no_invalidate.rs`: the engine sends **no** `invalidateAll` on reconnection. It cannot distinguish a reconnecting client from a new one, so the staleness decision is the client's ([file-events.md](./contracts/file-events.md), `invalidateAll` guarantee 6; FR-026)
-- [ ] T072 [P] [US4] Integration test in `engine/tests/watch_release.rs`: closing a workspace returns `held()` to its pre-open level with zero watches left, asserted over **100 open/close cycles** rather than one. A leak of a single descriptor per cycle is invisible in one pass and obvious in a hundred, and SC-009 states the criterion that way (SC-009)
-- [ ] T073 [P] [US4] Integration test in `engine/tests/watch_proportional.rs`: a workspace of a hundred thousand files with ten folders expanded holds watches for those ten, their ancestors and any open tabs outside them, and no more (FR-003, SC-009a)
-- [ ] T074 [P] [US4] Integration test in `engine/tests/watch_collapse.rs`: collapsing a folder releases its watch, and collapsing one that still holds an open tab releases **zero** watches that tab depends on (FR-003a, SC-009b)
-- [ ] T075 [P] [US4] Integration test in `engine/tests/watch_exhausted.rs` against a `FakeWatcher` with capacity exhausted: the workspace still opens and browses, and every unwatchable path appears in `refused[]` (FR-005a, SC-009c)
-- [ ] T076 [P] [US4] Integration test in `client/core/tests/reconnect_watches.rs`: every folder still expanded and every file still open at reconnection is being watched again afterwards, including a tab whose folder is collapsed (FR-026b, SC-012b)
-- [ ] T077 [P] [US4] Integration test in `client/core/tests/reconnect_stale.rs`: reconnection marks the tree stale, discards zero blobs, and issues zero listings until the developer navigates (FR-026, FR-026a, SC-012a)
-- [ ] T078 [P] [US4] Integration test in `client/core/tests/watch_unavailable.rs`: when watching is unavailable the developer is told in 100% of cases and zero silent failures occur (FR-005, FR-025, SC-011)
-- [ ] T079 [P] [US4] Integration test in `client/core/tests/event_outside_root.rs`: an event naming a path outside the workspace root is refused by the client and writes nothing, independently of the engine (FR-014, SC-010)
+- [X] T105 [P] [US4] Test in `engine/tests/unwatch_race.rs`: an event already in flight for a path the client has just unwatched is dropped rather than delivered ([file-events.md](./contracts/file-events.md) obligation 12, spec edge case "a folder collapsed while its files are changing")
+- [X] T106 [P] [US4] Test in `engine/tests/reconnect_no_invalidate.rs`: the engine sends **no** `invalidateAll` on reconnection. It cannot distinguish a reconnecting client from a new one, so the staleness decision is the client's ([file-events.md](./contracts/file-events.md), `invalidateAll` guarantee 6; FR-026)
+- [X] T072 [P] [US4] Integration test in `engine/tests/watch_release.rs`: closing a workspace returns `held()` to its pre-open level with zero watches left, asserted over **100 open/close cycles** rather than one. A leak of a single descriptor per cycle is invisible in one pass and obvious in a hundred, and SC-009 states the criterion that way (SC-009)
+- [X] T073 [P] [US4] Integration test in `engine/tests/watch_proportional.rs`: a workspace of a hundred thousand files with ten folders expanded holds watches for those ten, their ancestors and any open tabs outside them, and no more (FR-003, SC-009a)
+- [X] T074 [P] [US4] Integration test in `engine/tests/watch_collapse.rs`: collapsing a folder releases its watch, and collapsing one that still holds an open tab releases **zero** watches that tab depends on (FR-003a, SC-009b)
+- [X] T075 [P] [US4] Integration test in `engine/tests/watch_exhausted.rs` against a `FakeWatcher` with capacity exhausted: the workspace still opens and browses, and every unwatchable path appears in `refused[]` (FR-005a, SC-009c)
+- [X] T076 [P] [US4] Integration test in `client/core/tests/reconnect_watches.rs`: every folder still expanded and every file still open at reconnection is being watched again afterwards, including a tab whose folder is collapsed (FR-026b, SC-012b)
+- [X] T077 [P] [US4] Integration test in `client/core/tests/reconnect_stale.rs`: reconnection marks the tree stale, discards zero blobs, and issues zero listings until the developer navigates (FR-026, FR-026a, SC-012a)
+- [X] T078 [P] [US4] Integration test in `client/core/tests/watch_unavailable.rs`: when watching is unavailable the developer is told in 100% of cases and zero silent failures occur (FR-005, FR-025, SC-011)
+- [X] T079 [P] [US4] Integration test in `client/core/tests/event_outside_root.rs`: an event naming a path outside the workspace root is refused by the client and writes nothing, independently of the engine (FR-014, SC-010)
 
 ### Implementation for User Story 4
 
-- [ ] T102 [P] [US4] Test in `client/core/tests/reconnect_reflect.rs`: a change made while disconnected is reflected the next time the developer navigates to it (SC-012). T077 asserts the tree is stale and zero listings are issued; this asserts the change actually surfaces
-- [ ] T080 [US4] Implement `ReleaseWatches` in `engine/src/application/use_cases/watch.rs`: release on collapse, on the last tab closing, on workspace close, on connection drop and on engine exit (FR-004, depends on T037)
-- [ ] T081 [US4] Return `-32009` when the workspace root has gone, distinct from `-32001`, in `engine/src/adapters/inbound/rpc.rs`; refuse a deleted watched path per-path with `not_found` rather than failing the whole call, which would leave everything unwatched on re-establishment (depends on T040)
+- [X] T102 [P] [US4] Test in `client/core/tests/reconnect_reflect.rs`: a change made while disconnected is reflected the next time the developer navigates to it (SC-012). T077 asserts the tree is stale and zero listings are issued; this asserts the change actually surfaces
+- [X] T080 [US4] Implement `ReleaseWatches` in `engine/src/application/use_cases/watch.rs`: release on collapse, on the last tab closing, on workspace close, on connection drop and on engine exit (FR-004, depends on T037)
+- [X] T081 [US4] Return `-32009` when the workspace root has gone, distinct from `-32001`, in `engine/src/adapters/inbound/rpc.rs`; refuse a deleted watched path per-path with `not_found` rather than failing the whole call, which would leave everything unwatched on re-establishment (depends on T040)
 - [ ] T082 [US4] Re-establish the full watched set with one `watch` call on reconnection in `client/core/src/application/use_cases/observe_connection.rs`, carrying expanded folders and open files together (FR-026b)
 - [ ] T083 [US4] Mark the tree stale in its entirety on reconnection in `client/core/src/application/use_cases/observe_connection.rs`, re-reading nothing until the developer navigates (FR-026, depends on T082, same file)
 - [ ] T084 [US4] Surface watch refusals to the developer in `client/core/src/domain/connection.rs` as a state distinct from disconnection — exhausted capacity happens while perfectly connected, so `ConnectionState` alone is the wrong home
 - [ ] T085 [US4] Render the "changes are not being reported" indication in `client/ui/lib/statusbar/StatusBar.svelte` using existing design tokens (FR-025, FR-027; **depends on T004**)
-- [ ] T086 [US4] Render the changed-on-host tab marker in `client/ui/lib/tabs/TabStrip.svelte` per the answer recorded in T004, keeping it distinct from the dirty dot bound to `t.dirty` (FR-023a; **depends on T004**)
+- [X] T086 [US4] Render the changed-on-host tab marker in `client/ui/lib/tabs/TabStrip.svelte` per the answer recorded in T004, keeping it distinct from the dirty dot bound to `t.dirty` (FR-023a; **depends on T004**)
 
 **Checkpoint**: watching stops, resumes and reports its own absence correctly.
 

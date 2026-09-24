@@ -9,8 +9,21 @@
     onfocus: (id: string) => void;
     onclose: (id: string) => void;
     onreorder: (id: string, toOrder: number) => void;
+    /// Documents whose file changed on the host since it was read (FR-023, FR-023a).
+    ///
+    /// Marked on the tab it concerns rather than by taking focus: reporting a background tab
+    /// by pulling the developer to it would be the interruption FR-024 forbids, arriving
+    /// through the requirement meant to inform them.
+    changedOnHost?: string[];
   }
-  let { documents, focusedId, onfocus, onclose, onreorder }: Props = $props();
+  let {
+    documents,
+    focusedId,
+    onfocus,
+    onclose,
+    onreorder,
+    changedOnHost = [],
+  }: Props = $props();
 
   let strip: HTMLElement | undefined = $state();
   let draggingId: string | null = $state(null);
@@ -66,6 +79,20 @@
         onkeydown={(e) => key(e, doc.id)}
       >
         <span class="label">{doc.display_name}</span>
+        {#if changedOnHost.includes(doc.id)}
+          <!-- A ring, not the filled dot. The prototype's filled dot means unsaved *local*
+               changes; this means changed *on the host*. One affordance for both would make
+               them indistinguishable exactly when the difference matters — a file edited
+               locally and changed remotely is the case where a developer most needs to know
+               which. Recorded as an interim deviation in spec.md, pending designer sign-off.
+               The title is what carries the meaning without colour (FR-039). -->
+          <span
+            class="changed"
+            data-testid="tab-changed"
+            title="Changed on the host since it was read"
+            aria-label="Changed on the host"
+          ></span>
+        {/if}
         <button
           class="close"
           aria-label={`Close ${doc.display_name}`}
@@ -86,6 +113,16 @@
 </div>
 
 <style>
+  .changed {
+    flex: none;
+    width: var(--vk-tab-dot);
+    height: var(--vk-tab-dot);
+    border-radius: 50%;
+    /* Same footprint as the prototype's dirty dot, hollow rather than filled, so the two are
+       distinguishable by shape as well as meaning. No new token. */
+    border: 1px solid var(--color-accent-300);
+  }
+
   .tabbar {
     display: flex;
     align-items: center;

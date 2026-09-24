@@ -428,6 +428,33 @@ longer being reported.
   offline; confirmed against the engine before being served while connected. It is not a third
   validity state — it is a hint that the existing hash check will disagree.
 
+## Design deviations
+
+Principle I requires a deviation from the prototype to be recorded here, in writing, before
+implementation. One is recorded, and one is not a deviation at all.
+
+**A stale tree region is dimmed.** Not a deviation. The prototype already renders staleness that
+way — "Dimmed rows are stale — computed for v1482, mapped forward through anchors. They are never
+waited on." — so the treatment is taken rather than invented, and no new token is introduced. The
+accompanying line of text is what makes the state reachable without colour, which FR-039 requires
+and `lint:ds` cannot see.
+
+**A changed-on-host tab marker needs its own affordance.** This is the deviation. The prototype
+binds the tab's 6px dot to `t.dirty → var(--color-accent)`, meaning *unsaved local changes*.
+FR-023a needs a marker for *changed on the host*, which is a different fact with a different
+remedy: one is resolved by saving, the other by re-reading. One dot for both would make the two
+indistinguishable at exactly the moment the difference matters — a file that is both edited
+locally and changed remotely is the case where a developer most needs to know which is which.
+
+**Interim decision, pending designer confirmation.** The changed-on-host marker is the same 6px
+dot rendered as a **ring** — the accent colour as a border with a transparent centre — so it
+occupies the same space, needs no new token, and is distinguishable from the filled dot without
+relying on hue. Where a tab is both dirty and changed, the ring is drawn around the filled dot.
+
+This is engineering's reading of the prototype's vocabulary, not a designer's approval. It is
+recorded as such so that the decision is visible rather than absorbed, and so replacing it costs
+one component rather than an archaeology of what was assumed.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
