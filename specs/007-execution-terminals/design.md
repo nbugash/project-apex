@@ -892,39 +892,51 @@ to `adapters/outbound/system_clock.rs` as a public type implementing `sleep_unti
 thread at composition. Moving it also takes a type that has nothing to do with inotify out of the
 file `inotify_confinement.rs` guards.
 
-**[CONFLICT 9] — the send queue would have removed the backpressure it sits in front of.**
-CONFLICT 8's sibling, and the more dangerous of the two. §4.6 needs an engine-side priority queue,
-and `client/core`'s `sendq.rs` — the model architecture.md points at — is two **unbounded**
-`VecDeque`s with a non-blocking `push`. Today a reader thread blocks inside `FrameWriter::write`
-when the client is not draining, the pseudo-terminal's buffer fills behind it, and the process
-blocks in `write`. That chain is FR-013's entire mechanism, and research.md describes it as
-backpressure working "by the absence of a mechanism".
+**[CONFLICT 9] — the engine must not queue, and the queue this design first specified would have
+broken four things at once.** §4.6 requires interactive traffic to win the race to the wire, and
+the first resolution read that as an engine-side priority queue modelled on `client/core`'s
+`sendq.rs`. Reviewing it before implementation found that a queue removes four properties the
+blocking writer provides for free, none of which had been written down:
 
-Interposing an unbounded queue breaks every link. `push` returns at once, so the reader never
-blocks; the pty never fills, so the process never slows; `RetainedOutput` drains to zero on every
-write, so `Admission` is never `AtBound`; and a 50 MiB build accumulates in engine memory while
-FR-013a's chosen bound is satisfied on paper. SC-021 measures bytes held at the retention point
-and would read zero, and the mutation written for it mutates the reader, so neither can see it.
+1. **Backpressure.** A reader thread blocks inside `FrameWriter::write` when the client is not
+   draining; the pseudo-terminal's buffer fills behind it and the task blocks in `write`. That
+   chain is FR-013 in its entirety, and `research.md` calls it backpressure working "by the
+   absence of a mechanism". A `push` that returns immediately ends it, and 50 MiB accumulates in
+   engine memory while FR-013a's bound reads as satisfied.
+2. **Ordering.** `onExit` is a notification and notifications were classed interactive, while a
+   task's output was bulk — so the exit overtakes the output it is required to follow. FR-022
+   forbids it, SC-011 measures it, and the measuring test lands a story earlier than the queue,
+   so it would be green before the change that breaks it.
+3. **Attribution.** A queue holds frames. The thread that drains it cannot say whose bytes it
+   just wrote, so a per-task bound has nothing to decrement.
+4. **Completion.** Bounding the queue means blocking the producer at the bound, and the producer
+   holds its task's lock — the same lock the drain needs to release the space. The cycle wedges
+   the whole outbound path, interactive included.
 
-**Resolution.** A chunk is **held** from the moment the reader produces it until `FrameWriter` has
-written it, and the two stages are one budget: `held = retained + queued`. The reader stops
-reading when `held` reaches plan.md's 4 MiB, not when the retention buffer alone does. The
-Background class is bounded by that budget and `push` blocks the calling reader thread once it is
-reached — which is the same blocking that `FrameWriter::write` used to provide, moved one step
-earlier and now deliberate. The Interactive class is **never** bounded and never blocks: it is
-small, it is the traffic the queue exists to protect, and a blocked keystroke is the failure the
-whole arrangement is built to avoid.
+**Resolution: a fairness gate, not a queue.** `FrameWriter` keeps its mutex and gains a count of
+writers with interactive traffic waiting. An interactive writer raises the count, takes the lock,
+writes, lowers it and wakes anyone waiting. A bulk writer waits while the count is non-zero, then
+takes the lock exactly as it does today.
 
-**[CONFLICT 7] — the signal number to name mapping had nowhere to live.** (Filed here rather than after 6 because it is a consequence of CONFLICT 3 above, and splitting them would separate a cause from its effect.) `Exit::Signal(i32)`
-carries whatever the kernel delivered and the wire carries a name, so something must hold the
-table. It cannot be `task.rs`, which may name neither a syscall nor a signal number, and it must
-not be `pty_runner.rs`, which would put a protocol spelling inside the pty adapter. It belongs in
-`protocol`, beside the wire types that consume it: a signal's name is the wire's vocabulary, the
-same way an error code is, and `protocol` is the crate both sides already share for exactly that.
-The engine adapter converts at the point it builds the notification, and the mapping is total over
-the host's signals rather than a lookup in the three `terminate` accepts — an unrecognised number
-formats as its own decimal rather than being dropped, because a signal nobody anticipated is still
-how the task died.
+Every property above survives because nothing buffers: the reader still blocks in `write`, so the
+task still slows; the reader still writes its own output and then its own `onExit` from one
+thread, so the order is the order it produced them in; the writer is the owner, so there is
+nothing to attribute; and there is no second thread, so there is no cycle to deadlock in and no
+shutdown order to get wrong. It is a few lines on an existing type rather than a module, a thread
+and a bounded buffer with per-task accounting.
+
+**The bound on the preference.** Priority is a strong preference and never a monopoly: after a
+stated number of consecutive yields a bulk writer goes through regardless. Typing cannot starve a
+build — a key held at its repeat rate yields the lock a few dozen times a second for microseconds
+each — but **F007's language servers can**, and they are interactive by §4.6's own naming. A
+server streaming diagnostics across a large workspace is a sustained interactive producer, and
+without the bound a build's output stalls for as long as indexing lasts. The bound costs a
+counter and makes the failure impossible rather than unlikely.
+
+**What this asks of `workspace/close`.** A-WSCLOSE originally had the response written after the
+last task **ended**, which on the single dispatch thread means up to five seconds in which the
+client's stdin is not read at all. It now answers once every task has been **signalled**, and
+SC-013 is observed through each task's `onExit`. Recorded there, not here.
 
 **[CONFLICT 5] — the design system has no ANSI palette.** FR-030 requires the panel's colours,
 "including the colours ANSI names", to come from the design system; SC-016 requires zero raw

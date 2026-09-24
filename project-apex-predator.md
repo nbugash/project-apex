@@ -425,18 +425,32 @@ interaction budget the architecture exists to protect. Three rules prevent this:
 3. Reads of large files use the ranged form of `workspace/readFile` so the client fetches
    what it displays and streams the remainder as the user scrolls.
 
-Frames are priority-queued **in both directions**, and the rule is stated per direction because
-stating it once left half of it unbuilt. Client to engine: editor and LSP requests ahead of
-background work, which `client/core`'s send queue implements. Engine to client: LSP responses,
-file events and command replies ahead of bulk output such as indexing status and a task's stdout.
+**Interactive traffic wins the race to the wire, in both directions.** The requirement is that
+ordering, not any particular mechanism for achieving it, and the rule is stated per direction
+because stating it once left half of it unbuilt. Client to engine: editor and LSP requests ahead
+of background work. Engine to client: LSP responses, file events and command replies ahead of
+bulk output such as indexing status and a task's stdout.
 
-The second half is the one that was missing. The engine's writer holds one lock for the duration
-of a frame, which is sufficient while every producer is small and infrequent — a watch event, a
-completion list — and stops being sufficient the moment a producer is neither. A task emitting
-tens of megabytes acquires that lock hundreds of times, holds it across a write and a flush to a
-pipe the client may not be draining, and a mutex is first-come by acquisition rather than by
-importance. Under that load a completion request queues behind a build's output with no mechanism
-to say it should not, which is the interaction budget failing exactly where §1.4 measures it.
+The two directions are built differently, and deliberately so. The client queues, because it
+composes frames faster than the link drains them and a queue is what lets it reorder work that
+already exists — `client/core`'s send queue. The engine does **not** queue. Its writer holds one
+lock for the duration of a frame, and a producer blocked on that lock is a producer that has
+stopped producing: the reader thread stops reading the pseudo-terminal, its buffer fills, and the
+task blocks in `write`. That chain is how a task is slowed rather than truncated (§7.3), and it
+exists only because nothing buffers between the producer and the wire.
+
+So the engine grants priority by **making a bulk producer wait its turn**, not by queueing its
+output. A writer with interactive traffic to send registers that fact; a bulk writer yields while
+any such writer is waiting. Interactive frames therefore reach the lock first while bulk output
+stays exactly as blocking as it was, which is what keeps one mechanism from paying for the other.
+
+This was previously specified as a queue on both sides. A queue in the engine removes the
+blocking that the slowing depends on, and separating a task's output from its exit into two
+priority classes lets the exit overtake the output it was meant to follow. Both are properties
+the blocking writer provided for free and neither was written down until something removed them.
+A bulk producer starved by sustained interactive traffic is admitted and bounded: after a stated
+number of consecutive yields one bulk frame goes through, so priority is a strong preference and
+never a monopoly.
 
 ## 4.7 Path safety
 
@@ -3115,20 +3129,28 @@ not.
 ## A-WSCLOSE — What closing a workspace means, precisely (2026-09-24)
 
 **Decision.** Three answers to questions §4.8's `workspace/close` row leaves open. The response is
-written **after** the last of that workspace's tasks has ended. Closing **deregisters** the
-workspace, being `workspace/register`'s counterpart. A second close of an already-closed workspace
-is **`-32001`**, not an idempotent success.
+written once every task of that workspace has been **signalled**, and each end is reported by its
+own `execution/onExit` as usual. Closing **deregisters** the workspace, being
+`workspace/register`'s counterpart. A second close of an already-closed workspace is **`-32001`**,
+not an idempotent success.
 
 **Rationale.** Each closes a genuine alternative, which is why they belong here rather than in a
 contract. Recorded late: they were taken while `contracts/task-methods.md` was written, and stating
 them there left three decisions with rejected alternatives outside Appendix A, which Principle III
 does not allow.
 
-Writing the response after the tasks have ended is what makes SC-013 checkable at a moment somebody
-defined. The alternative — answering immediately and ending the tasks behind the response — leaves
-"closing a workspace leaves zero of its tasks running" true only eventually, with no stated bound,
-and a test for it would be a sleep. The wait is bounded by the same five-second escalation a stop
-uses and runs concurrently across the workspace's tasks, so closing ten tasks costs five seconds,
+Answering after every task is **signalled** rather than after every task has **ended** is a
+correction to this record's first version, which said the latter. Ending takes up to the
+five-second escalation, and the use case runs on the engine's single dispatch thread — the same
+thread that reads the client's stdin. Waiting there would mean five seconds in which no keystroke,
+resize or cancellation is so much as read off the pipe, which is §1.4 and FR-012 failing through
+the mechanism meant to satisfy FR-024. There is no deferred reply to fall back on: an `Action` is
+a reply, nothing, or a restart.
+
+SC-013 stays checkable without it. "Closing a workspace leaves zero of its tasks running" is
+observed through each task's `onExit`, which is a defined event with a defined order, rather than
+through a response whose timing hid the wait. A test waits for N exits, not for a sleep. The
+escalations still run concurrently across the workspace's tasks, so closing ten costs five seconds,
 not fifty.
 
 Deregistering follows from being `register`'s counterpart: a close that left the id registered
