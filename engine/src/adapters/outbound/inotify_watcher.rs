@@ -198,10 +198,23 @@ pub fn factory() -> crate::adapters::outbound::watchers::WatcherFactory {
 struct SystemClock;
 
 impl crate::application::ports::clock::Clock for SystemClock {
+    /// Monotonic, as the port says and as this did not.
+    ///
+    /// This read `SystemTime::now().duration_since(UNIX_EPOCH)` -- the wall clock, which the
+    /// operating system may step backwards whenever it synchronises. The port one file away
+    /// documents "Monotonic milliseconds", so the only production clock in the engine was the
+    /// one thing the contract said it would not be.
+    ///
+    /// It survived because of what used it. A coalescing window that ends early because the
+    /// clock jumped flushes a batch a little too soon, which nobody notices. A deadline is a
+    /// different matter: a clock stepped backwards moves it further away, and a process that
+    /// was meant to be killed keeps running for as long as the step.
+    ///
+    /// `Instant` is monotonic by construction. The origin is a process-lifetime baseline
+    /// rather than the epoch, which the port already allows -- "the origin is arbitrary; only
+    /// differences mean anything".
     fn now(&self) -> Millis {
-        std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as Millis)
-            .unwrap_or(0)
+        static BASE: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        BASE.get_or_init(Instant::now).elapsed().as_millis() as Millis
     }
 }
