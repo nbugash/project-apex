@@ -64,3 +64,9 @@ request**, while §6.1's trait declares `watch()`. §10.3 reads as though the en
 whole workspace from registration and the client merely filters — in which case no request method
 is needed and §6.1's `watch()` is a local subscription. That is a planning question, and it is the
 fifth absence of this kind the catalogue has produced.
+
+**Resolved by clarification, 2026-09-24.** It is no longer open. Watching is scoped to what the
+developer has expanded plus what they have open, and the engine cannot know either without being
+told — so `workspace/watch` is a real request method, not a local subscription, and §6.1's
+`watch()` maps onto it. The spec's Clarifications section records the reasoning; the plan decides
+the shape.
