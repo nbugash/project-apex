@@ -128,9 +128,9 @@ tree update, with no remote host and no network.
 - [X] T098 [P] [US1] Structural guard in `engine/tests/inotify_confinement.rs` asserting `inotify` appears in exactly one source file. plan.md states this as a rule and prose does not fail a build; the pattern already exists in `the_mock_implements_no_engine_method`, which reads its own source with `include_str!`. This is also what keeps W4 true — the port reports what the kernel said and decides no delivery
 - [X] T099 [P] [US1] Delivery test in `engine/tests/excluded_paths.rs`: changes inside an excluded directory produce **zero** events, for every event kind. T013 and T014 test that the set is built correctly; this tests the consequence, which is what FR-008 and SC-002 actually require
 - [X] T046 [US1] Wire the watcher, clock and writer in the engine composition root in `engine/src/lib.rs`, with no global singleton
-- [ ] T047 [US1] Drive watch requests from folder expansion in `client/ui/lib/workspace/FileTree.svelte`, debounced, sending folder paths on expand and releasing on collapse (FR-003a)
-- [ ] T048 [US1] Apply created, modified and deleted events to the rendered tree in place in `client/ui/lib/workspace/tree.svelte.ts`, without collapsing or re-fetching the folder
-- [ ] T049 [P] [US1] Unit test in `tests/unit/tree-apply-event.test.ts` asserting an applied event does not reset expansion state
+- [X] T047 [US1] Drive watch requests from folder expansion in `client/ui/lib/workspace/FileTree.svelte`, debounced, sending folder paths on expand and releasing on collapse (FR-003a)
+- [X] T048 [US1] Apply created, modified and deleted events to the rendered tree in place in `client/ui/lib/workspace/tree.svelte.ts`, without collapsing or re-fetching the folder
+- [X] T049 [P] [US1] Unit test in `tests/unit/tree-apply-event.test.ts` asserting an applied event does not reset expansion state
 
 **Checkpoint**: US1 is independently testable — expand, change on the host, see the tree update.
 
@@ -153,14 +153,14 @@ invalidation, a stale tree, no refetch, and interactions still inside budget.
 
 ### Implementation for User Story 2
 
-- [ ] T054 [US2] Implement the bulk rule in `engine/src/application/coalescer.rs`: 256 distinct paths within a rolling 1-second window emits `Emission::InvalidateAll` and discards the individual events for that window (depends on T019, same file)
-- [ ] T055 [US2] Map `RawKind::Overflow` to `Emission::InvalidateAll` in `engine/src/application/coalescer.rs` (depends on T054, same file)
-- [ ] T056 [US2] Emit `workspace/invalidateAll` from `engine/src/adapters/outbound/watch_thread.rs` when the coalescer returns it (depends on T039)
-- [ ] T057 [US2] Implement `mark_stale` over `files.stale` in `client/core/src/adapters/outbound/sqlite/mod.rs`, marking a whole workspace in one statement
-- [ ] T058 [US2] Handle `invalidateAll` in `client/core/src/application/use_cases/apply_file_event.rs`: mark stale, discard nothing, fetch nothing (depends on T042)
-- [ ] T109 [US2] Mark every open tab's cached content unproven on a wholesale invalidation, in `client/core/src/application/use_cases/apply_file_event.rs`. The bulk rule discards the individual events, so without this a branch switch that rewrites a file the developer has open reports nothing about it, and FR-023 admits no exception for how the change arrived (FR-023b, SC-004a; depends on T058, same file)
+- [X] T054 [US2] Implement the bulk rule in `engine/src/application/coalescer.rs`: 256 distinct paths within a rolling 1-second window emits `Emission::InvalidateAll` and discards the individual events for that window (depends on T019, same file)
+- [X] T055 [US2] Map `RawKind::Overflow` to `Emission::InvalidateAll` in `engine/src/application/coalescer.rs` (depends on T054, same file)
+- [X] T056 [US2] Emit `workspace/invalidateAll` from `engine/src/adapters/outbound/watch_thread.rs` when the coalescer returns it (depends on T039)
+- [X] T057 [US2] Implement `mark_stale` over `files.stale` in `client/core/src/adapters/outbound/sqlite/mod.rs`, marking a whole workspace in one statement
+- [X] T058 [US2] Handle `invalidateAll` in `client/core/src/application/use_cases/apply_file_event.rs`: mark stale, discard nothing, fetch nothing (depends on T042)
+- [X] T109 [US2] Mark every open tab's cached content unproven on a wholesale invalidation, in `client/core/src/application/use_cases/apply_file_event.rs`. The bulk rule discards the individual events, so without this a branch switch that rewrites a file the developer has open reports nothing about it, and FR-023 admits no exception for how the change arrived (FR-023b, SC-004a; depends on T058, same file)
 - [ ] T059 [US2] Re-read a stale region only when the developer navigates into it, in `client/core/src/application/use_cases/cached_workspace.rs`
-- [ ] T060 [P] [US2] Render staleness by dimming in `client/ui/lib/workspace/FileTree.svelte` following the prototype's own treatment — "Dimmed rows are stale … They are never waited on" — using existing tokens and no raw values (Principle I)
+- [X] T060 [P] [US2] Render staleness by dimming in `client/ui/lib/workspace/FileTree.svelte` following the prototype's own treatment — "Dimmed rows are stale … They are never waited on" — using existing tokens and no raw values (Principle I)
 
 **Checkpoint**: a branch switch produces one invalidation and no flood.
 
@@ -185,12 +185,12 @@ without the file being altered underneath them and without focus moving.
 
 ### Implementation for User Story 3
 
-- [ ] T066 [US3] Implement `mark_unproven` over `file_contents.unproven` in `client/core/src/adapters/outbound/sqlite/mod.rs`, leaving `Validity` untouched — unproven is a flag beside validity, never a validity state (A-UNPROVEN, depends on T057)
+- [X] T066 [US3] Implement `mark_unproven` over `file_contents.unproven` in `client/core/src/adapters/outbound/sqlite/mod.rs`, leaving `Validity` untouched — unproven is a flag beside validity, never a validity state (A-UNPROVEN, depends on T057)
 - [ ] T067 [US3] Clear `unproven` when a hash comparison runs, in `client/core/src/application/use_cases/cached_workspace.rs`, so the existing check is the only thing that decides (depends on T059)
-- [ ] T068 [US3] Implement `rename_subtree` in `client/core/src/adapters/outbound/sqlite/mod.rs` with the exact-row plus `LIKE 'from/%'` match expressed as an explicit range comparison, in one transaction, with the `CASE` that gives the renamed row its own parent (depends on T066)
-- [ ] T069 [US3] Create `client/ui/lib/workspace/watched.svelte.ts`, deriving the watched set from `WorkspaceTree`'s expanded nodes and the `OpenDocumentReference[]` tab list. Send **file** paths for tabs so the engine keeps their folder watched after a collapse, which is what makes an open tab reportable however the tree is arranged (FR-003c, FR-023)
+- [X] T068 [US3] Implement `rename_subtree` in `client/core/src/adapters/outbound/sqlite/mod.rs` with the exact-row plus `LIKE 'from/%'` match expressed as an explicit range comparison, in one transaction, with the `CASE` that gives the renamed row its own parent (depends on T066)
+- [X] T069 [US3] Create `client/ui/lib/workspace/watched.svelte.ts`, deriving the watched set from `WorkspaceTree`'s expanded nodes and the `OpenDocumentReference[]` tab list. Send **file** paths for tabs so the engine keeps their folder watched after a collapse, which is what makes an open tab reportable however the tree is arranged (FR-003c, FR-023)
 - [ ] T070 [US3] Apply rename events to the tree in `client/ui/lib/workspace/tree.svelte.ts`, moving the entry rather than removing and re-adding it so cached content survives (FR-021, depends on T048)
-- [ ] T071 [P] [US3] Unit test in `tests/unit/tab-watch-paths.test.ts`: opening a file whose folder is collapsed still contributes a watched path, and closing its last tab removes it (FR-023, FR-024a)
+- [X] T071 [P] [US3] Unit test in `tests/unit/tab-watch-paths.test.ts`: opening a file whose folder is collapsed still contributes a watched path, and closing its last tab removes it (FR-023, FR-024a)
 - [ ] T100 [P] [US3] End-to-end spec in `tests/e2e/file-watch-no-tab.spec.ts`: a change to a file with **no open tab** produces no interruption (FR-024, US3 acceptance 4), a file open from a collapsed folder **is** reported, and a file whose last tab has closed is reported in zero cases (SC-001b). T090 covers the unfocused-tab case only
 - [ ] T101 [P] [US3] Test in `client/core/tests/rename_blob_survives.rs`: after a rename the cached content blob of the renamed file is still present and still addressable at the new path (SC-008, FR-021). T063 tests the paths; this tests the blob, which is why FR-021 exists
 
