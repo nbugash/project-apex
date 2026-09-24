@@ -16,7 +16,7 @@ restated. Request and response shapes live in [contracts/](./contracts/); the `T
 signatures below are [contracts/runner-port.md](./contracts/runner-port.md)'s, matched rather than
 redesigned.
 
-Six places where this design cannot satisfy two documents at once are marked **[CONFLICT n]** and
+Seven places where this design could not satisfy two documents at once are marked **[CONFLICT n]** and
 collected at the end of *Error Handling & Validation*. Each states the reading taken and what is
 owed to which document.
 
@@ -476,6 +476,16 @@ Four consequences shape `TerminalPanel.svelte` and `palette.ts`:
    `--vk-term-line-height`, `--vk-term-pad`, `--vk-term-cursor-w`, `--vk-term-cursor-h` and
    `--vk-term-cursor-blink`. Anchoring on structure means a prototype change breaks one anchor
    loudly rather than silently matching an element that shares a number.
+
+   **The three semantic hues need a second anchor, not this one.** Those dimensions genuinely do
+   live on the `isTerminal` branch. The hues do not: the prototype declares them once, as
+   module-level constants — `const ERR='#d4736a', WARN='#c9a96a', OK='#7fa98f'` — and spends them
+   across the diff gutter, the squiggle, the minimap and the VCS counts as well as the terminal
+   transcript (`#7fa98f` appears sixteen times, the other two five each). Extracting them from the
+   terminal branch would anchor a system-wide value to one of its consumers, so that moving the
+   terminal would silently take the diff gutter's green with it. They are extracted from the
+   constant declaration, as their own anchor, and the two extractions are separate tasks for that
+   reason.
 2. **`ITheme` cannot take a `var()`.** xterm resolves colours to a canvas, not to CSS, so
    `palette.ts` reads the tokens off the mounted element with `getComputedStyle` and hands xterm
    resolved strings — and re-reads them when the theme changes, because a cached palette is a panel
@@ -774,7 +784,7 @@ where a diagnostic would most naturally quote the whole request.
 
 ### Where this design cannot satisfy two documents at once
 
-**[CONFLICT 1] — the default terminal size.** runner-port.md's `Shape::Pty` doc comment says
+**[CONFLICT 1] — the default terminal size. RESOLVED: runner-port.md now states 80 x 24, applied in the use case, and that 0 x 0 is what the port must never be passed.** As raised: runner-port.md's `Shape::Pty` doc comment said
 "neither §4.8 nor plan.md's *Fixed Quantities* fixes a fallback, so the use case passes zero and
 the terminal is created 0×0". Both now do: §4.8 states "Omitted, they default to **80 by 24**",
 plan.md's *Fixed Quantities* carries the row, and task-methods.md guarantee 7 closes it in *What
@@ -782,14 +792,14 @@ was open here, and is not any more*. **This design passes 80 × 24**, because pl
 authority for quantities. runner-port.md's comment is stale and owes an edit; its cross-reference
 to "*What remains open*, item 1" names a section task-methods.md has since renamed.
 
-**[CONFLICT 2] — `signal` on the wire.** data-model.md types `signal` as `Option<i32>` on
+**[CONFLICT 2] — `signal` on the wire. RESOLVED: data-model.md now carries `SignalName` on all three payloads and `TerminateSignal` on `TerminateParams`.** As raised: data-model.md typed `signal` as `Option<i32>` on
 `ExitParams`, `AttachResult` and `TaskSummary`, and leaves `TerminateParams::signal` as `???`.
 §4.8, both contracts and every worked example carry the signal's **name** — `"SIGTERM"`, not `15` —
 because numbers differ between platforms and the client is not always on the engine's. **This
 design carries names.** data-model.md's wire block predates §4.8 fixing the encoding and owes the
 edit.
 
-**[CONFLICT 3] — a closed signal enum cannot report an open world.** runner-port.md's
+**[CONFLICT 3] — a closed signal enum cannot report an open world. RESOLVED: runner-port.md now declares `Exit { Code(i32), Signal(i32) }`, with `TaskSignal` closing the sending vocabulary only.** As raised: runner-port.md's
 `Exit::Signal(TaskSignal)` draws from three variants, correctly, because three is the vocabulary
 this feature **sends**. A process may be **killed** by any signal the host defines: `SIGSEGV` from
 a compiler bug, `SIGKILL` from the out-of-memory killer, `SIGHUP`, `SIGPIPE`. FR-021 and SC-010
@@ -814,7 +824,7 @@ contract is that it follows the restart, and moving it before the `exec` would m
 by `ARG_MAX` and a developer's task count is tens, so the bound is not reached by working. This is
 work F010 owes `session.rs`; A-TASKEXEC does not supply it.
 
-**[CONFLICT 7] — the signal number to name mapping had nowhere to live.** `Exit::Signal(i32)`
+**[CONFLICT 7] — the signal number to name mapping had nowhere to live.** (Filed here rather than after 6 because it is a consequence of CONFLICT 3 immediately above, and splitting them would separate a cause from its effect.) `Exit::Signal(i32)`
 carries whatever the kernel delivered and the wire carries a name, so something must hold the
 table. It cannot be `task.rs`, which may name neither a syscall nor a signal number, and it must
 not be `pty_runner.rs`, which would put a protocol spelling inside the pty adapter. It belongs in

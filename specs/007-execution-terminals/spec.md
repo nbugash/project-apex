@@ -474,6 +474,11 @@ the task never stopped and no output was lost.
   stream, in 100% of exercised cases; the same task without one reports false and delivers its
   error output separately, in 100%.
 - **SC-017**: The full suite for this feature runs with no remote host and no network.
+- **SC-029**: A running task's effective user id equals the engine's, in 100% of exercised cases,
+  with zero tasks running as another user. FR-005 required this and no criterion measured it — the
+  property read as ambient because A-EC2 makes the instance single-tenant, but "runs as the
+  developer's own user with no escalation" is an observable and an unobserved security property is
+  one nobody notices losing.
 
 ## Assumptions
 

@@ -74,7 +74,7 @@ FR-001, FR-002, FR-003, FR-005, FR-006, FR-006a.
 | `cwd` | `ResolvedPath` | Proven a descendant of the workspace's `CanonicalRoot` by the existing two-stage resolve. Defaults to the root when the caller names none |
 | `env` | `BTreeMap<String, String>` | Overrides, applied **over** the environment the engine inherited (spec Assumptions). Ordered for reproducible spawning, not because order means anything |
 | `pty` | `bool` | Fixed at start. Decides both `isatty` and the stream shape, and the two cannot be chosen separately (A-TASKSTREAM) |
-| `pid` | `i32` | The child's process id, returned by `runTask`, `attach` and `list`. Known only once the spawn has succeeded |
+| `pid` | `Pid` | The child's process id, a newtype rather than a bare integer so it is not interchangeable with an exit code or a signal number, returned by `runTask`, `attach` and `list`. Known only once the spawn has succeeded |
 | `pgid` | `i32` | The task's own process group. Equal to `pid` by construction, because the child is made leader of a new group (FR-006a) |
 | `limits` | `ResourceLimits` | Applied to the child, inherited by its children (FR-006) |
 | `state` | `TaskState` | `Running`, or a terminal `ExitStatus`. See *State transitions* |
@@ -495,12 +495,12 @@ pub struct RunTaskParams {
     cols:         Option<u16>,          // pty only; non-zero. Ignored when pty is false
     rows:         Option<u16>,          // pty only; non-zero. Ignored when pty is false
 }
-pub struct RunTaskResult { pid: i32 }
+pub struct RunTaskResult { pid: Pid }
 
 // ---- execution/attach ----       (request)
 pub struct AttachParams { workspace_id: WorkspaceId, task_id: TaskId }
 pub struct AttachResult {
-    pid:       i32,
+    pid:       Pid,
     running:   bool,
     retained:  u64,                     // BYTE COUNT, not bytes. Replayed after the response.
     exit_code: Option<i32>,             // exactly one of these two when running is false,
@@ -515,7 +515,7 @@ pub struct TaskSummary {
     workspace_id: WorkspaceId,
     command:      Vec<String>,
     pty:          bool,
-    pid:          i32,
+    pid:          Pid,
     running:      bool,
     exit_code:    Option<i32>,          // same rule as AttachResult
     signal:       Option<SignalName>,

@@ -75,8 +75,8 @@ unchanged, and it now covers three rows rather than one.
 | param | `workspaceId` | string | yes |
 | param | `taskId` | string, client-chosen | yes |
 | param | `command` | array of string — program, then arguments | yes |
-| param | `cwd` | string, workspace-relative; `"."` is the root | yes |
-| param | `env` | object, string to string | yes — possibly empty |
+| param | `cwd` | string, workspace-relative; `"."` is the root | no — absent is the root |
+| param | `env` | object, string to string | no — absent inherits the engine's, present merges over it |
 | param | `pty` | boolean | yes |
 | param | `cols` | integer, > 0 — meaningful only when `pty` is true | no |
 | param | `rows` | integer, > 0 — meaningful only when `pty` is true | no |

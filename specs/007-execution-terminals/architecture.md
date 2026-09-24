@@ -285,6 +285,16 @@ This architecture was authored after `data-model.md` and `contracts/`, and check
 found nine disagreements. Two would compile and fail an acceptance criterion; one is a mechanism
 three documents assume exists and no code provides. None was absorbed silently.
 
+**Status, recorded after the reconciliation pass this table provoked.** Eight of the nine are now
+fixed in the documents they were raised against: `signal` is a name throughout, `Exit::Signal`
+carries what the kernel delivered, the default terminal size is 80 x 24 everywhere,
+`data-model.md`'s quantities table has all thirteen rows and its error table carries `-32007`,
+per-task locks are stated, `attached` is aligned on one attachment per task, and the two questions
+this table listed as open upstream are closed. The ninth — the missing outbound priority queue — is
+not a documentation fix but a component, and `send_queue.rs` is foundational work in `tasks.md`.
+The rows below are kept as raised, because a conflict and its resolution are more useful together
+than a table that reads as though nothing was ever wrong.
+
 | Conflict with data-model.md or contracts/ | Action taken |
 |-------------------------------------------|--------------|
 | **A signal is a name on the wire, and `data-model.md`'s wire types make it an integer.** §4.8 states it — "the signal's **name** ... not its number" — and both contracts type it `string, signal name`. `data-model.md`'s *The types* block declares `AttachResult::signal`, `TaskSummary::signal` and `ExitParams::signal` as `Option<i32>`, and leaves `TerminateParams { signal: ??? } // UNRESOLVED`, calling the encoding "the last undetermined field" | **Architecture follows §4.8 and the contracts: a name.** `data-model.md` is flagged for correction in four places; it is now describing a question the catalogue closed. An implementer following its wire block emits `{"signal": 15}` against every contract example's `{"signal":"SIGTERM"}` — it compiles, and every signal-death criterion fails |

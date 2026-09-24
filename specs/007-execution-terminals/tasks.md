@@ -312,6 +312,7 @@ engine stays up** — killing the engine is testing F020 and will fail for the r
 - [ ] T130 [P] Audit the nine negative checks in [quickstart.md](./quickstart.md) §9 and confirm, for each, that the fixture condition which lets it fail is actually present — a loud stderr write, a producer that outruns the bound for long enough to fill it, a grandchild, a live engine behind a closed transport, a task still **running** at the second `runTask`, a sentinel exercised on both start paths, a real crash on a host that would otherwise dump, both exit shapes in one suite, and processes counted as well as `unpreserved` read. Record the confirmation in quickstart.md's *Validation record*
 - [ ] T131 [P] Update `docs/engine.md` with the `TaskRunner` port and its one adapter, the reader thread per task, the pure chunker and its two bounds, the retention bound and how backpressure works by the absence of a mechanism, and the **engine-side send queue** — the component §4.6 required in this direction and nothing built
 - [ ] T132 [P] Update `docs/transport.md` with the id-less dispatch path and the two client-to-engine notifications that motivated it, and `docs/app-shell.md` with the task identities A-STATE's store now carries
+- [ ] T135 [P] Assert in `engine/tests/task_identity.rs` that a running task's effective uid equals the engine's (SC-029, FR-005) — read the task's `/proc/<pid>/status` `Uid:` line and compare with the engine's own `getuid`, printing both rather than asserting equality silently, so a skip on a host with a restricted `/proc` is visible as a skip
 - [ ] T133 Record the seven printed measurements from [quickstart.md](./quickstart.md) §8 in its *Validation record*, in the shape §8 gives, with the number beside its bound rather than a bare PASS — a gate that says only PASS tells nobody how much headroom is left
 - [ ] T134 Verify `make gate` is green, then mark F010 complete in `specs/features-map.md`
 
@@ -330,7 +331,7 @@ Setup (T001-T007)
           │      │      └─> US3 (T081-T092)   needs US2's StopTask for the close escalation
           │      │             ├─> US4 (T093-T102)   needs US3's delivery order before retention
           │      │             └─> US5 (T103-T123)   needs US3's CloseWorkspace seam in rpc.rs
-          └─────────────────────────────────> Polish (T124-T134)
+          └─────────────────────────────────> Polish (T124-T135)
 ```
 
 T006 gates only T091 and T127. Every other task is unblocked by it.
@@ -352,7 +353,7 @@ independently **testable** once their predecessor lands; they are not independen
 - **US3**: T081–T085 in parallel — five different test files
 - **US4**: T093–T098 in parallel — six different files
 - **US5**: T103–T110 in parallel — eight different test files
-- **Polish**: T124–T132 in parallel; T133 and T134 gate on the runs above and are sequential
+- **Polish**: T124–T132 and T135 in parallel; T133 and T134 gate on the runs above and are sequential
 
 The `task.rs` use-case tasks (T053, T072, T073, T074, T088, T092, T111, T112, T113), the
 `rpc.rs` dispatch tasks (T035, T055, T075, T076, T089, T114), the `task_threads.rs` tasks (T054,
