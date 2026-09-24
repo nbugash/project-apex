@@ -244,12 +244,20 @@ shapes so the client and the engine share one definition of them, which is the s
 put framing there in F002 and is not a layering violation for the same reason: a protocol is by
 definition shared with the process at the other end of the wire.
 
-The one deliberate absence: **no `LocalWorkspaceProvider`.** §6.4 specifies one and the feature map
-lists "local and remote implementations" under F003, but the local provider exists to serve Local
-Mode, which is F015. Building it here would produce an adapter with no consumer, no acceptance
-scenario and no way to fail. The port is what F015 needs from this feature, and the port is
-delivered. An in-memory fake implementation ships for tests, which is what proves the trait is
-genuinely implementable twice.
+**On `LocalWorkspaceProvider`.** This plan originally argued for leaving it out: §6.4 specifies one
+and the feature map lists "local and remote implementations" under F003, but its consumer is Local
+Mode, which is F015 — so building it here yields an adapter nothing calls.
+
+That reasoning was put to the person who owns the backlog and **overruled during implementation**,
+and the argument against it was weaker than it looked. The map says F003 delivers it; an adapter
+with no consumer still has a contract, and the contract suite is its consumer. Running the same
+guarantees against a second real implementation is what turns "the UI never learns which is active"
+from an intention into a test — an in-memory fake alone cannot do that, because a fake is written to
+pass. It also front-loads §6.4's containment rule, which is a security boundary that would otherwise
+arrive twelve features later with nothing exercising it.
+
+It ships: `adapters/outbound/local_workspace.rs`, in the provider contract suite alongside the
+remote one, with its own containment tests mirroring the engine's.
 
 ## Complexity Tracking
 

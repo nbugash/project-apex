@@ -5,10 +5,14 @@
 §6.1 of `project-apex-predator.md` declares this trait and is normative for its signature. This
 document states what an implementation must guarantee, which a signature cannot.
 
-Three implementations exist after this feature: `RemoteWorkspaceProvider` (an adapter over
-`RequestTransport`), `CachedWorkspace` (an application-layer use case that wraps another provider),
-and `FakeWorkspace` (in-memory, tests only). A fourth, the local provider of §6.4, belongs to F015
-— see plan.md's Structure Decision for why it is not built here.
+Four implementations exist after this feature: `RemoteWorkspaceProvider` (an adapter over
+`RequestTransport`), `LocalWorkspaceProvider` (an adapter over `tokio::fs`, §6.4),
+`CachedWorkspace` (an application-layer use case that wraps another provider), and `FakeWorkspace`
+(in-memory, tests only).
+
+The local one is what makes this contract load-bearing rather than aspirational: the suite runs
+against two *real* implementations with different failure modes, and a fake alone cannot prove an
+abstraction holds because a fake is written to pass.
 
 ---
 

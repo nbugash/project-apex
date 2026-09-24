@@ -8,6 +8,7 @@
 
 mod common;
 
+use apex_shell::adapters::outbound::local_workspace::LocalWorkspaceProvider;
 use apex_shell::application::ports::workspace_provider::{Owner, ProviderError, WorkspaceProvider};
 use apex_shell::domain::workspace::{
     ByteRange, EntryKind, PageRequest, RelPath, Sha256, WorkspaceId,
@@ -16,12 +17,36 @@ use common::fake_workspace::FakeWorkspace;
 use std::sync::Arc;
 
 /// Every implementation, seeded identically.
-fn implementations() -> Vec<(&'static str, Arc<dyn WorkspaceProvider>)> {
+///
+/// The `TempDir` is returned alongside, because dropping it would delete the tree the local
+/// provider is reading — a guard that looks unused and is the whole reason the local cases pass.
+/// A named provider, ready to run the suite against.
+type Subject = (&'static str, Arc<dyn WorkspaceProvider>);
+
+fn implementations() -> (Vec<Subject>, tempfile::TempDir) {
     let fake = FakeWorkspace::new();
     fake.file("/src/main.rs", b"fn main() {}");
     fake.file("/README.md", b"# hi");
     fake.dir("/empty");
-    vec![("fake", Arc::new(fake) as Arc<dyn WorkspaceProvider>)]
+
+    // The same tree on a real filesystem. One suite, two implementations, identical content:
+    // that is what makes "the UI never learns which is active" (§6.1, FR-001) a test rather
+    // than an intention, and adding F015's consumer later changes nothing here.
+    let dir = tempfile::tempdir().expect("temp");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("empty")).unwrap();
+    std::fs::write(root.join("src/main.rs"), b"fn main() {}").unwrap();
+    std::fs::write(root.join("README.md"), b"# hi").unwrap();
+    let local = LocalWorkspaceProvider::open(&root).expect("open local root");
+
+    (
+        vec![
+            ("fake", Arc::new(fake) as Arc<dyn WorkspaceProvider>),
+            ("local", Arc::new(local) as Arc<dyn WorkspaceProvider>),
+        ],
+        dir,
+    )
 }
 
 fn ws() -> WorkspaceId {
@@ -30,7 +55,8 @@ fn ws() -> WorkspaceId {
 
 #[tokio::test]
 async fn p2_read_file_returns_bytes_and_never_transcodes() {
-    for (name, p) in implementations() {
+    let (impls, _tree) = implementations();
+    for (name, p) in impls {
         let path = RelPath::parse("/src/main.rs").unwrap();
         let chunk = p
             .read_file(&ws(), &path, None)
@@ -47,7 +73,8 @@ async fn p2_read_file_returns_bytes_and_never_transcodes() {
 
 #[tokio::test]
 async fn p2_a_ranged_read_still_carries_the_whole_files_digest() {
-    for (name, p) in implementations() {
+    let (impls, _tree) = implementations();
+    for (name, p) in impls {
         let path = RelPath::parse("/src/main.rs").unwrap();
         let head = p
             .read_file(
@@ -73,7 +100,8 @@ async fn p2_a_ranged_read_still_carries_the_whole_files_digest() {
 
 #[tokio::test]
 async fn p3_a_missing_path_is_not_found() {
-    for (name, p) in implementations() {
+    let (impls, _tree) = implementations();
+    for (name, p) in impls {
         let path = RelPath::parse("/nope.rs").unwrap();
         assert_eq!(
             p.stat(&ws(), &path).await.unwrap_err(),
@@ -85,7 +113,8 @@ async fn p3_a_missing_path_is_not_found() {
 
 #[tokio::test]
 async fn p4_unimplemented_methods_refuse_by_name_and_have_no_side_effect() {
-    for (name, p) in implementations() {
+    let (impls, _tree) = implementations();
+    for (name, p) in impls {
         let path = RelPath::parse("/src/main.rs").unwrap();
         let before = p.read_file(&ws(), &path, None).await.unwrap().bytes;
 
@@ -136,7 +165,8 @@ async fn p4_unimplemented_methods_refuse_by_name_and_have_no_side_effect() {
 
 #[tokio::test]
 async fn p6_errors_are_typed_rather_than_stringly() {
-    for (name, p) in implementations() {
+    let (impls, _tree) = implementations();
+    for (name, p) in impls {
         // A caller distinguishes these without parsing a message. The test is that the variants
         // are distinct values, not that a message contains a word.
         let missing = p

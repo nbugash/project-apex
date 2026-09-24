@@ -342,9 +342,9 @@ Executed 2026-09-24 on the development machine (Linux, headless — see the note
 ### The measured values (A-NFR: printed, not merely compared)
 
 ```
-sidebar expand (cached)    p99 =     80 us   budget   1000 us      12x headroom
-sidebar expand (uncached)  p99 =  16128 us   budget 250000 us      15x headroom
-compression ratio         36.6 %            budget   50.0 %       (162334 of 443719 bytes)
+sidebar expand (cached)    p99 =     84 us   budget   1000 us      11x headroom
+sidebar expand (uncached)  p99 =  15970 us   budget 250000 us      15x headroom
+compression ratio         36.5 %            budget   50.0 %       (167450 of 458741 bytes)
 ```
 
 p99 over 200 samples, each expanding a different folder so nothing is answered from a warm row
