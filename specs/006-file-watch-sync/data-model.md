@@ -581,20 +581,25 @@ comparison of two hashes and nothing else (FR-019, §5.3).
 | `deleted` | nothing happens | row deleted; the FTS delete trigger fires | row deleted, `file_contents` cascades (F003 invariant 1) |
 | `renamed` | nothing happens | path columns updated; `file_id` unchanged | same, and the blob survives the move (FR-021, FR-022) |
 
-`invalidateAll` and reconnection do not appear in that table because they touch neither axis for a
-*content* row: they set `files.stale` and leave `file_contents` entirely alone (FR-018, FR-026a,
-SC-006, SC-012a).
+Reconnection does not appear in that table because it touches neither axis for a *content* row: it
+sets `files.stale` and leaves `file_contents` alone (FR-026a, SC-012a).
 
-**One case has no stated resolution.** A `created` event for a file inside a folder the developer
-has expanded must make the file appear in the tree (US1 acceptance 1), but the event carries no
-size, no modification time and no kind (FR-013), and `files` declares `size_bytes`,
-`remote_modified_at` and `is_directory` all `NOT NULL`. So the row cannot be inserted from the
-event alone. The three candidates are a `workspace/stat` for the new path, a re-listing of the
-parent folder, or a row with sentinel metadata. FR-020 forbids *fetching* a path the client has
-never fetched, and the reading that reconciles it with US1 is that "fetched" means content, while
-a new child inside a listing the client already holds is an update to that listing rather than a
-new path being fetched. **That is a reading, not a stated rule**, and research.md resolves none of
-it. Recorded here so it is decided in design rather than discovered in implementation.
+`invalidateAll` sets `files.stale` and **discards no blob** (FR-018, SC-006) — but it is not inert
+for `file_contents` either. It sets `unproven` on every file the client has open, from the client's
+own tab list, because the bulk rule discards the individual events and FR-023 admits no exception
+for how a change arrived (FR-023b, SC-004a). Marking is not discarding, and the hash still settles
+each one on next use.
+
+**A `created` event inserts its row from the event alone.** It must make the file appear in a
+folder the developer has expanded (US1 acceptance 1), and `files` declares `size_bytes`,
+`remote_modified_at` and `is_directory` all `NOT NULL`, so for a time this had no stated
+resolution: the event carried a path and nothing else. FR-013a settles it — a `created` or
+`modified` event carries `type`, `size` and `modified`, the same three values a listing returns.
+No `workspace/stat`, no re-listing of the parent, no sentinel metadata, and nothing fetched, which
+is what keeps FR-020 whole rather than requiring a reading of it.
+
+A created **directory** carries no `size` (there is nothing to measure), and its row takes `0`,
+which is what a listing already stores for a directory.
 
 ### A tree region's staleness
 

@@ -219,11 +219,16 @@ folder, is unsatisfiable as the catalogue stands. The alternatives were a follow
 created path, which FR-020 forbids and which puts a round trip inside the interaction budget, or
 re-listing the parent, which is the same cost with worse granularity.
 
-Carrying metadata does not breach FR-013. That requirement says an event carries no **content** —
-"it says something changed, not what it now is". Size, type and modification time are what
-`readDirectory` already returns for every entry; they are how the tree is drawn, not what the file
-says. The distinction FR-013 protects is that no event may make the client believe it holds
-current bytes, and metadata cannot do that: validity is still a hash comparison and nothing else.
+Carrying metadata does not breach FR-013, and **FR-013a** now says so explicitly — the requirement
+was split once this design depended on it, because FR-013's original wording ("it says something
+changed, not what it now is") did not obviously permit a size. FR-013 forbids bytes **and a hash**;
+FR-013a authorises the entry metadata `readDirectory` already returns.
+
+The hash is where the line sits, and that is the whole reason the split is safe. FR-019 is
+structural rather than a rule: a client cannot mark a blob valid from an event because an event
+contains nothing a validity decision could be made from. Size and modification time cannot settle
+validity. A hash could, and the moment one appeared here FR-019 would stop being structural and
+become something somebody has to remember.
 
 **Alternatives considered**:
 
@@ -239,6 +244,43 @@ current bytes, and metadata cannot do that: validity is still a hash comparison 
 per-frame writes it replaced — a single large frame occupying the queue where small ones could be
 interleaved — the batch gains a size cap and splits, which is a change to the number of frames and
 not to the contract.
+
+---
+
+## An open tab during a wholesale invalidation
+
+**Decision**: On `workspace/invalidateAll` the **client** marks the cached content of every file it
+has open as unproven, from its own tab list. The engine does not exempt open tabs from the bulk
+rule.
+
+**Rationale**: FR-023 says a file with an open tab must be reported as changed, with no exception
+for how the change arrived. FR-015's bulk rule discards the individual events. So a branch switch
+that rewrote a file the developer had open reported nothing about that file — two requirements
+each correct on its own and never reconciled with each other. FR-023b closes it.
+
+The question is only which side resolves it, and the answer follows from which side already holds
+the information. The client knows its own tabs; the engine does not, and telling it would mean
+another protocol message carrying state the client authored. Marking client-side costs one local
+statement, crosses no wire, and reuses the `unproven` flag that already exists for exactly this
+meaning — content an event says has changed, which the hash will settle.
+
+It is also conservative in the right direction. A wholesale invalidation means the client cannot
+know which paths moved, so marking every open tab unproven is the honest state: the hash decides
+each one on next use, and a tab whose file did not change proves itself and clears.
+
+**Alternatives considered**:
+
+- *The engine exempts open tabs from the bulk rule and still sends their events.* Keeps FR-023
+  literally satisfied by the same mechanism as the ordinary case. Rejected because it puts per-file
+  events back on the wire during precisely the flood the bulk rule exists to prevent, and because
+  the engine would have to be told which files are open — state the client already has.
+- *Narrow FR-023 to exempt wholesale changes.* Honest about the mechanism and wrong for the
+  developer: a branch switch is the single most likely way the file they are reading moves on, so
+  exempting it removes the requirement exactly where it matters most.
+
+**Reversal conditions**: If a developer routinely holds enough tabs open that marking them all is
+measurable, the client marks only the focused tab eagerly and the rest on activation — which is a
+change to when the flag is set, not to what it means.
 
 ---
 

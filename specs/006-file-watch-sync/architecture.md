@@ -115,6 +115,7 @@ sequenceDiagram
     W->>C: workspace/onFileEvent (one per path)
     C->>C: re-validate containment (Principle VI)
     C->>C: correct projection; mark unproven; never mark valid
+    Note over C: on invalidateAll the client also marks<br/>every open tab unproven, from its own<br/>tab list (FR-023b) — nothing extra on the wire
 ```
 
 The `Note` is the architecture. Everything expensive or surprising that the filesystem does is
@@ -142,6 +143,7 @@ absorbed before anything reaches the channel, because §4.6 makes this one pipe 
 | A dedicated OS thread, no async runtime added | research.md, *A watcher in a runtime-free engine* |
 | The exclusion set is stored on the registered workspace | research.md, *Where the exclusion set lives* |
 | Unproven is a flag beside validity, never a validity state | research.md, *Representing unproven content* |
+| A wholesale invalidation marks open tabs unproven, client-side | research.md, *An open tab during a wholesale invalidation* |
 | Local mode does not watch in this feature | research.md, *Local mode does not watch in this feature* |
 
 ## Phase 1 Reconciliation

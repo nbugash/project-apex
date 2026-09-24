@@ -145,7 +145,10 @@ would be tempted to act differently for different causes, and §10.4 specifies o
 2. **Exactly one is sent per burst, and the individual events are discarded**, not queued behind
    it (guarantee 10 above, SC-004).
 3. **It invalidates the tree, never content** (FR-018, §10.4, §5.3). Zero cached blobs are
-   discarded — SC-006 asserts the number.
+   discarded — SC-006 asserts the number. Guarantee 5 is not a counterexample: marking an open
+   tab's content **unproven** is not invalidating it. The blob stays, stays servable offline, and
+   the hash still decides. Discarding and doubting are different operations, which is the whole
+   reason `unproven` is a flag beside validity rather than a validity state (A-UNPROVEN).
 4. **It is not a fetch instruction** (FR-017). The client marks the tree stale and re-queries
    lazily as the developer navigates; SC-012a asserts zero listing requests until they do.
 5. **Every open tab is marked unproven by it** (FR-023b, SC-004a). The bulk rule discards the

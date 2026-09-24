@@ -319,12 +319,16 @@ longer being reported.
   that the count of events delivered is bounded by elapsed time rather than by writes.
 - **FR-013**: An event MUST NOT carry file **content** — no bytes, and no hash. It says something
   changed, not what the file now says.
-- **FR-013a**: An event MAY carry the entry metadata a directory listing already returns — whether
-  the path is a file or a directory, its size, and when it was modified. This is not content: it
-  is what the tree is drawn from, and none of it can make the client believe it holds current
-  bytes, because validity remains a hash comparison and nothing else (FR-019). Without it a
-  created file cannot be placed in the tree at all without asking about a path the client was just
-  told about, which FR-020 forbids.
+- **FR-013a**: A `created` or `modified` event MUST carry the entry metadata a directory listing
+  already returns — whether the path is a file or a directory, its size, and when it was modified.
+  Not MAY: without it a created file cannot be placed in the tree at all, because the projection
+  requires those three values and the only alternative is asking about a path the client was just
+  told about, which FR-020 forbids. A `deleted` event carries none of it, and a `renamed` event
+  carries none, because neither describes a file that is now there to describe.
+
+  This is not content. It is what the tree is drawn from, and none of it can make the client
+  believe it holds current bytes: validity remains a hash comparison and nothing else (FR-019).
+  A hash is where the line sits, and FR-013 keeps it on the other side.
 - **FR-014**: The client MUST treat every path in an event as untrusted and MUST refuse one that
   escapes the workspace root, independently of anything the engine checked (Principle VI).
 

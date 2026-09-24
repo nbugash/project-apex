@@ -282,6 +282,7 @@ stateDiagram-v2
     [*] --> Absent
     Absent --> Cached: content fetched and stored
     Cached --> Unproven: event names this path
+    Cached --> Unproven: invalidateAll, and this file has an open tab
     Unproven --> Cached: hash comparison agrees
     Unproven --> Absent: hash comparison disagrees, blob replaced
     Cached --> Absent: evicted (F003 §5.5)
@@ -290,6 +291,14 @@ stateDiagram-v2
 
 `Unproven` is a flag, not a validity state — the hash still decides both exits (A-UNPROVEN).
 While disconnected an `Unproven` entry remains servable, presented as possibly stale (FR-019b).
+
+There are **two** ways in, and the second is easy to miss. A wholesale invalidation discards the
+individual events (FR-015), so a branch switch that rewrote an open file would report nothing
+about it while FR-023 admits no exception for how a change arrived. The client resolves it from
+its own tab list rather than the engine exempting open tabs from the bulk rule (FR-023b,
+research.md, *An open tab during a wholesale invalidation*). Marking a file with no open tab is
+**not** one of the ways in: FR-024 and FR-018 both forbid it, and the tree going stale is what
+covers those.
 
 A tree region:
 
@@ -318,6 +327,7 @@ worst time to issue one.
 | Event arrives for a path never fetched | Nothing to update; no fetch is triggered | No-op by design (FR-020) |
 | Rename halves never pair within the window | Classified as a delete and a create | Correct, not degraded: a file moved out of the workspace is a deletion here |
 | Subtree rename fails partway | Transaction rolls back; the projection stays consistent and stale rather than half-renamed | `CacheError`, and the region is marked stale |
+| A wholesale invalidation arrives with files open | Mark those files' content unproven from the client's own tab list; discard no blob; fetch nothing | The tab, on next use — the hash settles it (FR-023b, SC-004a) |
 | Kernel event queue overflows | Deliver `invalidateAll` | The route §10.4 already defines; the client's correct response is identical (A-COALESCE) |
 | A watched folder was deleted while disconnected | Refuse that path with `not_found`; establish the rest | `refused[]`. `-32003` would fail the whole re-establishment call and leave everything unwatched — FR-025's failure by the route FR-026b exists to close |
 | Local mode watch requested | `Unsupported` | FR-027's degradation path: browsing continues, the loss is stated (A-WATCHLOCAL) |
