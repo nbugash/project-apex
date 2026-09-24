@@ -8,7 +8,7 @@ use crate::application::use_cases::workspace;
 use crate::handshake;
 use crate::session::{self, SessionRegistry};
 use apex_protocol::framing::FrameCodec;
-use apex_protocol::wire::{HandshakeRequest, RestartNotice};
+use apex_protocol::wire::HandshakeRequest;
 use bytes::BytesMut;
 use std::io::Write;
 
@@ -30,12 +30,13 @@ pub enum Action {
 /// Answer one request, or say what else the loop must do.
 pub fn dispatch(
     registry: &SessionRegistry,
-    roots: &dyn crate::application::ports::roots::WorkspaceRoots,
+    roots: &crate::application::use_cases::workspace::InMemoryRoots,
     fs: &dyn crate::application::ports::file_system::FileSystem,
+    watchers: Option<&crate::adapters::outbound::watchers::Watchers>,
     codec: &FrameCodec,
     body: &str,
 ) -> Action {
-    let _ = (roots, fs); // threaded through for the workspace methods that land in Phase 3
+    use crate::application::ports::roots::WorkspaceRoots;
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
         return Action::Nothing;
     };
@@ -80,6 +81,62 @@ pub fn dispatch(
             None => Action::Nothing,
         },
         // ---- Workspace (§4.8). Registration first: every other method needs it. ----
+        "workspace/watch" | "workspace/unwatch" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let Ok(req) = serde_json::from_value::<apex_protocol::wire::WatchParams>(params) else {
+                return reply_or_nothing(encode_error(codec, &id, -32602, "invalid params"));
+            };
+            let root = match roots.resolve(&req.workspace_id.0) {
+                Ok(r) => r,
+                Err(why) => {
+                    let refusal =
+                        crate::application::use_cases::workspace::RequestRefusal::Root(why);
+                    let (code, message) = refusal.wire();
+                    return reply_or_nothing(encode_error(codec, &id, code, &message));
+                }
+            };
+            let Some(exclusions) = roots.exclusions(&req.workspace_id.0) else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    &id,
+                    apex_protocol::wire::codes::WORKSPACE_NOT_REGISTERED,
+                    "workspace is not registered with this engine",
+                ));
+            };
+            // No watcher wired means this build cannot watch -- a non-Linux host, or a test
+            // that did not ask for one. FR-027: the workspace stays usable and the developer
+            // is told, rather than the call appearing to succeed.
+            let Some(watchers) = watchers else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    &id,
+                    -32601,
+                    "this engine build cannot watch the filesystem",
+                ));
+            };
+            if method == "workspace/watch" {
+                match watchers.watch(&req.workspace_id, &root, exclusions, req.paths) {
+                    Some(result) => reply_or_nothing(encode_result(codec, &id, &result)),
+                    None => {
+                        reply_or_nothing(encode_error(codec, &id, -32603, "the watcher stopped"))
+                    }
+                }
+            } else {
+                match watchers.unwatch(&req.workspace_id, &root, exclusions, req.paths) {
+                    Some(watching) => reply_or_nothing(encode_result(
+                        codec,
+                        &id,
+                        &apex_protocol::wire::UnwatchResult { watching },
+                    )),
+                    None => {
+                        reply_or_nothing(encode_error(codec, &id, -32603, "the watcher stopped"))
+                    }
+                }
+            }
+        }
         "workspace/register" => {
             let params = parsed
                 .get("params")
@@ -322,10 +379,15 @@ pub fn encode_error(codec: &FrameCodec, id: &str, code: i32, message: &str) -> O
     codec.encode(&body.to_string()).ok()
 }
 
-pub fn encode_notification(
+/// Frame any notification.
+///
+/// Was hard-typed to `&RestartNotice`, which was fine while a restart notice was the only
+/// thing the engine ever originated. F004 adds file events and invalidations, and a second
+/// near-identical function would be the same code twice with one type changed.
+pub fn encode_notification<T: serde::Serialize>(
     codec: &FrameCodec,
     method: &str,
-    params: &RestartNotice,
+    params: &T,
 ) -> Option<Vec<u8>> {
     let body = serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params});
     codec.encode(&body.to_string()).ok()
@@ -358,7 +420,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":"3","method":"auth/handshake","params":{"protocol_version":"not a number"}}"#,
             r#"{"jsonrpc":"2.0","id":"4","method":"auth/handshake","params":null}"#,
         ] {
-            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, &codec, body) else {
+            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, &codec, body) else {
                 panic!("expected a reply, not a panic or silence: {body}")
             };
             let v = decode(&reply);
@@ -384,6 +446,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"1","method":"auth/handshake","params":{}}"#,
         );
@@ -391,6 +454,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"2","method":"auth/handshake","params":{"client_version":"0.1.0","protocol_version":1,"capabilities":[]}}"#,
         ) else {
@@ -411,6 +475,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"9","method":"workspace/writeFile","params":{}}"#,
         ) else {
@@ -438,7 +503,7 @@ mod tests {
         );
         for body in ["this is not json", "", "{}"] {
             assert!(matches!(
-                dispatch(&registry, &roots, &fs, &codec, body),
+                dispatch(&registry, &roots, &fs, None, &codec, body),
                 Action::Nothing
             ));
         }

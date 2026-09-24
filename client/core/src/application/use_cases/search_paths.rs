@@ -89,6 +89,19 @@ mod tests {
         fn rename(&self, _: &FileId, _: &RelPath) -> CacheResult<()> {
             unreachable!()
         }
+
+        fn mark_stale(&self, _: &WorkspaceId, _: &RelPath) -> CacheResult<()> {
+            unreachable!("this double exists for search; nothing here marks staleness")
+        }
+        fn mark_unproven(&self, _: &WorkspaceId, _: &RelPath) -> CacheResult<()> {
+            unreachable!("this double exists for search; nothing here marks content")
+        }
+        fn clear_unproven(&self, _: &FileId) -> CacheResult<()> {
+            unreachable!("this double exists for search; nothing here settles content")
+        }
+        fn rename_subtree(&self, _: &WorkspaceId, _: &RelPath, _: &RelPath) -> CacheResult<usize> {
+            unreachable!("this double exists for search; nothing here renames a subtree")
+        }
         fn evict(&self, _: i64) -> CacheResult<EvictionReport> {
             unreachable!("search must not evict")
         }

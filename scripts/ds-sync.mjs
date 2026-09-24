@@ -115,6 +115,15 @@ const LITERAL_TOKENS = [
     what: 'file tree base left padding',
     unit: 'px',
   },
+  {
+    // The tab's state dot. The prototype draws it as a filled circle for unsaved local
+    // changes; F004 reuses the same footprint as a ring for changed-on-host, so the two are
+    // distinguishable by shape. Extracted rather than retyped for the usual reason: a literal
+    // in a component is a second source of truth for a value the prototype owns.
+    token: '--vk-tab-dot',
+    re: /width:(\d+px);height:\d+px;border-radius:50%;background:\{\{ t\.dirty \}\}/,
+    what: 'tab state dot size',
+  },
 ];
 
 const prototypeMarkup = await readFile(PROTOTYPE, 'utf8');

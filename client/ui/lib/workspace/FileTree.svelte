@@ -12,7 +12,17 @@
   import type { WorkspaceTree } from './tree.svelte';
   import { presentContent } from '../statusbar/presentation';
 
-  let { tree, selected = '' }: { tree: WorkspaceTree; selected?: string } = $props();
+  let {
+    tree,
+    selected = '',
+    onWatchedChanged,
+  }: {
+    tree: WorkspaceTree;
+    selected?: string;
+    /// Called with every expanded folder whenever expansion changes. The parent combines it
+    /// with the open tabs and asks the engine; this component does not know the protocol.
+    onWatchedChanged?: (expanded: string[]) => void;
+  } = $props();
 
   /// The prototype's glyph per kind. Directories carry a caret so expansion state is legible
   /// without colour, which is also what FR-039 requires of every state this feature publishes.
@@ -24,12 +34,36 @@
   function onKey(event: KeyboardEvent, path: string) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      void tree.toggle(path);
+      void toggle(path);
     }
+  }
+
+  /// Expanding starts watching and collapsing releases it; freshness follows attention
+  /// (FR-003a). The set is declared after the toggle rather than computed from it, so the
+  /// request is a statement of what is open rather than a diff somebody has to keep correct.
+  async function toggle(path: string) {
+    await tree.toggle(path);
+    onWatchedChanged?.(tree.expandedFolders());
   }
 </script>
 
-<div class="file-tree" role="tree" aria-label="Project files" data-testid="file-tree">
+<div
+  class="file-tree"
+  class:stale={tree.stale}
+  role="tree"
+  aria-label="Project files"
+  data-testid="file-tree"
+  data-stale={tree.stale ? 'true' : 'false'}
+>
+  {#if tree.stale}
+    <!-- The prototype's own treatment: "Dimmed rows are stale … They are never waited on."
+         Dimming follows it rather than inventing a state (Principle I). The text is what makes
+         the meaning reachable without colour, which FR-039 requires and `lint:ds` cannot see. -->
+    <p class="stale-note" data-testid="tree-stale">
+      <i class="ph ph-clock-countdown" aria-hidden="true"></i>
+      <span>Showing what was last read — reopening a folder refreshes it</span>
+    </p>
+  {/if}
   {#if tree.problem}
     <p class="problem" data-testid="tree-problem" data-kind={tree.problem.kind}>
       <i
@@ -52,7 +86,7 @@
       data-testid="tree-row"
       data-path={node.path}
       style={`padding-left: calc(var(--vk-tree-pad-left) + var(--vk-tree-indent) * ${node.depth})`}
-      onclick={() => tree.toggle(node.path)}
+      onclick={() => toggle(node.path)}
       onkeydown={(e) => onKey(e, node.path)}
     >
       <i class="ph {glyph(node.kind, node.expanded)}" aria-hidden="true"></i>
@@ -71,6 +105,25 @@
     overflow: auto;
     font-family: var(--font-body);
     font-size: var(--vk-fs);
+  }
+
+  .stale-note {
+    display: flex;
+    align-items: center;
+    gap: var(--vk-tree-gap);
+    padding: var(--space-1) var(--vk-tree-pad-left);
+    color: var(--color-text);
+    font-size: var(--vk-fs);
+    /* Dimmed by opacity rather than a colour token. The prototype expresses staleness that
+       way -- "dimmed rows are stale" -- and inventing a colour for it would be a deviation
+       needing designer approval rather than a reading of what is already there. */
+    opacity: 0.72;
+  }
+
+  /* Dimmed, following the prototype. Not hidden and not emptied: a tree that vanished on a
+     branch switch would be worse than one saying it may have moved on. */
+  .file-tree.stale .row {
+    opacity: 0.62;
   }
 
   .row {

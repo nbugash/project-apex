@@ -1,3 +1,4 @@
+pub mod apply_file_event;
 pub mod bootstrap;
 pub mod cached_workspace;
 pub mod connect;

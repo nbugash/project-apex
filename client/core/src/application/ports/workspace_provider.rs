@@ -159,9 +159,56 @@ pub trait WorkspaceProvider: Send + Sync {
         })
     }
 
-    async fn watch(&self, _ws: &WorkspaceId, _path: &RelPath) -> ProviderResult<()> {
+    /// Ask for changes to be reported.
+    ///
+    /// `paths` carries **what the caller cares about** -- folder paths for expanded folders and
+    /// **file** paths for open editors -- not the directories the engine will watch. It derives
+    /// those. The distinction is load-bearing: a folder holding an open file is one path for two
+    /// reasons, and if the caller resolved that itself then unwatching on a collapse could not be
+    /// told from unwatching on a tab close, so collapsing a folder would silently stop reporting
+    /// a file still open inside it (FR-003c, FR-004, A-WATCHSCOPE).
+    ///
+    /// Idempotent, which is what lets a reconnecting client re-establish everything with one call
+    /// rather than replaying a history it might mis-remember (FR-026b).
+    async fn watch(&self, _ws: &WorkspaceId, _paths: &[RelPath]) -> ProviderResult<WatchOutcome> {
         Err(ProviderError::Unsupported {
             owner: Owner::F004FileWatch,
         })
     }
+
+    async fn unwatch(&self, _ws: &WorkspaceId, _paths: &[RelPath]) -> ProviderResult<WatchOutcome> {
+        Err(ProviderError::Unsupported {
+            owner: Owner::F004FileWatch,
+        })
+    }
+}
+
+/// What a watch request achieved, including what it could not do.
+///
+/// A refusal is data, not an error: FR-005a keeps the workspace open and browsable when the
+/// host cannot watch everything, and FR-005 requires the developer be told which freshness was
+/// lost. An error would satisfy neither.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WatchOutcome {
+    /// The size of the requested set after the call. **Not** the number of host watch
+    /// descriptors: the two differ by ancestors and the workspace root.
+    pub watching: u32,
+    pub refused: Vec<Refusal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub path: RelPath,
+    pub reason: RefusalReason,
+}
+
+/// A closed set of four. An unrecognised value read off the wire becomes `Capacity`, the
+/// conservative reading, because every reason means the same thing to the developer: this path
+/// is not being watched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalReason {
+    Capacity,
+    Excluded,
+    NotFound,
+    NotADirectory,
 }

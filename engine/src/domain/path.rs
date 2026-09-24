@@ -39,6 +39,33 @@ impl ResolvedPath {
         &self.0
     }
 
+    /// Re-wrap an absolute path already proven contained.
+    ///
+    /// The ancestors of a resolved path are contained by construction -- every one of them is a
+    /// prefix of a path already proven to be inside the root -- so re-resolving each through the
+    /// filesystem would be a syscall per ancestor to learn something the type system already
+    /// knows. Callers may pass only a path derived from an existing `ResolvedPath`, which is why
+    /// this takes the root: it asserts the relationship rather than assuming it.
+    pub fn resolve_absolute_for_watch(root: &CanonicalRoot, absolute: &str) -> Self {
+        debug_assert!(
+            absolute.starts_with(&root.as_path().to_string_lossy().into_owned()),
+            "an ancestor of a contained path is contained; this one is not"
+        );
+        Self(PathBuf::from(absolute))
+    }
+
+    /// Build one without resolving. **Tests only**, and deliberately so.
+    ///
+    /// The invariant this type exists for is that no path exists by which unchecked input
+    /// becomes a `ResolvedPath` in a shipped binary, and `#[cfg(test)]` keeps that exactly
+    /// true: this function is not compiled into one. The alternative -- making every type
+    /// that holds a resolved path generic so tests can substitute a string -- would spread
+    /// the weakening across the codebase instead of confining it to one line here.
+    #[cfg(test)]
+    pub fn for_test(p: PathBuf) -> Self {
+        Self(p)
+    }
+
     /// Canonicalise a workspace root. Done once, at registration, so the per-request check is a
     /// resolve and a prefix comparison rather than a second canonicalisation of the root.
     pub fn canonical_root(root: &Path, fs: &dyn FileSystem) -> Result<CanonicalRoot, PathRefusal> {

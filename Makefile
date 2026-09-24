@@ -47,8 +47,25 @@ test: ## The full gate: rust, frontend, lint, format
 	python3 scripts/pipeline_test.py
 
 gate: test ## Everything in `test`, plus the end-to-end suite and the fidelity gate
-	xvfb-run -a npm run e2e
-	xvfb-run -a npm run gate:fidelity
+	DISPLAY=$${DISPLAY:-:77} npm run e2e
+	DISPLAY=$${DISPLAY:-:77} npm run gate:fidelity
+	$(MAKE) no-network
+
+no-network: ## Prove the suite needs no network (FR-028, A-TEST, SC-013)
+	@# Under an unprivileged user namespace with no network interfaces, a test that reaches
+	@# for a socket fails rather than quietly succeeding against something real. Where
+	@# unprivileged namespaces are unavailable the check degrades to asserting that no test
+	@# names a routable address, which is weaker and says so rather than passing silently.
+	@if unshare -rn true 2>/dev/null; then \
+		echo "no-network: running the Rust suite with no interfaces"; \
+		unshare -rn cargo test --workspace --quiet; \
+	else \
+		echo "no-network: unprivileged user namespaces unavailable; falling back to a weaker check"; \
+		if grep -rn --include=*.rs -E '(127\.0\.0\.1|0\.0\.0\.0|https?://)' engine/src client/core/src | grep -v '^.*://example' ; then \
+			echo "no-network: a source file names a network address"; exit 1; \
+		fi; \
+		echo "no-network: no source file names a network address"; \
+	fi
 
 clean: ## Remove build output
 	cargo clean

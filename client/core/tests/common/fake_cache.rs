@@ -10,7 +10,9 @@ use apex_shell::application::ports::workspace_cache::{
     WorkspaceCache,
 };
 use apex_shell::domain::cache::CacheEntry;
-use apex_shell::domain::workspace::{FileId, FsEntry, RelPath, Sha256, Workspace, WorkspaceId};
+use apex_shell::domain::workspace::{
+    EntryKind, FileId, FsEntry, RelPath, Sha256, Workspace, WorkspaceId,
+};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -24,6 +26,10 @@ struct Row {
     hash: Option<Sha256>,
     bytes: Option<Vec<u8>>,
     last_accessed_at: Option<i64>,
+    /// Schema v2. A property of the tree row: re-query before trusting.
+    stale: bool,
+    /// Schema v2. A flag beside validity, never a validity state.
+    unproven: bool,
 }
 
 impl Row {
@@ -35,6 +41,8 @@ impl Row {
             hash: None,
             bytes: None,
             last_accessed_at: None,
+            stale: false,
+            unproven: false,
         }
     }
 }
@@ -248,6 +256,70 @@ impl WorkspaceCache for InMemoryCache {
         Ok(())
     }
 
+    fn mark_stale(&self, ws: &WorkspaceId, region: &RelPath) -> CacheResult<()> {
+        let mut rows = self.rows.lock().unwrap();
+        let whole = region.as_str() == "/" || region.as_str().is_empty();
+        let prefix = format!("{}/", region.as_str());
+        for ((w, path), row) in rows.iter_mut() {
+            if w != &ws.0 {
+                continue;
+            }
+            // The separator matters as much here as in SQL: marking `src` must not reach
+            // `src-generated`, and a fake that is laxer than the real thing hides the bug.
+            if whole || path == region.as_str() || path.starts_with(&prefix) {
+                row.stale = true;
+            }
+        }
+        Ok(())
+    }
+
+    fn mark_unproven(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()> {
+        let mut rows = self.rows.lock().unwrap();
+        if let Some(row) = rows.get_mut(&(ws.0.clone(), path.as_str().to_string())) {
+            row.unproven = true;
+        }
+        Ok(())
+    }
+
+    fn clear_unproven(&self, file_id: &FileId) -> CacheResult<()> {
+        let mut rows = self.rows.lock().unwrap();
+        for row in rows.values_mut() {
+            if &row.file_id == file_id {
+                row.unproven = false;
+            }
+        }
+        Ok(())
+    }
+
+    fn rename_subtree(&self, ws: &WorkspaceId, from: &RelPath, to: &RelPath) -> CacheResult<usize> {
+        let mut rows = self.rows.lock().unwrap();
+        let from_prefix = format!("{}/", from.as_str());
+        let moving: Vec<(String, String)> = rows
+            .keys()
+            .filter(|(w, p)| w == &ws.0 && (p == from.as_str() || p.starts_with(&from_prefix)))
+            .cloned()
+            .collect();
+        let count = moving.len();
+        for key in moving {
+            let mut row = rows.remove(&key).expect("just listed");
+            let rewritten = if key.1 == from.as_str() {
+                to.as_str().to_string()
+            } else {
+                format!("{}{}", to.as_str(), &key.1[from.as_str().len()..])
+            };
+            let parsed = RelPath::parse(&rewritten).expect("a rewritten path is still a path");
+            row.entry.name = parsed.name().to_string();
+            row.parent = parsed
+                .parent()
+                .unwrap_or_else(RelPath::root)
+                .as_str()
+                .to_string();
+            // Content untouched: a rename moves the entry, it does not replace the file.
+            rows.insert((key.0, rewritten), row);
+        }
+        Ok(count)
+    }
+
     fn search_paths(
         &self,
         ws: &WorkspaceId,
@@ -303,4 +375,43 @@ impl WorkspaceCache for InMemoryCache {
         *self.version.lock().unwrap() = target;
         Ok(())
     }
+}
+
+/// Seed rows at the given paths, for tests that care about paths rather than content.
+pub fn seed(cache: &InMemoryCache, ws: &WorkspaceId, paths: &[&str]) {
+    let mut rows = cache.rows.lock().unwrap();
+    for path in paths {
+        let parsed = RelPath::parse(path).expect("a seed path is a path");
+        let entry = FsEntry {
+            name: parsed.name().to_string(),
+            kind: if path.ends_with(".rs") || path.ends_with(".txt") {
+                EntryKind::File
+            } else {
+                EntryKind::Directory
+            },
+            size: 1,
+            modified: 0,
+        };
+        let parent = parsed
+            .parent()
+            .unwrap_or_else(RelPath::root)
+            .as_str()
+            .to_string();
+        rows.insert(
+            (ws.0.clone(), parsed.as_str().to_string()),
+            Row::new(entry, &parent),
+        );
+    }
+}
+
+/// Every path this workspace holds, sorted.
+pub fn paths(cache: &InMemoryCache, ws: &WorkspaceId) -> Vec<String> {
+    let rows = cache.rows.lock().unwrap();
+    let mut out: Vec<String> = rows
+        .keys()
+        .filter(|(w, _)| w == &ws.0)
+        .map(|(_, p)| p.clone())
+        .collect();
+    out.sort();
+    out
 }

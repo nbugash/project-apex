@@ -108,3 +108,50 @@ APEX_REAL_SSHD=1 cargo test --test bootstrap_real_sshd
 That suite is where the transfer, the remote `sha256sum` and the atomic rename meet a real
 filesystem. It is worth its cost: it found a hang where the deployer became its own control
 master and blocked forever reading its own output.
+
+## Watching the workspace (F004)
+
+The engine observes what the client asks it to and tells it what changed. Three pieces, and the
+boundary between them is the whole design.
+
+**The adapter** (`adapters/outbound/inotify_watcher.rs`) is the only file in the repository that
+may name `inotify`; `engine/tests/inotify_confinement.rs` fails the build otherwise. It knows
+about descriptors and kernel masks and nothing about what is worth reporting.
+
+**The coalescer** (`application/coalescer.rs`) decides everything. It is pure — fed raw events
+and told the time, opening no file and spawning no thread — which is what makes the volume
+requirements arithmetic. "A thousand writes in one second yields at most ten events, and at
+least one" runs instantly against a settable counter; the same assertion against a real clock
+sleeps for a second, goes flaky under load, and gets marked ignored.
+
+Its window is a **throttle, not a debounce**, and that distinction is the requirement rather
+than an implementation detail. A deadline reset by every arrival would mean a file written
+continuously reports nothing at all — bounded by elapsed time in the most useless possible
+sense. The deadline is set once, by the first event for a path, and the last write's state is
+what travels.
+
+**The thread** (`adapters/outbound/watch_thread.rs`) owns the watcher, the coalescer and the
+clock, and is reached by channel rather than by a mutex. `poll` blocks for as long as the
+coalescer says its next window is, and a lock held across that would make every watch request
+wait behind it — inside an interaction the developer initiated.
+
+### The writer seam
+
+Until F004 the engine had one writer, the stdio loop, so nothing had to coordinate. The watch
+thread is the second. `adapters/outbound/frame_writer.rs` owns stdout and is taken for exactly
+one frame: §4.6 makes this one pipe and one queue, and a frame interleaved with a reply is a
+corrupt stream rather than a slow one. That lock is also what FR-016 measures — "event delivery
+must not delay interactive traffic" is a claim about how long it is held.
+
+### The exclusion set
+
+Resolved once per workspace at `workspace/register` and stored **on the registered workspace**,
+not inside the watcher. A-IGNORE requires one set shared by the watcher and the indexer, because
+an indexer that indexes what the watcher ignores returns search results for files whose changes
+are never noticed. Neither existed when this was written, so storing it there is what makes the
+sharing structural rather than a convention somebody has to remember.
+
+The `.gitignore` subset it understands is deliberately bounded and documented in
+`application/exclusions.rs`. The `ignore` crate handles all of it and pulls `regex` with it, and
+A-BOOT makes binary size a first-class concern on something transferred on every first connect.
+A stated subset is a boundary; an unstated one is a bug waiting to be found.

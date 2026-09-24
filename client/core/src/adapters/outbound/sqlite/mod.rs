@@ -384,6 +384,109 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn mark_stale(&self, ws: &WorkspaceId, region: &RelPath) -> CacheResult<()> {
+        // The whole workspace when the region is the root, which is what a wholesale
+        // invalidation and a reconnection both produce. One statement either way.
+        self.with(|c| {
+            if region.as_str() == "/" || region.as_str().is_empty() {
+                c.execute(
+                    "UPDATE files SET stale = 1 WHERE workspace_id = ?1",
+                    rusqlite::params![&ws.0],
+                )?;
+            } else {
+                let prefix = format!("{}/", region.as_str());
+                c.execute(
+                    "UPDATE files SET stale = 1
+                     WHERE workspace_id = ?1
+                       AND (relative_path = ?2 OR (relative_path > ?3 AND relative_path < ?4))",
+                    rusqlite::params![&ws.0, region.as_str(), &prefix, &upper_bound(&prefix)],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    fn mark_unproven(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE file_contents SET unproven = 1
+                 WHERE file_id IN (SELECT file_id FROM files
+                                   WHERE workspace_id = ?1 AND relative_path = ?2)",
+                rusqlite::params![&ws.0, path.as_str()],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn clear_unproven(&self, file_id: &FileId) -> CacheResult<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE file_contents SET unproven = 0 WHERE file_id = ?1",
+                rusqlite::params![&file_id.0],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn rename_subtree(&self, ws: &WorkspaceId, from: &RelPath, to: &RelPath) -> CacheResult<usize> {
+        let from_prefix = format!("{}/", from.as_str());
+        let to_parent = to.parent().unwrap_or_else(RelPath::root);
+        let cut = from.as_str().len();
+
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+
+            // The directory's own row. Its `parent_path` has no `from` prefix to rewrite --
+            // it is wherever the directory sat -- so the substring arithmetic that works for
+            // every descendant would set the directory's parent to itself. It needs the
+            // caller-derived destination parent instead, and that is why this is two
+            // statements rather than one.
+            let own = tx.execute(
+                "UPDATE files SET relative_path = ?3, parent_path = ?4, name = ?5
+                 WHERE workspace_id = ?1 AND relative_path = ?2",
+                rusqlite::params![
+                    &ws.0,
+                    from.as_str(),
+                    to.as_str(),
+                    to_parent.as_str(),
+                    to.name()
+                ],
+            )?;
+
+            // Descendants. Bounded by a range comparison rather than `LIKE 'from/%'`: SQLite's
+            // LIKE optimisation needs `case_sensitive_like` on with a BINARY column, which
+            // `apply_pragmas` does not set, so LIKE would scan. The rule is identical; only
+            // the plan differs.
+            //
+            // The trailing separator is the whole safety property. Matching on `from` alone
+            // would rewrite `src-generated` when renaming `src`, silently corrupting rows
+            // nobody touched.
+            // One formula for both columns, and it took a failing test to see why. The
+            // separator must stay in the remainder rather than being skipped: a descendant's
+            // `parent_path` can be exactly `from`, where skipping it yields the empty string
+            // and the new parent becomes `/syntax/` with a trailing separator -- which no
+            // child ever matches, so the whole subtree becomes unreachable while every row
+            // still looks right.
+            let descendants = tx.execute(
+                "UPDATE files
+                    SET relative_path = ?4 || substr(relative_path, ?5),
+                        parent_path   = ?4 || substr(parent_path, ?5)
+                  WHERE workspace_id = ?1
+                    AND relative_path > ?2 AND relative_path < ?3",
+                rusqlite::params![
+                    &ws.0,
+                    &from_prefix,
+                    &upper_bound(&from_prefix),
+                    to.as_str(),
+                    (cut + 1) as i64, // SQLite substr is 1-based; the separator stays
+                ],
+            )?;
+
+            tx.commit()?;
+            Ok(own + descendants)
+        })
+    }
+
     fn search_paths(
         &self,
         ws: &WorkspaceId,
@@ -475,4 +578,15 @@ fn fts_prefix_query(fragment: &str) -> String {
         .map(|t| format!("\"{t}\"*"))
         .collect();
     tokens.join(" ")
+}
+
+/// The exclusive upper bound of a prefix range: `"src/"` becomes `"src0"`.
+///
+/// A range comparison rather than `LIKE` so the index is used, and bounded to the separator so
+/// that renaming `src` cannot reach `src-generated`.
+fn upper_bound(prefix: &str) -> String {
+    let mut bound = prefix.to_string();
+    let last = bound.pop().expect("a prefix is never empty");
+    bound.push((last as u8 + 1) as char);
+    bound
 }

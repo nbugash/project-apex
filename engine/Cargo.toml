@@ -22,6 +22,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Deliberately the only addition: the engine stays synchronous and runtime-free, because it is
 # embedded in the client and transferred on every first connect.
 sha2 = "0.10"
+# Linux only, and named in exactly one file: adapters/outbound/inotify_watcher.rs.
+# `engine/tests/inotify_confinement.rs` fails the build if it appears anywhere else,
+# because everything that decides anything -- which paths are watched, when events
+# collapse, when a flood becomes an invalidation -- is tested without a filesystem.
+# Still no async runtime: the watcher is one std thread polling a descriptor.
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify = "0.11"
 
 [dev-dependencies]
 serde_json = "1"

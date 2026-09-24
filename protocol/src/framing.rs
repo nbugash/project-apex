@@ -29,7 +29,7 @@ pub enum FrameError {
     Malformed(String),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FrameCodec;
 
 impl FrameCodec {

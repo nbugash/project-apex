@@ -41,6 +41,7 @@ list of directives. `MockSpawner::new("delay=250,drop=20")` sets it.
 | `stall=<ms>` | Answer nothing, then close after `<ms>`. | A silently dead link. See the note below. |
 | `close-mid-frame` | Write half a frame and exit. | A truncated stream at the worst moment. |
 | `lossy` | Shorthand for `delay=250,drop=20`. | The feature map's link profile. |
+| `notify=<ms>` | After `<ms>`, write the frame in `APEX_MOCK_FRAME`, unprompted. | A frame the server originates rather than answers. See below. |
 
 Directives combine: `delay=100,drop=5` is a slow link that loses a fifth of its replies.
 An unrecognised directive is reported on stderr and ignored, so a typo degrades to `echo`
@@ -59,6 +60,23 @@ situation that cannot occur, and a test written against it would hang forever.
 
 The keepalive flags themselves are asserted in `spawner.rs`'s unit tests, where their absence
 is visible. No integration test in this suite can catch it.
+
+## The unprompted frame
+
+Every other directive is reply-shaped: a request arrives, something happens to the answer.
+F004 is the first feature whose traffic includes a frame the engine **originates**, and no
+reply-shaped directive can produce one.
+
+`notify=<ms>` sends a frame the caller supplies in `APEX_MOCK_FRAME`, on its own thread, so it
+can land while a request is in flight — which is the case worth exercising. The mock never
+reads the body. That is what keeps the rule above intact: the method name lives in the calling
+test's string, this directory carries only the framing, and
+`the_mock_implements_no_engine_method` still passes. It caught the first draft of the source
+comment for this directive, which named a method to explain why it must not.
+
+Stdout is locked for the whole frame. A frame interleaved with a reply is a corrupt stream
+rather than a slow one, and this file exists to model slow, not corrupt — unless asked
+(`malformed`, `close-mid-frame`).
 
 ## Adding a directive
 
