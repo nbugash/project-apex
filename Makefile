@@ -8,7 +8,7 @@ SHOT ?= reports/app.png
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup dev run shot test gate clean next verify pipeline
+.PHONY: help setup dev run shot test gate clean next verify pipeline no-network
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[1m%-10s\033[0m %s\n", $$1, $$2}'
