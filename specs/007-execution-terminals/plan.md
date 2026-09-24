@@ -16,9 +16,11 @@ frame writer F004 built, which is already the one thing that speaks to the clien
 renders each task in its own panel, themed from the prototype rather than from the terminal
 library's defaults.
 
-Unlike F004, §4.8 already defines the methods — all seven `execution/*` entries. One is missing
-and this feature adds it: nothing in the catalogue attaches to a task that is already running,
-which A-TASKLIFE made necessary the moment a task outlived its connection.
+Unlike F004, §4.8 already defined most of the methods. Three were missing and this feature adds
+them: nothing in the catalogue attached to a task already running, which A-TASKLIFE made necessary
+the moment a task outlived its connection; nothing enumerated tasks, which a client that has lost
+its identities needs to reach them at all; and nothing said a workspace had been closed, which
+FR-024 requires in order to stop that workspace's tasks.
 
 ## Technical Context
 
@@ -80,7 +82,7 @@ nobody reviewed.
 | Task CPU time | **Not limited** | Deliberate. A legitimate build burns CPU for minutes and `RLIMIT_CPU` counts per process, so any value low enough to catch a spinning process is low enough to kill a real compile. The runaway that actually takes the instance down is memory; a process spinning on CPU stays visible in the task list and stoppable through `execution/terminate`. |
 | Core dumps | **Disabled** (`RLIMIT_CORE` = 0) | Not a tuning choice. FR-005a forbids a task's environment reaching any log or crash report, and a core dump is a crash report containing the whole environment. Leaving dumps enabled writes the thing FR-005a prohibits straight to disk. |
 | Process count | **Not limited** | `RLIMIT_NPROC` is per **user**, not per process, and under A-EC2 the engine runs as the same user as every task it starts. Setting it for a task bounds the developer's entire session, the engine included. A limit that can starve the engine is not a limit that protects it. |
-| Interrupt signal | `SIGINT` | What Ctrl-C sends. FR-018's interrupt is the developer asking the foreground process to stop, which is the signal every interactive program already handles. |
+| Interrupt signal | `SIGINT` | What Ctrl-C sends. FR-015's interrupt is the developer asking the foreground process to stop, which is the signal every interactive program already handles. |
 | Stop escalation | `SIGTERM`, then `SIGKILL` after **5 s** | Sent to the process **group**, not the process, so a shell's children go with it — the process group is the whole reason FR-026 can be met without cgroups. Five seconds is long enough for a build to flush and remove partial output, short enough that a developer who asked twice is not left waiting. |
 | Developer shell | `$SHELL`, falling back to `/bin/sh` | The developer's own shell is what makes the terminal theirs; `/bin/sh` is guaranteed to exist when the variable is unset. Not a login shell: a login shell re-reads profile scripts whose side effects the developer did not ask for on every new terminal. |
 
@@ -95,7 +97,7 @@ bounded by resource limits rather than a count.
 | Principle | Applies | How this feature satisfies it |
 |---|---|---|
 | **I. Design Fidelity** | **Yes — and the prototype is more specific than expected** | The prototype has a terminal dock, and it is the default one (`dock:'terminal'`). It specifies JetBrains Mono at 12.5px, line-height 1.6, padding `2px 12px 12px`, an accent-coloured shell prompt, and a 7×15px block cursor blinking on `vkpulse 1.1s steps(1,end) infinite`. Its title even switches on mode — `Terminal — build-01.euw1` against `Terminal — local`. **12.5px is a third font size**, distinct from `--vk-fs` and `--vk-code` at 13.5px, so `ds-sync` must extract it rather than a component inventing it. §8.3 names the library and Principle I names the appearance; the library is themed to the prototype, never the reverse, and its default palette is a violation like any other raw value. |
-| **II. One Source of Truth** | **Yes — blocking** | §4.8 defines seven `execution/*` methods and **none attaches to a task already running**. `runTask` starts one; the other six address one the caller already knows. A-TASKLIFE made a task outlive its connection, so reattachment is now required (FR-031b) and undefined. The system specification MUST be amended before implementation — the sixth absence of this kind, after `workspace/register` and `workspace/watch`. |
+| **II. One Source of Truth** | **Yes — amendments landed** | §4.8 defined seven `execution/*` methods and **none attached to a task already running**; A-TASKLIFE made a task outlive its connection, so reattachment was required (FR-031b) and undefined — the sixth absence of this kind, after `workspace/register` and `workspace/watch`. `execution/attach` was added in Phase 0. Phase 1 found two more: `execution/list`, without which a client that has lost its identities cannot reach running tasks (SC-023), and `workspace/close`, which FR-024 and SC-013 both name. All three have landed, along with the encoding, arity and exit-shape statements the rows needed to be implementable. |
 | **III. Decisions Recorded** | **Already satisfied, and re-checked here** | Two decisions closing genuine alternatives are recorded: **A-TASKLIFE** (a task outlives its connection) and **A-TASKLIMIT** (bounded per process, not per tree). Both were made before this plan, both carry rejected alternatives and reversal conditions. A third is owed and named in Phase 0: the attach method's shape. |
 | **IV. Open Items Block** | Passes | Checked at the cycle's step 2 with the bounded detector — no live `[OPEN: id]` in any section F010 implements — and the detector was proven by injecting a marker and confirming it fired. |
 | **V. Interaction Budget Verified** | **Yes, and this is the feature that tests it hardest** | A terminal is the largest producer the control channel carries. FR-012 forbids output delaying interactive traffic and SC-006 measures it under 50 MiB, printed rather than asserted (A-NFR). The frame writer F004 built is the seam this measures, and F010 is the first feature to put real volume through it. |
@@ -103,7 +105,7 @@ bounded by resource limits rather than a count.
 | **VII. Every Feature Ships With Tests** | Yes | Chunking, ordering and backpressure are decidable without a process — the reader is fed bytes and asked what it emits. The mock daemon's `notify` directive carries server-originated frames under latency and loss. Real pty behaviour (does a process believe it is a terminal?) needs a real process, and those tests spawn one locally: no remote host, no network. |
 | **VIII. Ports and Adapters** | Yes | `TaskRunner` is an outbound port — a capability, not a pty. The adapter naming the pseudo-terminal is one file, guarded as `inotify` is. Chunking, ordering and the retention bound are pure application code, fed bytes and told the time by the `Clock` port F004 added. Svelte components are inbound adapters; the terminal library lives in one of them. |
 
-**Verdict: passes, conditional on the Principle II amendment landing first.** That amendment is
+**Verdict: passes. The Principle II amendments have landed.** That work is
 Phase 0 work. No task may depend on attaching to a running task until §4.8 defines how.
 
 ## Project Structure
@@ -118,7 +120,7 @@ specs/007-execution-terminals/
 ├── data-model.md        # Phase 1 output
 ├── quickstart.md        # Phase 1 output
 ├── contracts/           # Phase 1 output
-│   ├── task-methods.md      # runTask, attach, writeStdin, resizePty, terminate
+│   ├── task-methods.md      # runTask, attach, list, writeStdin, resizePty, terminate, workspace/close
 │   ├── task-events.md       # onStdout, onStderr, onExit
 │   └── runner-port.md       # the engine's TaskRunner port
 ├── architecture.md      # Phase 2 output
@@ -181,6 +183,6 @@ guards it, following `inotify_confinement.rs`, which caught its own author three
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|--------------------------------------|
-| A new `execution/attach` method in §4.8 | A-TASKLIFE makes a task outlive its connection, so a client must be able to reach one it did not start in this session. The catalogue has no such method | Making `runTask` idempotent — same id attaches rather than starts — needs no new method and makes the two outcomes indistinguishable at the call site, which is exactly what FR-031c forbids: a client racing its own reconnect would start a second process and be told it attached |
+| Three new methods in §4.8 — `execution/attach`, `execution/list`, `workspace/close` | A-TASKLIFE makes a task outlive its connection, so a client must be able to reach one it did not start in this session. The catalogue has no such method | Making `runTask` idempotent — same id attaches rather than starts — needs no new method and makes the two outcomes indistinguishable at the call site, which is exactly what FR-031c forbids: a client racing its own reconnect would start a second process and be told it attached |
 | A reader thread per task | The engine has no async runtime and a pty read blocks. One thread per task is the shape that costs nothing when idle | One thread multiplexing all tasks needs `poll` over a changing descriptor set, which is an event loop written by hand — the thing an async runtime would be for, minus the testing |
 | `nix` as a new engine dependency | A pseudo-terminal, a process group and resource limits are all syscalls, and the engine has no libc binding at all — F004 hardcoded `ENOSPC` rather than add one | `portable-pty` is cross-platform and pulls far more for an engine that runs only on Linux. Raw `libc` with hand-written `unsafe` for four syscall families is more unsafe code than a narrow `nix` feature set, for no dependency saving worth the risk |

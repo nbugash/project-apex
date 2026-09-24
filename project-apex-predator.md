@@ -665,15 +665,41 @@ reattaches to a task which finished while it was away learns how it finished fro
 `running: false` on its own says only that it is over. `retained` is a **byte count**, not the
 bytes themselves: the retention bound is larger than §4.1's frame cap, chunking is defined for
 notifications rather than results, and an exit delivered inside the result would arrive before the
-output that preceded it. The retained bytes are replayed as ordinary `onStdout` notifications
-after the response, in order, so one ordering rule covers live and replayed output alike.
+output that preceded it. The retained bytes are replayed after the response as ordinary
+`onStdout` and `onStderr` notifications — **each chunk on the notification its own stream would
+have used when live** — in order, so one ordering rule covers live and replayed output alike.
+Replaying everything on `onStdout` would merge the two streams for a `pty: false` task, which is
+the separation that task asked for by not requesting a terminal.
+
+`signal` on `execution/terminate`, and on `onExit` and `attach` where they report one, is the
+signal's **name** — `SIGINT`, `SIGTERM`, `SIGKILL` — not its number. Signal numbers differ between
+platforms and the client is not always on the engine's; a client on macOS or Windows composing a
+stop request should not have to know Linux's numbering, and an unrecognised name can be refused
+whereas an unrecognised number is indistinguishable from a valid one. The engine is the only party
+that needs the number, and it is the only party that has it natively.
+
+The signal a client sends is the **initial** signal, and whether it escalates follows from which
+one it is. `SIGTERM` escalates to `SIGKILL` after a grace period, because a stop that a process
+can decline is not a stop. `SIGINT` does not escalate: it is the developer asking a foreground
+process to stop the way Ctrl-C asks, and a program legitimately handling it — a test runner
+printing a summary, a shell returning to its prompt — must not then be killed for having handled
+it. A client that wants the process gone asks for `SIGTERM`.
 
 `execution/list` exists because `attach` takes an identity the caller must already know. A client
 that has lost its identities — a fresh install, a cleared profile, a crash before its store was
 written — has no route back to tasks that are still running, and under A-TASKLIFE those tasks keep
 running. Without enumeration they stay unreachable until A-EC2's idle stop ends the instance,
 which is precisely the abandoned process FR-025 forbids, arrived at by a client doing nothing
-wrong. `workspaceId` is optional: omitted, it lists every task the engine holds.
+wrong. `workspaceId` is optional: omitted, it lists every task the engine holds. Each entry carries
+`taskId`, `workspaceId`, `command`, `pty`, `pid`, `running`, and `exitCode?`/`signal?` under the
+same exactly-one rule as `onExit`. It deliberately does **not** carry `env`: FR-005a keeps a task's
+environment out of anything that can be read back, and a listing is exactly that.
+
+Attaching with a `workspaceId` that does not own the named task is **refused** with `-32001`, not
+ignored. Because a `taskId` is engine-unique the engine could resolve the task from the id alone
+and treat the mismatched workspace as noise, but a client that believes a task belongs to a
+different workspace than it does is a client whose state has diverged, and silently servicing the
+request would leave it diverged. Principle VI puts the check on both sides of the boundary.
 
 ### Git
 

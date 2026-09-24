@@ -321,7 +321,10 @@ the task never stopped and no output was lost.
 
 **Ending**
 
-- **FR-020**: A task's exit MUST be reported, carrying its exit code.
+- **FR-020**: A task's exit MUST be reported, carrying how it ended: its exit code, or the signal
+  that killed it. Formerly "carrying its exit code", which FR-021 already contradicted and which
+  §4.8's amended `onExit` — `exitCode?` and `signal?`, exactly one — made literally unsatisfiable
+  for a signalled task.
 - **FR-021**: A task killed by a signal MUST be reported as such, distinguishably from a task
   that exited with a code.
 - **FR-022**: Output produced before an exit MUST be delivered before the exit is reported, so
