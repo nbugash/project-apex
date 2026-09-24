@@ -37,7 +37,9 @@ shot: ## Photograph the running app to $(SHOT) — works headless
 	xvfb-run -a -s "-screen 0 1400x900x24" node scripts/screenshot.mjs $(SHOT)
 
 test: ## The full gate: rust, frontend, lint, format
-	cargo build -p apex-engine
+	# --examples builds the fixture programs the task tests spawn. Without it a stale or
+	# absent fixture fails those tests for a reason that has nothing to do with terminals.
+	cargo build -p apex-engine --bins --examples
 	cargo test --workspace
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo fmt --all --check
