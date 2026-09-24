@@ -9,7 +9,7 @@
 use rusqlite::Connection;
 
 /// What shape this build reads and writes.
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 /// Pragmas that must be set on **every** connection, not only at creation.
 ///
@@ -90,6 +90,35 @@ CREATE TRIGGER files_fts_delete AFTER DELETE ON files BEGIN
 END;
 
 CREATE TRIGGER files_fts_update AFTER UPDATE ON files BEGIN
+    INSERT INTO files_fts(files_fts, rowid, relative_path, name)
+    VALUES ('delete', old.rowid, old.relative_path, old.name);
+    INSERT INTO files_fts(rowid, relative_path, name)
+    VALUES (new.rowid, new.relative_path, new.name);
+END;
+"#;
+
+/// Version 2: what F004 needs, and nothing else.
+///
+/// Only the delta. `migrate` runs each step in sequence, so this executes against a database
+/// on which V1 has already run -- repeating V1 here would fail on the first `CREATE TABLE`.
+///
+/// The trigger is the part that would have been missed. V1 shipped `files_fts_update` as
+/// `AFTER UPDATE ON files`, with no `OF` clause, so **every** update fires a delete and
+/// reinsert against the FTS5 index -- including one that touches only `stale` and changes no
+/// indexed term. Marking a tree stale is the most common operation this feature performs and
+/// it changes no term at all, so without the narrowing it would cost 2N pointless index writes
+/// for N rows. §5.2 was amended; because V1 already exists in the field, the migration drops
+/// and recreates rather than simply defining it. The body is unchanged.
+///
+/// Adding the two columns disturbs none of the three triggers on its own: `ADD COLUMN` fires
+/// no trigger, and each trigger names `rowid`, `relative_path` and `name` explicitly rather
+/// than using `*`, so the external-content rowids are untouched.
+pub const V2: &str = r#"
+ALTER TABLE files         ADD COLUMN stale    INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE file_contents ADD COLUMN unproven INTEGER NOT NULL DEFAULT 0;
+
+DROP TRIGGER files_fts_update;
+CREATE TRIGGER files_fts_update AFTER UPDATE OF relative_path, name ON files BEGIN
     INSERT INTO files_fts(files_fts, rowid, relative_path, name)
     VALUES ('delete', old.rowid, old.relative_path, old.name);
     INSERT INTO files_fts(rowid, relative_path, name)

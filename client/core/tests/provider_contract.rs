@@ -136,7 +136,12 @@ async fn p4_unimplemented_methods_refuse_by_name_and_have_no_side_effect() {
             ("rename", p.rename(&ws(), &path, &path).await.unwrap_err()),
             ("delete", p.delete(&ws(), &path, false).await.unwrap_err()),
             ("search", p.search(&ws(), "q").await.unwrap_err()),
-            ("watch", p.watch(&ws(), &path).await.unwrap_err()),
+            (
+                "watch",
+                p.watch(&ws(), std::slice::from_ref(&path))
+                    .await
+                    .unwrap_err(),
+            ),
         ];
         for (method, err) in cases {
             match err {
@@ -173,7 +178,7 @@ async fn p6_errors_are_typed_rather_than_stringly() {
             .stat(&ws(), &RelPath::parse("/nope").unwrap())
             .await
             .unwrap_err();
-        let unsupported = p.watch(&ws(), &RelPath::root()).await.unwrap_err();
+        let unsupported = p.watch(&ws(), &[RelPath::root()]).await.unwrap_err();
         assert_ne!(missing, unsupported, "[{name}]");
         assert_eq!(missing, ProviderError::NotFound, "[{name}]");
     }

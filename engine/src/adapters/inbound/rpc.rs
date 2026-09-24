@@ -8,7 +8,7 @@ use crate::application::use_cases::workspace;
 use crate::handshake;
 use crate::session::{self, SessionRegistry};
 use apex_protocol::framing::FrameCodec;
-use apex_protocol::wire::{HandshakeRequest, RestartNotice};
+use apex_protocol::wire::HandshakeRequest;
 use bytes::BytesMut;
 use std::io::Write;
 
@@ -322,10 +322,15 @@ pub fn encode_error(codec: &FrameCodec, id: &str, code: i32, message: &str) -> O
     codec.encode(&body.to_string()).ok()
 }
 
-pub fn encode_notification(
+/// Frame any notification.
+///
+/// Was hard-typed to `&RestartNotice`, which was fine while a restart notice was the only
+/// thing the engine ever originated. F004 adds file events and invalidations, and a second
+/// near-identical function would be the same code twice with one type changed.
+pub fn encode_notification<T: serde::Serialize>(
     codec: &FrameCodec,
     method: &str,
-    params: &RestartNotice,
+    params: &T,
 ) -> Option<Vec<u8>> {
     let body = serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params});
     codec.encode(&body.to_string()).ok()

@@ -64,32 +64,32 @@ migration. Every user story depends on all of it.
 
 ### The coalescer — pure, and where the volume requirements are actually tested
 
-- [ ] T015 Implement the per-path window in `engine/src/application/coalescer.rs`: `accept`, `drain_due` returning `Emission`, and `next_deadline`. 100 ms trailing edge (A-COALESCE). No filesystem, no threads, no `serde` in scope — it is fed events and told the time
-- [ ] T016 Unit tests in `engine/src/application/coalescer.rs` for FR-012 and SC-007: a thousand `accept` calls for one path across one simulated second yields **at most 10** events, and — the assertion that matters — **at least 1**. An upper bound alone passes when the window is widened to infinity and the developer waits forever (depends on T015, same file)
-- [ ] T017 Implement rename pairing in `engine/src/application/coalescer.rs`: `IN_MOVED_FROM` and `IN_MOVED_TO` sharing a cookie inside the window become one `renamed` event naming both paths; an unpaired half at flush becomes `deleted` or `created` respectively (FR-011, depends on T016, same file)
-- [ ] T018 Unit tests in `engine/src/application/coalescer.rs` for rename pairing, including both unpaired directions — a file moved out of the workspace is a deletion here, and one moved in is a creation (depends on T017, same file)
-- [ ] T108 Unit test in `engine/src/application/coalescer.rs` asserting events for **one path** are emitted in the order they occurred, and that no ordering is claimed across paths ([file-events.md](./contracts/file-events.md) obligation 8; depends on T018, same file)
-- [ ] T019 Implement the trailing edge explicitly in `engine/src/application/coalescer.rs` and test it: the **last** write in a burst is the one whose event is emitted, not the first (contracts/file-events.md guarantee 5, depends on T018, same file)
+- [X] T015 Implement the per-path window in `engine/src/application/coalescer.rs`: `accept`, `drain_due` returning `Emission`, and `next_deadline`. 100 ms trailing edge (A-COALESCE). No filesystem, no threads, no `serde` in scope — it is fed events and told the time
+- [X] T016 Unit tests in `engine/src/application/coalescer.rs` for FR-012 and SC-007: a thousand `accept` calls for one path across one simulated second yields **at most 10** events, and — the assertion that matters — **at least 1**. An upper bound alone passes when the window is widened to infinity and the developer waits forever (depends on T015, same file)
+- [X] T017 Implement rename pairing in `engine/src/application/coalescer.rs`: `IN_MOVED_FROM` and `IN_MOVED_TO` sharing a cookie inside the window become one `renamed` event naming both paths; an unpaired half at flush becomes `deleted` or `created` respectively (FR-011, depends on T016, same file)
+- [X] T018 Unit tests in `engine/src/application/coalescer.rs` for rename pairing, including both unpaired directions — a file moved out of the workspace is a deletion here, and one moved in is a creation (depends on T017, same file)
+- [X] T108 Unit test in `engine/src/application/coalescer.rs` asserting events for **one path** are emitted in the order they occurred, and that no ordering is claimed across paths ([file-events.md](./contracts/file-events.md) obligation 8; depends on T018, same file)
+- [X] T019 Implement the trailing edge explicitly in `engine/src/application/coalescer.rs` and test it: the **last** write in a burst is the one whose event is emitted, not the first (contracts/file-events.md guarantee 5, depends on T018, same file)
 
 ### The writer seam — new, and the thing FR-016 measures
 
-- [ ] T020 Implement `FrameWriter` in `engine/src/adapters/outbound/frame_writer.rs` as the sole owner of stdout, taken per frame and released before the next. This seam does not exist today: `rpc.rs` returns frames and the session loop writes them, because until F004 there was never a second writer
-- [ ] T021 Generalise `encode_notification` in `engine/src/adapters/inbound/rpc.rs` from `params: &RestartNotice` to `params: &T where T: Serialize`, so it can carry a file event
-- [ ] T022 Route the existing session-loop writes through `FrameWriter` in `engine/src/main.rs` and `engine/src/session.rs`, so there is exactly one writer before a second one is introduced (depends on T020)
-- [ ] T023 [P] Integration test in `engine/tests/frame_writer.rs` asserting two concurrent writers never interleave a frame, by writing from two threads and parsing the result stream
+- [X] T020 Implement `FrameWriter` in `engine/src/adapters/outbound/frame_writer.rs` as the sole owner of stdout, taken per frame and released before the next. This seam does not exist today: `rpc.rs` returns frames and the session loop writes them, because until F004 there was never a second writer
+- [X] T021 Generalise `encode_notification` in `engine/src/adapters/inbound/rpc.rs` from `params: &RestartNotice` to `params: &T where T: Serialize`, so it can carry a file event
+- [X] T022 Route the existing session-loop writes through `FrameWriter` in `engine/src/main.rs` and `engine/src/session.rs`, so there is exactly one writer before a second one is introduced (depends on T020)
+- [X] T023 [P] Integration test in `engine/tests/frame_writer.rs` asserting two concurrent writers never interleave a frame, by writing from two threads and parsing the result stream
 
 ### Schema version 2
 
-- [ ] T024 Add `V2` to `client/core/src/adapters/outbound/sqlite/schema.rs` — `files.stale` and `file_contents.unproven`, both `INTEGER NOT NULL DEFAULT 0`, plus `DROP TRIGGER files_fts_update` and its recreation with `AFTER UPDATE OF relative_path, name`. Bump `CURRENT_VERSION` to 2. `V2` contains only the delta, never V1 repeated
-- [ ] T025 Add the `2 => schema::V2` arm to `client/core/src/adapters/outbound/sqlite/migrate.rs`, in the same transaction that sets `user_version`, so a failed migration leaves a v1 database rather than a half-migrated one (depends on T024)
-- [ ] T026 [P] Migration test in `client/core/tests/migrate_v2.rs`: build a v1 database, migrate, assert both columns exist, assert `user_version` is 2, and assert the narrowed trigger no longer fires on an update that touches only `stale` — the point of narrowing it
-- [ ] T027 [P] Regression test in `client/core/tests/migrate_v2_idempotent.rs` asserting a second migration run is a no-op and a v2 database is left untouched
+- [X] T024 Add `V2` to `client/core/src/adapters/outbound/sqlite/schema.rs` — `files.stale` and `file_contents.unproven`, both `INTEGER NOT NULL DEFAULT 0`, plus `DROP TRIGGER files_fts_update` and its recreation with `AFTER UPDATE OF relative_path, name`. Bump `CURRENT_VERSION` to 2. `V2` contains only the delta, never V1 repeated
+- [X] T025 Add the `2 => schema::V2` arm to `client/core/src/adapters/outbound/sqlite/migrate.rs`, in the same transaction that sets `user_version`, so a failed migration leaves a v1 database rather than a half-migrated one (depends on T024)
+- [X] T026 [P] Migration test in `client/core/tests/migrate_v2.rs`: build a v1 database, migrate, assert both columns exist, assert `user_version` is 2, and assert the narrowed trigger no longer fires on an update that touches only `stale` — the point of narrowing it
+- [X] T027 [P] Regression test in `client/core/tests/migrate_v2_idempotent.rs` asserting a second migration run is a no-op and a v2 database is left untouched
 
 ### Port signature changes
 
-- [ ] T028 Replace the F004 `Unsupported` stub in `client/core/src/application/ports/workspace_provider.rs` with `watch(&self, ws, paths: &[RelPath])` and `unwatch(&self, ws, paths: &[RelPath])`, both returning `ProviderResult<WatchOutcome>`. `paths` carries **what the client cares about** — folder paths and file paths — not the directories the engine will watch
-- [ ] T029 Add `mark_stale`, `mark_unproven` and `rename_subtree` to `client/core/src/application/ports/workspace_cache.rs`. `rename_subtree` returns the number of rows rewritten, because that count is what a test asserts the separator boundary against
-- [ ] T030 [P] Extend the in-memory fake in `client/core/tests/common/fake_cache.rs` with the three new methods, so use-case tests stay free of SQLite
+- [X] T028 Replace the F004 `Unsupported` stub in `client/core/src/application/ports/workspace_provider.rs` with `watch(&self, ws, paths: &[RelPath])` and `unwatch(&self, ws, paths: &[RelPath])`, both returning `ProviderResult<WatchOutcome>`. `paths` carries **what the client cares about** — folder paths and file paths — not the directories the engine will watch
+- [X] T029 Add `mark_stale`, `mark_unproven` and `rename_subtree` to `client/core/src/application/ports/workspace_cache.rs`. `rename_subtree` returns the number of rows rewritten, because that count is what a test asserts the separator boundary against
+- [X] T030 [P] Extend the in-memory fake in `client/core/tests/common/fake_cache.rs` with the three new methods, so use-case tests stay free of SQLite
 
 **Checkpoint**: `cargo build --workspace` succeeds, `cargo clippy --workspace --all-targets -- -D warnings` is clean, and no user story has begun.
 

@@ -5,13 +5,14 @@
 //! the workspace rules are use cases (Principle VIII).
 
 use apex_engine::adapters::inbound::rpc::{self, Action};
+use apex_engine::adapters::outbound::frame_writer::FrameWriter;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
 use apex_engine::application::ports::file_system::FileSystem;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
 use apex_engine::session::SessionRegistry;
 use apex_protocol::framing::{FrameCodec, FrameError};
 use bytes::BytesMut;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::Arc;
 
 fn main() {
@@ -22,15 +23,16 @@ fn main() {
     let registry = SessionRegistry::new();
     let mut codec = FrameCodec::new();
     let mut stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
+    // One writer, shared. The stdio loop is no longer the only thing that speaks: the watcher
+    // thread F004 adds is the second, and §4.6 makes this one pipe and one queue.
+    let writer = Arc::new(FrameWriter::to_stdout());
 
     // A restart is announced, never inferred. The client learns about it because it was told,
     // and the identity it carries is what distinguishes a restart from a new session.
     if registry.restarted() {
         let notice = registry.restart_notice();
         if let Some(frame) = rpc::encode_notification(&codec, "session/onRestart", &notice) {
-            let _ = stdout.write_all(&frame);
-            let _ = stdout.flush();
+            let _ = writer.write(&frame);
         }
     }
 
@@ -46,8 +48,7 @@ fn main() {
                 Ok(Some(frame)) => {
                     match rpc::dispatch(&registry, &roots, fs.as_ref(), &codec, &frame.0) {
                         Action::Reply(reply) => {
-                            let _ = stdout.write_all(&reply);
-                            let _ = stdout.flush();
+                            let _ = writer.write(&reply);
                         }
                         Action::Nothing => {}
                         Action::Restart(ack) => {

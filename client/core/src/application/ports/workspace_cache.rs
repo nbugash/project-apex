@@ -121,6 +121,28 @@ pub trait WorkspaceCache: Send + Sync {
     /// nothing in F003 invokes it, because nothing here performs a rename.
     fn rename(&self, file_id: &FileId, to: &RelPath) -> CacheResult<()>;
 
+    /// Mark a tree region as needing re-reading before it is trusted.
+    ///
+    /// Distinct from content validity, which is a hash comparison. A stale region is one the
+    /// client must re-query as the developer navigates into it; the blobs beneath it are
+    /// untouched and each still proves itself (FR-017, FR-018, FR-026).
+    fn mark_stale(&self, ws: &WorkspaceId, region: &RelPath) -> CacheResult<()>;
+
+    /// Note that an event says this file changed.
+    ///
+    /// A flag **beside** validity, never a validity state. `Validity` has one constructor and
+    /// it takes two hashes, so nothing but a hash comparison can declare content valid; an
+    /// event is not a hash. The blob stays, stays servable offline, and the existing check
+    /// settles it on next use (FR-019, FR-019a, A-UNPROVEN).
+    fn mark_unproven(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()>;
+
+    /// Rewrite a renamed directory and everything beneath it, in one transaction.
+    ///
+    /// Returns the number of rows rewritten, which is what a test asserts the separator
+    /// boundary against: renaming `src` must rewrite `src` and `src/...` and leave
+    /// `src-generated` untouched, and a count is how that stops being a spot check.
+    fn rename_subtree(&self, ws: &WorkspaceId, from: &RelPath, to: &RelPath) -> CacheResult<usize>;
+
     // ---- search ----
     /// `files_fts`, never a leading-wildcard `LIKE` (§5.2, §5.4). Never consults a provider (C6).
     fn search_paths(
