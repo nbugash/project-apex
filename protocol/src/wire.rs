@@ -90,6 +90,22 @@ pub mod codes {
     /// means re-register, and re-registering a deleted root fails on the not-a-directory check,
     /// surfacing a registration error for a deletion.
     pub const WORKSPACE_GONE: i32 = -32009;
+    /// The identity is unknown, and **not** that the task has finished. §4.4 read "Task not found
+    /// or already exited" until F010, which contradicted two requirements at once: stopping a
+    /// stopped task is a success, since the caller asked for it not to be running and it is not
+    /// running, and a client reattaching to a task that ended while it was away is entitled to
+    /// learn how it ended rather than be told the task never existed.
+    pub const TASK_NOT_FOUND: i32 = -32006;
+    /// The identity is live. The client's answer is to **attach**, not to retry, which is why
+    /// this cannot be `TASK_NOT_FOUND` -- that one means the opposite. Without a code of its own
+    /// a client racing its own reconnection could not tell "your build is already running" from
+    /// "there is no such build" (FR-031c, SC-022).
+    pub const TASK_ALREADY_RUNNING: i32 = -32010;
+    /// The command itself could not be started: not found, not executable, or `cwd` unusable.
+    /// The developer's mistake to fix rather than the engine's failure. **Not** `NOT_FOUND`,
+    /// which is reserved for paths inside a workspace -- a program name resolved against `PATH`
+    /// is not a workspace path at all (FR-004, SC-015).
+    pub const COMMAND_NOT_STARTED: i32 = -32011;
 }
 
 /// An opaque workspace identity, minted by the client (A-WORKSPACE).
@@ -319,6 +335,253 @@ pub struct FileEventParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvalidateAllParams {
     pub workspace_id: WorkspaceId,
+}
+
+// ---- execution/* (F010) ----
+
+/// A task's identity, chosen by the client (§4.8).
+///
+/// **Unique across the engine, not within a workspace.** Six of §4.8's nine execution rows carry
+/// a bare `task_id`, so a per-workspace identity would leave them unable to resolve a task at
+/// all. The `workspace_id` on `runTask` and `attach` records which workspace owns the task, not
+/// which namespace its name lives in.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TaskId(pub String);
+
+impl TaskId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A process id.
+///
+/// A newtype rather than a bare `i32` so it cannot be passed where an exit code or a signal
+/// number is wanted. All three are small integers and all three appear together on `onExit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pid(pub i32);
+
+/// A signal's **name**, as it appears on the wire.
+///
+/// Names and not numbers, because signal numbers differ between platforms and the client is not
+/// always on the engine's. A client composing a stop should not have to know Linux's numbering,
+/// and an unrecognised name can be refused where an unrecognised number cannot be told from a
+/// valid one.
+///
+/// This is the **reporting** vocabulary and it is deliberately open: a task may be killed by
+/// anything the kernel can deliver -- `SIGSEGV` from its own bug, `SIGPIPE`, `SIGKILL` from the
+/// out-of-memory killer -- and FR-021 requires reporting the signal that killed it, not the
+/// signal someone asked for. Contrast `TerminateSignal`, which is closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignalName(pub String);
+
+impl SignalName {
+    /// Total over the host's signals, including ones it has no name for.
+    ///
+    /// An unrecognised number formats as `SIG<n>` rather than being dropped or replaced with a
+    /// placeholder: a signal nobody anticipated is still how the task died, and FR-021's "in
+    /// 100% of exercised cases" does not exempt the unfamiliar.
+    pub fn from_number(sig: i32) -> Self {
+        let name = match sig {
+            1 => "SIGHUP",
+            2 => "SIGINT",
+            3 => "SIGQUIT",
+            4 => "SIGILL",
+            6 => "SIGABRT",
+            8 => "SIGFPE",
+            9 => "SIGKILL",
+            11 => "SIGSEGV",
+            13 => "SIGPIPE",
+            14 => "SIGALRM",
+            15 => "SIGTERM",
+            24 => "SIGXCPU",
+            25 => "SIGXFSZ",
+            28 => "SIGWINCH",
+            _ => return SignalName(format!("SIG{sig}")),
+        };
+        SignalName(name.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// What a client may ask `execution/terminate` to send.
+///
+/// Closed at three, which is the **sending** vocabulary. Whether it escalates follows from which
+/// one it is: `Term` escalates to `Kill` after the grace period, because a stop a process can
+/// decline is not a stop; `Int` does not, because a program handling it as designed -- a test
+/// runner printing a summary, a shell returning to its prompt -- must not be killed for having
+/// handled it.
+///
+/// Per-variant renames and not `rename_all = "UPPERCASE"`: that would emit `"INT"`, not
+/// `"SIGINT"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminateSignal {
+    #[serde(rename = "SIGINT")]
+    Int,
+    #[serde(rename = "SIGTERM")]
+    Term,
+    #[serde(rename = "SIGKILL")]
+    Kill,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunTaskParams {
+    pub workspace_id: WorkspaceId,
+    pub task_id: TaskId,
+    /// An **argv vector**, never a shell line. The engine interposes no `sh -c`: §7.3 scopes
+    /// this as process execution and not a shell, and a single string would make quoting the
+    /// engine's problem for input it is specifically required not to interpret.
+    pub command: Vec<String>,
+    /// Absent is the workspace root, which is where a build usually runs. Untrusted, like every
+    /// path off the wire (§4.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Absent inherits the engine's environment unchanged; present is merged **over** that
+    /// inheritance rather than replacing it. Replacement is the more obvious reading of a bare
+    /// parameter and the wrong default: a task started with one variable set would lose `PATH`
+    /// and fail for a reason that looks nothing like its cause.
+    ///
+    /// `BTreeMap` so serialisation is deterministic; a test asserting on a frame should not
+    /// depend on hash order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<std::collections::BTreeMap<String, String>>,
+    /// Chooses between two output shapes, and the choice is exclusive because a terminal is one
+    /// device (A-TASKSTREAM). With `true` the streams arrive merged on `onStdout` and `onStderr`
+    /// carries nothing.
+    pub pty: bool,
+    /// Meaningful only when `pty` is true. Absent defaults to 80 x 24, and specifically not the
+    /// kernel's 0 x 0 -- a size no display has, and the one value `resizePty` refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cols: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunTaskResult {
+    pub pid: Pid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachParams {
+    pub workspace_id: WorkspaceId,
+    pub task_id: TaskId,
+}
+
+/// The state of a task a client has just reached.
+///
+/// `retained` is a **byte count**, not the bytes: the retention bound is larger than §4.1's frame
+/// cap, chunking is defined for notifications rather than results, and an exit delivered inside
+/// the result would arrive before the output that preceded it. The bytes are replayed as ordinary
+/// `onStdout` and `onStderr` notifications after the response, each chunk on the notification its
+/// own stream would have used when live.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachResult {
+    pub pid: Pid,
+    pub running: bool,
+    pub retained: u64,
+    /// Exactly one of `exit_code` and `signal` is present once `running` is false, and neither
+    /// while it is true. `running: false` alone says only that it is over; FR-031b and SC-020
+    /// require a reattaching client to learn **how** it ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<SignalName>,
+}
+
+/// Omitted `workspace_id` lists every task the engine holds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
+}
+
+/// One entry of a listing.
+///
+/// Deliberately carries **no `env`**: FR-005a keeps a task's environment out of anything that can
+/// be read back, and a listing is exactly that. It does carry `command`, which moves where
+/// FR-005a's accepted boundary sits -- a credential in argv becomes readable by any client that
+/// enumerates, not only the one that started the task. Under A-EC2's single tenancy that is the
+/// same developer, so it widens *where* rather than *who*.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskSummary {
+    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub command: Vec<String>,
+    pub pty: bool,
+    pub pid: Pid,
+    pub running: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<SignalName>,
+}
+
+/// Unpaged, unlike `workspace/readDirectory`. Bounded only by how many tasks one developer has
+/// started; the arithmetic that could exceed §4.1's cap is accepted and recorded in §4.8.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListResult {
+    pub tasks: Vec<TaskSummary>,
+}
+
+/// `workspace/register`'s counterpart. Deliberately **not** the same event as a dropped
+/// connection: under A-TASKLIFE a drop leaves tasks running, because a laptop moving between
+/// networks must not kill a build, whereas closing the workspace is the developer saying they are
+/// done with it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceCloseParams {
+    pub workspace_id: WorkspaceId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteStdinParams {
+    pub task_id: TaskId,
+    /// Base64. A JSON string holds Unicode text and a task's input is not text -- a paste may
+    /// carry any byte, and a lossy decode substitutes U+FFFD and destroys what it cannot read.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResizePtyParams {
+    pub task_id: TaskId,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminateParams {
+    pub task_id: TaskId,
+    /// The **initial** signal. See `TerminateSignal` for what escalates and what does not.
+    pub signal: TerminateSignal,
+}
+
+/// One chunk of a task's output, on `execution/onStdout` or `execution/onStderr`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputParams {
+    pub task_id: TaskId,
+    /// Base64, for the reason `WriteStdinParams::data` is: a compiler emitting bytes in the
+    /// source file's own encoding, a binary written to stdout and a file catted to a terminal
+    /// are all ordinary, and none survives a lossy decode (FR-009, SC-003).
+    pub data: String,
+}
+
+/// How a task ended.
+///
+/// Exactly one of `exit_code` and `signal`, never both and never neither. A mandatory
+/// `exit_code` would leave a signalled death representable only through the `128 + n` convention,
+/// which is what a shell does for a human reading a number and not what a protocol should require
+/// a client to decode. A client reads `signal` first: its presence means the task was signalled,
+/// whatever else is on the frame.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExitParams {
+    pub task_id: TaskId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<SignalName>,
 }
 
 #[cfg(test)]

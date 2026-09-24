@@ -274,7 +274,7 @@ pub fn read_file(
     // ranges compares it across them, and a change means the file moved underneath the read.
     let whole = fs.read_range(path.as_path(), 0, u64::MAX)?;
     Ok(Ok(apex_protocol::wire::ReadFileResult {
-        content: base64_encode(&bytes),
+        content: apex_protocol::base64::encode(&bytes),
         // Always base64. There is no utf8 path: assuming text corrupts binary content silently,
         // and a method that sometimes returns text makes every caller branch on it.
         encoding: "base64".into(),
@@ -290,48 +290,9 @@ fn hex_digest(bytes: &[u8]) -> String {
     format!("{:x}", h.finalize())
 }
 
-/// Base64, without a dependency for sixteen lines of table lookup.
-fn base64_encode(bytes: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for c in bytes.chunks(3) {
-        let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)];
-        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-        out.push(T[(n >> 18 & 63) as usize] as char);
-        out.push(T[(n >> 12 & 63) as usize] as char);
-        out.push(if c.len() > 1 {
-            T[(n >> 6 & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if c.len() > 2 {
-            T[(n & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base64_matches_the_known_vectors() {
-        // RFC 4648 §10. A hand-rolled encoder with no test is a silent corruption waiting to
-        // happen, and it would corrupt exactly the binary content FR-003 exists to protect.
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"f"), "Zg==");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
-        assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
-        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
-        // Bytes with the high bit set: the case a text-assuming encoder mangles.
-        assert_eq!(base64_encode(&[0xff, 0xfe, 0xfd]), "//79");
-        assert_eq!(base64_encode(&[0x00, 0x00, 0x00]), "AAAA");
-    }
 
     fn entry(name: &str, dir: bool) -> FsEntryWire {
         FsEntryWire {

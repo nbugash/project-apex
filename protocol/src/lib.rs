@@ -10,6 +10,7 @@
 //! the codec. That rule keeps the application layer from reaching around its port, and it still
 //! holds. Sharing a format with the process at the other end of the wire is what a protocol is.
 
+pub mod base64;
 pub mod framing;
 pub mod wire;
 
