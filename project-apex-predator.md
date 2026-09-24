@@ -425,8 +425,18 @@ interaction budget the architecture exists to protect. Three rules prevent this:
 3. Reads of large files use the ranged form of `workspace/readFile` so the client fetches
    what it displays and streams the remainder as the user scrolls.
 
-Outbound frames are priority-queued: LSP and editor traffic ahead of background work such as
-prefetch and indexing status.
+Frames are priority-queued **in both directions**, and the rule is stated per direction because
+stating it once left half of it unbuilt. Client to engine: editor and LSP requests ahead of
+background work, which `client/core`'s send queue implements. Engine to client: LSP responses,
+file events and command replies ahead of bulk output such as indexing status and a task's stdout.
+
+The second half is the one that was missing. The engine's writer holds one lock for the duration
+of a frame, which is sufficient while every producer is small and infrequent — a watch event, a
+completion list — and stops being sufficient the moment a producer is neither. A task emitting
+tens of megabytes acquires that lock hundreds of times, holds it across a write and a flush to a
+pipe the client may not be draining, and a mutex is first-come by acquisition rather than by
+importance. Under that load a completion request queues behind a build's output with no mechanism
+to say it should not, which is the interaction budget failing exactly where §1.4 measures it.
 
 ## 4.7 Path safety
 

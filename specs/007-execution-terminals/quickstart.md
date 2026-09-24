@@ -567,7 +567,7 @@ Stated here rather than discovered by a reviewer.
 
 **Six gaps this guide carried are closed, recorded here so nobody re-opens them as though they
 were still live.** The plan stated none of the quantities four criteria needed; it now fixes
-fourteen, in *Fixed Quantities*, and §8 measures against them. Two of those fourteen closed gaps
+thirteen, in *Fixed Quantities*, and §8 measures against them. Two of those thirteen closed gaps
 of their own: a `pty: true` task started without `cols`/`rows` had no chosen size and landed on the
 kernel's 0×0 — the one value `resizePty` refuses — and now defaults to 80×24; and `execution/list`
 was published with a `retained` field the catalogue never named, a divergence now closed in the
