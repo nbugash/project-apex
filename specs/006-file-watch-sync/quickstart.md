@@ -216,6 +216,7 @@ the code intends.
 | SC-002 | Zero events for excluded paths | `cargo test -p apex-engine --test exclusions --test excluded_paths` | Event count 0 per exclusion, over every member of the built-in set plus a `.gitignore` entry |
 | SC-003 | Watcher and indexer exclusion sets identical | `cargo test -p apex-engine --test exclusions --test excluded_paths` | **Partial** — the indexer does not exist yet. See *Known gaps* |
 | SC-004 | Over the limit: one invalidation, zero events | `cargo test -p apex-engine --lib coalescer` | Frame counts by method name at the recording sink: 1 and 0 |
+| SC-004a | Every open tab is marked unproven by a wholesale invalidation, zero individual events for them | `cargo test -p apex-shell --test invalidate_all` | Tabs unproven: 3/3; individual events: 0 |
 | SC-005 | Interactive budget holds through a 10 000-change burst | `cargo test -p apex-engine --test bulk_threshold -- --nocapture` | **Printed** p99 for an interactive read during the burst, against §1.4's 250 ms |
 | SC-006 | Wholesale invalidation discards zero blobs | `cargo test -p apex-shell --test invalidate_all` | Blob count **and** bytes identical before and after |
 | SC-006a | Event on a cached file: zero blobs discarded, zero extra confirmations | `cargo test -p apex-shell --test apply_file_event` | Hash-confirmation count at the fake engine is exactly the one F003's read already makes |

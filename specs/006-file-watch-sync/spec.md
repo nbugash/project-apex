@@ -317,7 +317,14 @@ longer being reported.
   event — "coalesce when there are a lot" is not implementable and not testable. A file written a
   thousand times in a second is one thing a developer needs to know about, and the requirement is
   that the count of events delivered is bounded by elapsed time rather than by writes.
-- **FR-013**: An event MUST NOT carry file content. It says something changed, not what it now is.
+- **FR-013**: An event MUST NOT carry file **content** — no bytes, and no hash. It says something
+  changed, not what the file now says.
+- **FR-013a**: An event MAY carry the entry metadata a directory listing already returns — whether
+  the path is a file or a directory, its size, and when it was modified. This is not content: it
+  is what the tree is drawn from, and none of it can make the client believe it holds current
+  bytes, because validity remains a hash comparison and nothing else (FR-019). Without it a
+  created file cannot be placed in the tree at all without asking about a path the client was just
+  told about, which FR-020 forbids.
 - **FR-014**: The client MUST treat every path in an event as untrusted and MUST refuse one that
   escapes the workspace root, independently of anything the engine checked (Principle VI).
 
@@ -362,6 +369,12 @@ longer being reported.
   visible when the developer returns to that tab, and MUST NOT interrupt the tab they are working
   in — otherwise honouring FR-023 for background tabs would itself become the interruption FR-024
   forbids.
+- **FR-023b**: A wholesale invalidation MUST satisfy FR-023 for every open tab. The bulk rule
+  discards the individual events (FR-015), so a branch switch that rewrites a file the developer
+  has open would otherwise report nothing about it — FR-023 says MUST, without exception for how
+  the change arrived. The client already knows which files it has open, so it marks their cached
+  content unproven on a wholesale invalidation rather than the engine exempting them from the
+  bulk rule. Nothing extra crosses the wire, and the developer is still told.
 - **FR-024**: A change to a file with no open tab MUST NOT interrupt the developer. A tree entry
   updating in place is not an interruption; a prompt, a dialog, or a shift of focus is.
 - **FR-024a**: Closing the last tab on a file MUST stop reporting changes for it. Interest ends
@@ -430,6 +443,8 @@ longer being reported.
 - **SC-005**: During a burst of ten thousand changes, interactive actions continue to meet §1.4's
   budget, with the measured value printed rather than only compared.
 - **SC-006**: A wholesale invalidation discards zero cached content blobs.
+- **SC-004a**: After a wholesale invalidation, every file with an open tab is marked unproven, in
+  100% of exercised cases, with zero individual events delivered for them.
 - **SC-006a**: An event naming a cached file discards zero blobs and causes zero extra
   confirmations — the next read's existing hash check is the only one made.
 - **SC-006b**: A file marked unproven by an event is still served while disconnected, presented as

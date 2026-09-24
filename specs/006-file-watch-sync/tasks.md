@@ -49,7 +49,7 @@ migration. Every user story depends on all of it.
 ### Protocol vocabulary
 
 - [ ] T005 Add `WatchParams`, `WatchResult`, `Refusal` and `RefusalReason` to `protocol/src/wire.rs` per [data-model.md](./data-model.md) *Wire types*, snake_case on the wire with no `rename_all`, matching the convention F002 established
-- [ ] T006 Add `FileEventParams` carrying `events[]`, and `FileEventKind` with `created`/`modified`/`deleted`/`renamed`, to `protocol/src/wire.rs`. `created` and `modified` carry `type`, `size`, `modified`; only `renamed` sets `to_path`. The event identifies its workspace, what happened and where (FR-010; depends on T005, same file)
+- [ ] T006 Add `FileEventParams` carrying `events[]`, and `FileEventKind` with `created`/`modified`/`deleted`/`renamed`, to `protocol/src/wire.rs`. `created` and `modified` carry `type`, `size`, `modified`; only `renamed` sets `to_path`. The event identifies its workspace, what happened and where, and carries entry metadata but never bytes or a hash (FR-010, FR-013a; depends on T005, same file)
 - [ ] T007 Add `InvalidateAllParams` to `protocol/src/wire.rs` and extend `wire::codes` with the constants it is missing — `-32000`, `-32004`, `-32005`, `-32006`, `-32008` — so no integer is ever written inline, which that module's own doc comment already requires (depends on T006, same file)
 - [ ] T008 [P] Round-trip serialisation tests for every new wire type in `protocol/tests/watch_wire.rs`, asserting the snake_case field names explicitly rather than round-tripping into Rust and back — a symmetric bug survives a round trip
 
@@ -158,6 +158,7 @@ invalidation, a stale tree, no refetch, and interactions still inside budget.
 - [ ] T056 [US2] Emit `workspace/invalidateAll` from `engine/src/adapters/outbound/watch_thread.rs` when the coalescer returns it (depends on T039)
 - [ ] T057 [US2] Implement `mark_stale` over `files.stale` in `client/core/src/adapters/outbound/sqlite/mod.rs`, marking a whole workspace in one statement
 - [ ] T058 [US2] Handle `invalidateAll` in `client/core/src/application/use_cases/apply_file_event.rs`: mark stale, discard nothing, fetch nothing (depends on T042)
+- [ ] T109 [US2] Mark every open tab's cached content unproven on a wholesale invalidation, in `client/core/src/application/use_cases/apply_file_event.rs`. The bulk rule discards the individual events, so without this a branch switch that rewrites a file the developer has open reports nothing about it, and FR-023 admits no exception for how the change arrived (FR-023b, SC-004a; depends on T058, same file)
 - [ ] T059 [US2] Re-read a stale region only when the developer navigates into it, in `client/core/src/application/use_cases/cached_workspace.rs`
 - [ ] T060 [P] [US2] Render staleness by dimming in `client/ui/lib/workspace/FileTree.svelte` following the prototype's own treatment — "Dimmed rows are stale … They are never waited on" — using existing tokens and no raw values (Principle I)
 

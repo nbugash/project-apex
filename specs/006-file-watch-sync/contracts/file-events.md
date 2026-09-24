@@ -40,7 +40,8 @@ frames that never approach the cap.
 are present because without them a `created` event cannot produce a row: `files` declares
 `size_bytes`, `remote_modified_at` and `is_directory` all `NOT NULL`, so US1's first acceptance
 scenario would require a follow-up `stat` that FR-020 forbids. This is metadata, not content —
-FR-013 forbids bytes, and no amount of metadata tells the client what a file now says.
+FR-013 forbids bytes and a hash; FR-013a authorises exactly this metadata, and none of it tells
+the client what a file now says.
 
 Wire spelling is snake_case (§4.8): `workspace_id`, `events`, `event`, `relative_path`, `to_path`,
 `type`, `size`, `modified`. The `event` values are single lowercase words on the wire, matching
@@ -69,10 +70,13 @@ detection*).
 
 ### Guarantees
 
-1. **An event carries no content, ever** (FR-013). Not the bytes, not a hash, not a size, not a
-   diff. It says something changed, not what it now is. The absence of a content field is what
+1. **An event carries no content, ever** (FR-013). Not the bytes, not a hash, not a diff. It says
+   something changed, not what the file now *says*. The absence of a content field is what
    enforces FR-019 structurally rather than by rule — a client cannot mark a blob valid from an
-   event because an event contains nothing a validity decision could be made from.
+   event, because an event contains nothing a validity decision could be made from. **A hash is
+   the line**: `size` and `modified` are present (FR-013a) and neither can settle validity, which
+   is why carrying them costs nothing structurally. Were a hash ever added here, FR-019 would stop
+   being structural and become a rule somebody has to keep.
 2. **A rename is one event naming both paths** (FR-011), never a `deleted` followed by an
    unrelated `created`. F003's projection survives a rename only if the entry moves rather than
    being lost and re-found (its FR-022 and guarantee C9), and a client cannot reconstruct the
@@ -144,7 +148,12 @@ would be tempted to act differently for different causes, and §10.4 specifies o
    discarded — SC-006 asserts the number.
 4. **It is not a fetch instruction** (FR-017). The client marks the tree stale and re-queries
    lazily as the developer navigates; SC-012a asserts zero listing requests until they do.
-5. **The engine never sends it on reconnection.** It cannot distinguish a reconnecting client
+5. **Every open tab is marked unproven by it** (FR-023b, SC-004a). The bulk rule discards the
+   individual events, so a branch switch that rewrites a file the developer has open would
+   otherwise report nothing about that file, and FR-023 admits no exception for how the change
+   arrived. The **client** does this from its own tab list; nothing extra crosses the wire, and
+   the engine is not asked to exempt open tabs from the bulk rule.
+6. **The engine never sends it on reconnection.** It cannot distinguish a reconnecting client
    from a connecting one. FR-026 requires the *client* to apply this same handling locally on
    reconnection, unprompted. A client waiting for a notification that is never sent shows a tree
    it believes is fresh.
@@ -312,7 +321,7 @@ Stated as a table because every row of it is a way an implementation has gone wr
 | That an open tab should be marked changed (FR-023) | That focus should move, or the focused tab be interrupted (FR-023a, FR-024) |
 | That a tree region is stale, for `invalidateAll` (FR-017) | That cached content is stale — invalidation of the tree is not invalidation of content (FR-018, §10.4, §5.3) |
 | That the developer should be told, when watching is refused (FR-005, FR-025) | That silence means stability — the engine may have restarted (spec edge case) |
-| Nothing at all about content | Anything at all about content. An event carries none (FR-013) |
+| Entry metadata: type, size, modified (FR-013a) | Anything about content — bytes, or a hash. An event carries neither (FR-013) |
 
 ---
 

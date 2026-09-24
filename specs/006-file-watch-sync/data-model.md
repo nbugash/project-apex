@@ -489,7 +489,7 @@ follow it by naming their fields snake_case and adding no attribute.
 pub struct WatchParams   { workspace_id: WorkspaceId, paths: Vec<String> }
 pub struct WatchResult   { watching: u32, refused: Vec<WatchRefusal> }
 pub struct WatchRefusal  { path: String, reason: RefusalReason }
-pub enum   RefusalReason { CapacityExhausted, NotADirectory, NotFound }   // lowercase on the wire
+pub enum   RefusalReason { Capacity, Excluded, NotFound, NotADirectory } // snake_case on the wire
 
 // ---- workspace/unwatch ----
 pub struct UnwatchParams { workspace_id: WorkspaceId, paths: Vec<String> }
@@ -513,6 +513,14 @@ pub enum FileEventKind { Created, Modified, Deleted, Renamed }            // low
 // ---- workspace/invalidateAll ----
 pub struct InvalidateAllParams { workspace_id: WorkspaceId }
 ```
+
+**`RefusalReason` is a closed set of four**, matching
+[watch-methods.md](./contracts/watch-methods.md) exactly: `capacity`, `excluded`, `not_found`,
+`not_a_directory` on the wire. `Excluded` is not optional — FR-008 forbids watching an excluded
+path, and the contract returns it in `refused[]` rather than silently not watching it, because
+silence is indistinguishable from a working watch. A client MUST read an unrecognised value as
+`capacity`, the conservative reading: every reason means the same thing to the developer, which is
+that this path is not being watched (FR-005).
 
 **Paths are `String`, not `RelPath`.** This matches `RegisterParams::path`, which the existing
 code comments as "untrusted, like every path off the wire", and it is what makes FR-014
@@ -547,8 +555,8 @@ A-BULKSIZE — rather than an aggregate across frames that never approach the ca
 The metadata exists because a `created` event cannot otherwise produce a row: `files` declares
 `size_bytes`, `remote_modified_at` and `is_directory` all `NOT NULL`, so US1's first acceptance
 scenario would need a follow-up `stat` that FR-020 forbids. `type`, `size` and `modified` are what
-`workspace/readDirectory` already returns per entry. FR-013 is not breached: it forbids **content**,
-and metadata cannot tell the client what a file now says.
+`workspace/readDirectory` already returns per entry. FR-013 is not breached and FR-013a authorises it:
+the rule forbids bytes and a hash, and metadata cannot tell the client what a file now says.
 
 **Neither addition increments `protocolVersion`.** §4.8 is explicit that adding a method does not.
 What the client needs instead is a way to know the engine has them, and that is what
