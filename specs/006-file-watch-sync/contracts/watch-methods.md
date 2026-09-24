@@ -4,7 +4,8 @@
 
 The two requests this feature adds to §4.8, on both ends. `project-apex-predator.md` §4.8 is the
 source of truth for the method catalogue; this document states the guarantees the catalogue's
-table has no room for, and marks the places it must be amended.
+table has no room for. The amendments it required were applied on 2026-09-24 and are listed at the
+end, so this contract and the catalogue now describe the same thing.
 
 Every method takes `workspaceId`. Every path in `paths[]` is **untrusted input** at the engine
 (§4.7, Principle VI), and every path in an event is untrusted again at the client
