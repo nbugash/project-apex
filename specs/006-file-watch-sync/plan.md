@@ -161,12 +161,18 @@ client/core/src/
 │       └── local_workspace.rs       # local-mode watching, own containment
 └── composition_workspace.rs         # wiring; no new global state
 
-client/ui/src/lib/
-├── tree/FileTree.svelte             # stale marking, in-place row updates
-└── tabs/TabStrip.svelte             # changed-tab marking (FR-023a)
+client/ui/lib/
+├── workspace/
+│   ├── FileTree.svelte              # stale marking (dimmed), in-place row updates
+│   ├── tree.svelte.ts               # WorkspaceTree: applies events to the rendered tree
+│   └── watched.svelte.ts            # NEW: derives the watched set from expansion + open tabs
+├── tabs/TabStrip.svelte             # changed-tab marking (FR-023a)
+└── statusbar/StatusBar.svelte       # "changes are not being reported" (FR-025)
 
-tests/e2e/
-└── file-watch.spec.ts               # NEW: tree updates, tab marked, no focus change
+tests/
+├── unit/                            # webview unit specs live here, not under client/ui/
+└── e2e/
+    └── file-watch.spec.ts           # NEW: tree updates, tab marked, no focus change
 ```
 
 **Structure Decision**: The existing three-crate Cargo workspace plus the Svelte webview, with
