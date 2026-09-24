@@ -331,27 +331,27 @@ and the refusal is identical whether or not the escaped target exists (F003's FR
 
 ---
 
-## Amendments this feature owes the system specification
+## Amendments this feature made to the system specification
 
-Recorded here so implementation cannot begin against a catalogue that does not describe it. The
-plan's Constitution Check makes Principle II blocking on the first of these.
+**All applied 2026-09-24**, before implementation, as Principle II requires. Recorded here so a
+reader of this contract can confirm the catalogue describes it rather than assuming so.
 
-1. **§4.8 gains two rows**, `workspace/watch` and `workspace/unwatch`, with the paragraph
-   explaining why watching is client-driven.
-2. **§10.3 is narrowed** from "scoped to the workspace" to scoped to what the client has asked
-   for, with the reason.
-3. **Appendix A gains A-WATCHSCOPE**, and A-COALESCE, A-UNPROVEN and A-WATCHLOCAL alongside it
-   (research.md, *Appendix A records required before implementation*).
-4. **§6.1's `watch()` signature disagrees with both of the above and research.md does not record
-   an amendment for it.** The trait declares
-   `async fn watch(&self, path: &RelPath) -> Result<WatchHandle>` — one path, and a handle. This
-   contract is a set of paths and a partial result carrying refusals, and no `WatchHandle` type
-   exists anywhere in the codebase. The client-side port
-   (`client/core/src/application/ports/workspace_provider.rs`) already diverges a third way,
-   declaring `watch(&self, ws, path) -> ProviderResult<()>` with the handle dropped. **Three
-   shapes, no recorded reconciliation.** §6.1 must be amended with §4.8, or F004 implements a
-   trait method the system specification describes differently — which is the Principle II
-   failure this feature already found once.
+1. **§4.8 gained two rows**, `workspace/watch` and `workspace/unwatch`, with the paragraph
+   explaining why watching is client-driven and why `paths[]` carries what the client cares about
+   rather than the directories the engine will watch.
+2. **§10.3 was narrowed** from "scoped to the workspace" to scoped to what the client has asked
+   for, with the reason and the kernel-overflow route.
+3. **Appendix A gained A-WATCHSCOPE**, with A-COALESCE, A-UNPROVEN and A-WATCHLOCAL alongside it.
+   Appendix A went from 31 records to 35.
+4. **§6.1's `watch()` was corrected.** It declared
+   `async fn watch(&self, path: &RelPath) -> Result<WatchHandle>` — one path, and a handle to a
+   `WatchHandle` type that existed nowhere in the codebase — while the client-side port declared
+   `watch(&self, ws, path) -> ProviderResult<()>` with the handle already dropped, and this
+   contract needs a set of paths and a partial result. Three shapes, and §6.1 called its own
+   normative. It now reads
+   `async fn watch(&self, paths: &[RelPath]) -> Result<WatchOutcome>` with `unwatch` beside it and
+   no handle. Phase 0 had listed only §4.8 as the Principle II blocker; this defect sat one section
+   away and was found by writing this contract against the catalogue rather than against the plan.
 
 ## What is NOT added here
 

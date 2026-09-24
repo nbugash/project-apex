@@ -200,8 +200,10 @@ navigation resolve it. That is also FR-026's reasoning applied to a second cause
 **Neither spec.md nor research.md records this.** research.md fixes the bulk threshold and the
 coalescing window and is silent on queue overflow. The handling above follows FR-015 and §10.4 by
 analogy and is written here so it is a decision rather than something discovered in a burst test
-— but it closes an alternative (drop the batch and continue) and therefore owes an Appendix A
-record under Principle III, or an addition to A-COALESCE, before the code exists.
+— and because it closes an alternative (drop the batch and continue) it required an Appendix A
+record under Principle III. **A-COALESCE absorbed it on 2026-09-24** rather than taking a fifth
+identity, since the client's response to an overflow and to a bulk change is the same response.
+§10.3 states the route as well.
 
 ---
 

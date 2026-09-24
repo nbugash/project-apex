@@ -21,16 +21,34 @@ and *Directory rename with a subtree*. Rationale lives there and is not restated
 | | Name | Type | Required |
 |---|---|---|---|
 | param | `workspaceId` | string | yes |
-| param | `event` | one of `created`, `modified`, `deleted`, `renamed` | yes |
-| param | `relativePath` | string, workspace-relative | yes |
-| param | `toPath` | string, workspace-relative | **exactly when** `event` is `renamed` |
+| param | `events` | array of event objects, never empty | yes |
+| event | `event` | one of `created`, `modified`, `deleted`, `renamed` | yes |
+| event | `relativePath` | string, workspace-relative | yes |
+| event | `toPath` | string, workspace-relative | **exactly when** `event` is `renamed` |
+| event | `type` | `file` or `directory` | on `created` and `modified` |
+| event | `size` | integer, bytes | on `created` and `modified`, for a file |
+| event | `modified` | integer, epoch milliseconds | on `created` and `modified` |
 
-Wire spelling is snake_case (§4.8): `workspace_id`, `event`, `relative_path`, `to_path`. The
-`event` values are single lowercase words on the wire, matching `EntryKind`'s precedent in
-`protocol/src/wire.rs`.
+**The notification carries an array.** One flush of the coalescer is one frame: everything whose
+window closed at the same instant travels together. §4.6 makes this one pipe and one queue, and a
+burst delivered as hundreds of separate frames would take the writer hundreds of times ahead of
+whatever interactive request is queued behind it (FR-016). It is also what makes A-COALESCE's
+upper bound on the 256-path threshold a real frame-size constraint rather than an aggregate across
+frames that never approach the cap.
 
-**AMENDS §4.8.** The catalogue names the `event` parameter and never says what may be in it. The
-four kinds above are the complete vocabulary, and §4.8 must state them: a third party — or a
+`type`, `size` and `modified` are the same entry metadata `workspace/readDirectory` returns. They
+are present because without them a `created` event cannot produce a row: `files` declares
+`size_bytes`, `remote_modified_at` and `is_directory` all `NOT NULL`, so US1's first acceptance
+scenario would require a follow-up `stat` that FR-020 forbids. This is metadata, not content —
+FR-013 forbids bytes, and no amount of metadata tells the client what a file now says.
+
+Wire spelling is snake_case (§4.8): `workspace_id`, `events`, `event`, `relative_path`, `to_path`,
+`type`, `size`, `modified`. The `event` values are single lowercase words on the wire, matching
+`EntryKind`'s precedent in `protocol/src/wire.rs`.
+
+**AMENDED §4.8, 2026-09-24.** The catalogue named the `event` parameter and never said what may be
+in it, carried a singular `relativePath`, and had no metadata. All three are now fixed in the
+catalogue. The four kinds above are the complete vocabulary, and §4.8 states them: a third party — or a
 second implementation of this engine — reading the catalogue alone has no way to know whether
 `renamed` exists, which is the one kind FR-011 makes mandatory. Adding a description of an
 existing parameter does not increment `protocolVersion` (§4.8).
@@ -198,7 +216,9 @@ Frames are snake_case and length-prefixed per §4.1; headers omitted. Notificati
 
 ```json
 {"jsonrpc":"2.0","method":"workspace/onFileEvent",
- "params":{"workspace_id":"ws_7f2a","event":"created","relative_path":"src/parser/token.rs"}}
+ "params":{"workspace_id":"ws_7f2a","events":[
+   {"event":"created","relative_path":"src/parser/token.rs",
+    "type":"file","size":2048,"modified":1758700000000}]}}
 ```
 
 **A file modified — one event, however many writes.** A compiler writes `out/app.wasm` four
@@ -206,7 +226,9 @@ hundred times in a second; the coalescer delivers at most ten (guarantee 4, SC-0
 
 ```json
 {"jsonrpc":"2.0","method":"workspace/onFileEvent",
- "params":{"workspace_id":"ws_7f2a","event":"modified","relative_path":"src/parser/expr.rs"}}
+ "params":{"workspace_id":"ws_7f2a","events":[
+   {"event":"modified","relative_path":"src/parser/expr.rs",
+    "type":"file","size":8192,"modified":1758700001000}]}}
 ```
 
 The client marks the blob unproven and does not delete it (obligation 15). It does **not** mark
@@ -217,8 +239,9 @@ tab is marked changed without taking focus (obligation 21).
 
 ```json
 {"jsonrpc":"2.0","method":"workspace/onFileEvent",
- "params":{"workspace_id":"ws_7f2a","event":"renamed",
-           "relative_path":"src/parser/expr.rs","to_path":"src/parser/expression.rs"}}
+ "params":{"workspace_id":"ws_7f2a","events":[
+   {"event":"renamed","relative_path":"src/parser/expr.rs",
+    "to_path":"src/parser/expression.rs"}]}}
 ```
 
 The client moves the tree entry (obligation 18). The cached content survives, because `file_id`
@@ -229,8 +252,8 @@ and this is its first caller.
 
 ```json
 {"jsonrpc":"2.0","method":"workspace/onFileEvent",
- "params":{"workspace_id":"ws_7f2a","event":"renamed",
-           "relative_path":"src/parser","to_path":"src/syntax"}}
+ "params":{"workspace_id":"ws_7f2a","events":[
+   {"event":"renamed","relative_path":"src/parser","to_path":"src/syntax"}]}}
 ```
 
 Eleven hundred descendants changed path and **none of them was individually touched**. The
@@ -243,7 +266,8 @@ untouched (obligations 19, 20).
 
 ```json
 {"jsonrpc":"2.0","method":"workspace/onFileEvent",
- "params":{"workspace_id":"ws_7f2a","event":"deleted","relative_path":"src/parser/scratch.rs"}}
+ "params":{"workspace_id":"ws_7f2a","events":[
+   {"event":"deleted","relative_path":"src/parser/scratch.rs"}]}}
 ```
 
 **A branch switch** — nine thousand paths changed inside one second (US2, SC-004).
@@ -265,7 +289,9 @@ checked.
 
 ```json
 {"jsonrpc":"2.0","method":"workspace/onFileEvent",
- "params":{"workspace_id":"ws_7f2a","event":"modified","relative_path":"../../etc/shadow"}}
+ "params":{"workspace_id":"ws_7f2a","events":[
+   {"event":"modified","relative_path":"../../etc/shadow",
+    "type":"file","size":1,"modified":1758700002000}]}}
 ```
 
 Dropped. Nothing is marked, nothing is fetched, nothing is rendered, and the refusal is recorded
@@ -290,19 +316,22 @@ Stated as a table because every row of it is a way an implementation has gone wr
 
 ---
 
-## Amendments this feature owes the system specification
+## Amendments this feature made to the system specification
 
-1. **§4.8 must state the `event` vocabulary** — `created`, `modified`, `deleted`, `renamed` — and
-   that `toPath` is present exactly for `renamed`. Today the catalogue names the field and
-   defines no values, which leaves FR-011's mandatory kind undiscoverable from the specification.
-2. **The 100 ms window and the 256-path threshold belong in Appendix A as A-COALESCE**
-   (research.md). §10.4 gives the cases and no number, and FR-012 and FR-015 both require the
-   value to be stated rather than judged.
-3. **One event per frame, or a batch per frame, is not settled.** §4.8's `onFileEvent` row carries
-   a single `relativePath`, so this contract specifies one event per notification. research.md's
-   frame-size argument for the 256 threshold — "256 of them is about 64 KiB, a factor of eight
-   inside the smaller limit" — is the arithmetic of a *batched* payload, and reads as though a
-   burst travels in one frame. Under the shape specified here that figure is an **aggregate bound
-   on a burst spread across up to 256 frames**, not a frame size, and §4.1's 1 MiB cap is never
-   approached by a single event. Recorded rather than resolved: if batching is wanted, §4.8 needs
-   a third amendment adding a plural form, and the 1 MiB cap then becomes a real constraint on it.
+**All applied 2026-09-24**, before implementation.
+
+1. **§4.8 now states the `event` vocabulary** — `created`, `modified`, `deleted`, `renamed` — and
+   that `toPath` is present exactly for `renamed`. The catalogue previously named the field and
+   defined no values, which left FR-011's mandatory kind undiscoverable from the specification.
+2. **A-COALESCE records the 100 ms window and the 256-path threshold.** §10.4 gave the cases and
+   no number, and FR-012 and FR-015 both require the value to be stated rather than judged.
+3. **`onFileEvent` now carries an array, and entry metadata.** This was recorded as unsettled when
+   this contract was first written, and it is settled: §4.8's row is
+   `events[]` of `{event, relativePath, toPath?, type?, size?, modified?}`.
+
+   Two things forced it. The batch is better for FR-016 — one writer acquisition per flush rather
+   than up to 256 interleaved with interactive traffic — and it makes A-COALESCE's frame-size
+   upper bound on the threshold a real constraint instead of an aggregate across frames that never
+   approach the cap. The metadata is what makes a `created` event able to produce a `files` row at
+   all, since `size_bytes`, `remote_modified_at` and `is_directory` are `NOT NULL` and the
+   alternative was a follow-up `stat` that FR-020 forbids.

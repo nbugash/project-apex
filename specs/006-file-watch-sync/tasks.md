@@ -68,6 +68,7 @@ migration. Every user story depends on all of it.
 - [ ] T016 Unit tests in `engine/src/application/coalescer.rs` for FR-012 and SC-007: a thousand `accept` calls for one path across one simulated second yields **at most 10** events, and — the assertion that matters — **at least 1**. An upper bound alone passes when the window is widened to infinity and the developer waits forever (depends on T015, same file)
 - [ ] T017 Implement rename pairing in `engine/src/application/coalescer.rs`: `IN_MOVED_FROM` and `IN_MOVED_TO` sharing a cookie inside the window become one `renamed` event naming both paths; an unpaired half at flush becomes `deleted` or `created` respectively (FR-011, depends on T016, same file)
 - [ ] T018 Unit tests in `engine/src/application/coalescer.rs` for rename pairing, including both unpaired directions — a file moved out of the workspace is a deletion here, and one moved in is a creation (depends on T017, same file)
+- [ ] T108 Unit test in `engine/src/application/coalescer.rs` asserting events for **one path** are emitted in the order they occurred, and that no ordering is claimed across paths ([file-events.md](./contracts/file-events.md) obligation 8; depends on T018, same file)
 - [ ] T019 Implement the trailing edge explicitly in `engine/src/application/coalescer.rs` and test it: the **last** write in a burst is the one whose event is emitted, not the first (contracts/file-events.md guarantee 5, depends on T018, same file)
 
 ### The writer seam — new, and the thing FR-016 measures
@@ -111,6 +112,7 @@ tree update, with no remote host and no network.
 
 ### Implementation for User Story 1
 
+- [ ] T104 [P] [US1] Port-behaviour tests in `engine/tests/watcher_port.rs`: `poll` never blocks longer than its timeout, so a window due in 40 ms is flushed in 40 ms whatever the workspace is doing (W5, the mechanism behind SC-001); a refusal for one directory leaves every already-held watch intact and still adds every directory it can (W2, FR-005a); and the port yields no content and opens no file, so there is no path from a `RawEvent` to bytes (W6, FR-013)
 - [ ] T035 [P] [US1] Implement `FakeWatcher` in `engine/tests/common/fake_watcher.rs` — feed events, exhaust capacity on demand, report `held()` — with no filesystem
 - [ ] T036 [P] [US1] Implement `FakeClock` in `engine/tests/common/fake_clock.rs` returning a settable monotonic `Millis`
 - [ ] T037 [US1] Implement `SetWatchedPaths` in `engine/src/application/use_cases/watch.rs`: resolve and contain every path through `ResolvedPath`, skip excluded ones, derive directories from file paths, and return `WatchOutcome { watching, refused }`. Capacity exhaustion is returned, never raised (W1, FR-005a)
@@ -122,8 +124,8 @@ tree update, with no remote host and no network.
 - [ ] T043 [US1] Implement the notification inbound adapter in `client/core/src/adapters/inbound/file_event_notification.rs`, translating the wire payload into use-case input and carrying no business rule
 - [ ] T044 [US1] Implement `watch`/`unwatch` in `client/core/src/adapters/outbound/remote_workspace.rs` over the transport
 - [ ] T045 [P] [US1] Return `Unsupported` from `watch`/`unwatch` in `client/core/src/adapters/outbound/local_workspace.rs`, with the A-WATCHLOCAL reasoning in a doc comment
-- [ ] T097 [P] [US1] Engine-side containment test in `engine/tests/watch_containment.rs`: a watch request for a path outside the root is refused, a symlinked directory resolving outside the root is refused, and **no event is emitted for either**. Principle VI requires both sides — T079 covers only the client's half, and FR-002 is an engine obligation
-- [ ] T098 [P] [US1] Structural guard in `engine/tests/inotify_confinement.rs` asserting `inotify` appears in exactly one source file. plan.md states this as a rule and prose does not fail a build; the pattern already exists in `the_mock_implements_no_engine_method`, which reads its own source with `include_str!`
+- [ ] T097 [P] [US1] Engine-side containment test in `engine/tests/watch_containment.rs`: a watch request for a path outside the root is refused, a symlinked directory resolving outside the root is refused, and **no event is emitted for either**. Principle VI requires both sides — T079 covers only the client's half, and FR-002 is an engine obligation. Also covers W3: the port cannot be handed an unchecked path, because `ResolvedPath` has no constructor but `resolve`
+- [ ] T098 [P] [US1] Structural guard in `engine/tests/inotify_confinement.rs` asserting `inotify` appears in exactly one source file. plan.md states this as a rule and prose does not fail a build; the pattern already exists in `the_mock_implements_no_engine_method`, which reads its own source with `include_str!`. This is also what keeps W4 true — the port reports what the kernel said and decides no delivery
 - [ ] T099 [P] [US1] Delivery test in `engine/tests/excluded_paths.rs`: changes inside an excluded directory produce **zero** events, for every event kind. T013 and T014 test that the set is built correctly; this tests the consequence, which is what FR-008 and SC-002 actually require
 - [ ] T046 [US1] Wire the watcher, clock and writer in the engine composition root in `engine/src/lib.rs`, with no global singleton
 - [ ] T047 [US1] Drive watch requests from folder expansion in `client/ui/lib/workspace/FileTree.svelte`, debounced, sending folder paths on expand and releasing on collapse (FR-003a)
@@ -145,7 +147,7 @@ invalidation, a stale tree, no refetch, and interactions still inside budget.
 ### Tests for User Story 2
 
 - [ ] T050 [P] [US2] Unit test in `engine/tests/bulk_threshold.rs`: 255 distinct paths in one second yield individual events; 256 yield exactly one `invalidateAll` and **zero** individual events for that window (FR-015, SC-004)
-- [ ] T051 [P] [US2] Unit test in `engine/tests/overflow.rs`: a `RawKind::Overflow` yields `invalidateAll`, because events the kernel dropped are changes nobody would otherwise hear about (A-COALESCE, FR-005)
+- [ ] T051 [P] [US2] Unit test in `engine/tests/overflow.rs`: a `RawKind::Overflow` yields `invalidateAll`, because events the kernel dropped are changes nobody would otherwise hear about (W7, A-COALESCE, FR-005)
 - [ ] T052 [P] [US2] Integration test in `client/core/tests/invalidate_all.rs`: a wholesale invalidation marks the tree stale and discards **zero** content blobs (FR-018, SC-006)
 - [ ] T053 [P] [US2] Integration test in `client/core/tests/lazy_requery.rs`: after an invalidation, zero listing requests are issued until the developer navigates (FR-017, SC-012a)
 
@@ -174,6 +176,7 @@ without the file being altered underneath them and without focus moving.
 ### Tests for User Story 3
 
 - [ ] T061 [P] [US3] Integration test in `client/core/tests/unproven.rs`: an event naming a cached file sets `unproven`, discards zero blobs and triggers zero fetches (FR-019a, SC-006a)
+- [ ] T107 [P] [US3] Test in `client/core/tests/unproven_idempotent.rs`: marking an already-unproven blob changes nothing and causes **zero** second fetches. The hash already disagrees and the file is already unproven ([file-events.md](./contracts/file-events.md) obligation 17, spec edge case)
 - [ ] T062 [P] [US3] Integration test in `client/core/tests/unproven_offline.rs`: an unproven blob is still served while disconnected, presented as possibly stale (FR-019b, SC-006b)
 - [ ] T063 [P] [US3] Test in `client/core/tests/rename_subtree.rs` asserting the separator boundary: renaming `src` rewrites `src` and everything under `src/`, and leaves `src-generated` **untouched**. Assert on the returned row count, not only on spot checks
 - [ ] T064 [P] [US3] Test in `client/core/tests/rename_subtree_atomic.rs`: a rewrite that fails partway rolls back entirely, leaving a consistent stale projection rather than a half-renamed one
@@ -204,6 +207,8 @@ capacity, and confirm resources are returned and the developer is told in every 
 
 ### Tests for User Story 4
 
+- [ ] T105 [P] [US4] Test in `engine/tests/unwatch_race.rs`: an event already in flight for a path the client has just unwatched is dropped rather than delivered ([file-events.md](./contracts/file-events.md) obligation 12, spec edge case "a folder collapsed while its files are changing")
+- [ ] T106 [P] [US4] Test in `engine/tests/reconnect_no_invalidate.rs`: the engine sends **no** `invalidateAll` on reconnection. It cannot distinguish a reconnecting client from a new one, so the staleness decision is the client's ([file-events.md](./contracts/file-events.md), `invalidateAll` guarantee 5; FR-026)
 - [ ] T072 [P] [US4] Integration test in `engine/tests/watch_release.rs`: closing a workspace returns `held()` to its pre-open level with zero watches left (SC-009)
 - [ ] T073 [P] [US4] Integration test in `engine/tests/watch_proportional.rs`: a workspace of a hundred thousand files with ten folders expanded holds watches for those ten, their ancestors and any open tabs outside them, and no more (FR-003, SC-009a)
 - [ ] T074 [P] [US4] Integration test in `engine/tests/watch_collapse.rs`: collapsing a folder releases its watch, and collapsing one that still holds an open tab releases **zero** watches that tab depends on (FR-003a, SC-009b)
@@ -249,10 +254,10 @@ capacity, and confirm resources are returned and the developer is told in every 
 ```text
 Setup (T001-T004)
    └─> Foundational (T005-T030)            ← blocks every story
-          ├─> US1 (T031-T049, T097-T099)  🎯 MVP
-          ├─> US2 (T050-T060)              depends on US1's coalescer and apply path
-          ├─> US3 (T061-T071, T100-T101)   depends on US1's apply path
-          └─> US4 (T072-T086, T102)        depends on US1's watch establishment
+          ├─> US1 (T031-T049, T097-T099, T104)  🎯 MVP
+          ├─> US2 (T050-T060)                    depends on US1's coalescer and apply path
+          ├─> US3 (T061-T071, T100-T101, T107)   depends on US1's apply path
+          └─> US4 (T072-T086, T102, T105-T106)   depends on US1's watch establishment
                  └─> Polish (T087-T096, T103)
 ```
 
@@ -261,13 +266,13 @@ T004 gates only T085 and T086. Every other task is unblocked by it.
 ## Parallel opportunities
 
 - **Foundational**: T009–T014 are six different files and run together; T008, T023, T026, T027, T030 likewise
-- **US1**: all four test tasks T031–T034 in parallel, plus T097–T099; then T035, T036, T045, T049
+- **US1**: all four test tasks T031–T034 in parallel, plus T097–T099 and T104; then T035, T036, T045, T049
 - **US2**: T050–T053 in parallel
-- **US3**: T061–T065 in parallel, plus T071, T100, T101 — eight different test files
-- **US4**: T072–T079 and T102 in parallel — nine different test files, the largest block in the feature
+- **US3**: T061–T065 in parallel, plus T071, T100, T101 and T107 — nine different test files
+- **US4**: T072–T079, T102, T105 and T106 in parallel — eleven different test files, the largest block in the feature
 - **Polish**: T087–T095 in parallel; T103 edits the `Makefile` and T096 gates on it, so both are sequential
 
-The coalescer tasks (T015–T019, T054, T055) are deliberately **not** parallel: they are one file, and
+The coalescer tasks (T015–T019, T054, T055, T108) are deliberately **not** parallel: they are one file, and
 marking them `[P]` would be the same false claim that shipped seventeen times across F000, F002 and
 F018. The whole list is checked mechanically — `python3 scripts/pipeline.py verify --phase tasks`
 reports zero duplicate ids, zero malformed lines and zero pairs of `[P]` tasks editing one file.
