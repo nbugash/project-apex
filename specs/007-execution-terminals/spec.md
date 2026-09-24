@@ -100,8 +100,10 @@ progressively, with no remote host and no network.
 
 1. **Given** a workspace, **When** the developer runs a command, **Then** its output appears in
    the panel as it is produced rather than at completion.
-2. **Given** a command writing to both stdout and stderr, **When** it runs, **Then** both appear,
-   distinguishable from one another.
+2. **Given** a command writing to both output streams in a terminal, **When** it runs, **Then**
+   both appear, merged as a shell merges them.
+2a. **Given** the same command run without a terminal, **When** it runs, **Then** the two streams
+   arrive distinguishable from one another.
 3. **Given** a command emitting ANSI colour and cursor control, **When** it runs, **Then** the
    panel renders the result rather than the escape sequences.
 4. **Given** a command that runs in a chosen directory, **When** it starts, **Then** it runs there
@@ -277,8 +279,13 @@ the task never stopped and no output was lost.
 
 - **FR-007**: Output MUST be delivered as it is produced, not accumulated until the process
   exits.
-- **FR-008**: Standard output and standard error MUST both be delivered, and MUST be
-  distinguishable by the client.
+- **FR-008**: Standard output and standard error MUST both be delivered. Whether they are
+  **distinguishable** depends on the shape the caller chose: a task given a terminal has one
+  device, so the two arrive merged, exactly as they do in any shell; a task given separate pipes
+  has them separated, and its process is not attached to a terminal (A-TASKSTREAM).
+- **FR-008a**: A caller MUST be able to choose which shape it gets, and the choice MUST be
+  exclusive. The two cannot both hold for one task, and offering both would be offering something
+  that does not exist.
 - **FR-009**: Output MUST arrive byte-for-byte as the process wrote it, so ANSI escape sequences
   and non-text bytes survive the journey unmodified.
 - **FR-010**: Output for one task MUST arrive in the order it was produced.
@@ -428,6 +435,9 @@ the task never stopped and no output was lost.
 - **SC-026**: A single process exceeding its memory limit is terminated within 2 seconds of
   doing so, and the engine survives in 100% of exercised cases.
 - **SC-027**: Stopping a task leaves zero of the processes it spawned running, at any depth.
+- **SC-028**: A task given a terminal reports `isatty` true and delivers zero bytes on the error
+  stream, in 100% of exercised cases; the same task without one reports false and delivers its
+  error output separately, in 100%.
 - **SC-017**: The full suite for this feature runs with no remote host and no network.
 
 ## Assumptions

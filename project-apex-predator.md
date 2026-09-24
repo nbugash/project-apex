@@ -487,6 +487,21 @@ discovers that when a resumption is refused.
 `workspaceId` is mandatory on every workspace method. The original "formal" contract omitted
 it, which silently removed multi-workspace addressing.
 
+`execution/attach` exists because a task outlives the connection that started it (A-TASKLIFE). A
+client that reconnects, or that restarted, needs to reach a task it did not start in this session,
+and `runTask` starts one rather than finding one. Attaching is deliberately a **different call**
+from starting: a client racing its own reconnection must not silently start a second build under
+an identity that already has one, and an idempotent `runTask` would make those two outcomes
+indistinguishable at the call site.
+
+`pty` chooses between two output shapes, and the choice is exclusive because a terminal is one
+device. With `pty: true` the task is given a pseudo-terminal, a process asking whether it is
+attached to a terminal is told yes, and **its output arrives merged on `execution/onStdout`** —
+`onStderr` carries nothing, exactly as a real shell interleaves the two beyond separation. With
+`pty: false` the task gets separate pipes, `onStdout` and `onStderr` are distinguishable, and the
+process is not attached to a terminal. A terminal panel wants the first; a caller parsing a
+build's errors wants the second, at the cost every CI system pays.
+
 `workspace/watch` and `workspace/unwatch` exist because watching is scoped to what the developer
 has open (A-WATCHSCOPE), and the engine cannot infer that. Until they were added the catalogue had
 two file-event notifications and no way to begin or end a watch, while §6.1 declared `watch()` on
@@ -576,6 +591,7 @@ exists so the UI can tell "no completions because the server died" from "no comp
 | Method | Kind | Params | Result |
 |---|---|---|---|
 | `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd`, `env`, `pty` | `{pid}` |
+| `execution/attach` | request | `workspaceId`, `taskId` | `{pid, running, retained}` |
 | `execution/writeStdin` | notification | `taskId`, `data` | — |
 | `execution/resizePty` | notification | `taskId`, `cols`, `rows` | — |
 | `execution/terminate` | request | `taskId`, `signal` | — |
@@ -1136,7 +1152,9 @@ writable.
 ## 13.2 Behaviour
 
 File operations use native syscalls. Language servers are spawned from the user's own
-installation. Tasks run in a local PTY via `portable-pty` against the user's shell. The SQLite
+installation. Tasks run in a local PTY via `portable-pty` against the user's shell — **built by F015
+`local-mode`, not by F010**, whose scope is the remote engine. Until F015 lands, the client's
+local provider refuses task methods and says so. The SQLite
 cache still serves tree rendering and search, as a performance layer rather than a network
 mask.
 
@@ -2784,6 +2802,43 @@ mechanism is cgroups and the question is only who builds it. F005 specifying pro
 way that guarantees a delegated subtree, which removes the dependency this decision avoided. Or
 F007 building the shared supervisor, which is where the isolation was always owed; this decision
 then narrows to the process group, and the per-process limits become redundant rather than wrong.
+
+---
+
+## A-TASKSTREAM — A terminal merges the streams; separating them costs the terminal (2026-09-24)
+
+**Decision.** `execution/runTask`'s `pty` parameter chooses between two output shapes, and the
+choice is exclusive. With `pty: true` the task has a pseudo-terminal, `isatty` is true, and output
+arrives merged on `execution/onStdout`. With `pty: false` the task has separate pipes, `onStdout`
+and `onStderr` are distinguishable, and `isatty` is false.
+
+**Rationale.** This is not a preference. A pseudo-terminal is **one device**, and a process whose
+standard output and standard error are both attached to it writes both into the same stream —
+which is what a terminal is, and why `2>/dev/null` exists. Two requirements that each look
+reasonable alone cannot both hold for one task: a process must believe it has a terminal, and its
+two streams must be separable.
+
+§4.8 anticipated it without saying so. The catalogue gives `runTask` a `pty` parameter *and*
+defines both `onStdout` and `onStderr`, and the only reading under which all three facts are
+consistent is that the parameter chooses. This record states what the catalogue implied.
+
+The consequence is one a caller chooses rather than suffers. A terminal panel takes the first
+shape and gets a real terminal. A caller that wants to parse a build's diagnostics takes the
+second and gets separation, at the price of the process no longer colouring its output or drawing
+progress — the same price every continuous integration system pays for the same reason.
+
+**Rejected — one pseudo-terminal per stream.** Possible and behaviourally wrong: programs expect
+their two streams to share a terminal, so `isatty` would be true on both while a resize applied
+to one of them.
+
+**Rejected — a terminal for output and a pipe for errors.** Produces a state no real terminal
+produces, where a process sees a terminal on one descriptor and not the other, and no program is
+written against it.
+
+### Reversal conditions
+
+None foreseen. This is a property of the mechanism rather than a choice about it, and the only
+thing that would reverse it is a terminal abstraction that is not one device.
 
 ---
 
