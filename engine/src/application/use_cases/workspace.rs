@@ -1,5 +1,6 @@
 //! The workspace read path, and what a `workspaceId` means.
 
+use crate::application::exclusions::ExclusionSet;
 use crate::application::ports::file_system::FileSystem;
 use crate::application::ports::roots::{RootError, WorkspaceRoots};
 use crate::domain::path::{CanonicalRoot, PathRefusal, ResolvedPath};
@@ -13,6 +14,15 @@ pub struct InMemoryRoots {
     /// The registered path as given, beside its canonical form. The former is what a conflict is
     /// reported against, because it is what the client asked for.
     roots: Mutex<HashMap<String, (String, CanonicalRoot)>>,
+    /// The resolved exclusion set, per workspace, computed once at registration.
+    ///
+    /// **Here rather than inside the watcher, deliberately.** A-IGNORE requires one set shared by
+    /// the watcher and the indexer, because an indexer that indexes what the watcher ignores
+    /// returns search results for files whose changes are never noticed. Neither existed when
+    /// this was written, so storing it on the registered workspace is what makes the sharing
+    /// structural: a later indexer reads it from here rather than computing a second one, and
+    /// "somebody will remember" is exactly the assumption A-IGNORE was written to remove.
+    exclusions: Mutex<HashMap<String, Arc<ExclusionSet>>>,
 }
 
 impl InMemoryRoots {
@@ -20,7 +30,17 @@ impl InMemoryRoots {
         Self {
             fs,
             roots: Mutex::new(HashMap::new()),
+            exclusions: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The one exclusion set for this workspace. `None` when it is not registered.
+    pub fn exclusions(&self, id: &str) -> Option<Arc<ExclusionSet>> {
+        self.exclusions
+            .lock()
+            .expect("exclusions poisoned")
+            .get(id)
+            .cloned()
     }
 }
 
@@ -41,6 +61,15 @@ impl WorkspaceRoots for InMemoryRoots {
         // comparison rather than a second canonicalisation of the root.
         let root = ResolvedPath::canonical_root(Path::new(path), self.fs.as_ref())
             .map_err(|_| RootError::Unusable)?;
+        // Walked once, here. Re-walking on every watch request would put a filesystem
+        // traversal inside the interaction budget; a `.gitignore` edit taking effect on
+        // re-registration is an acceptable staleness, and it is recorded as a decision rather
+        // than discovered as a bug (research.md, *Where the exclusion set lives*).
+        let set = ExclusionSet::resolve(&root, self.fs.as_ref());
+        self.exclusions
+            .lock()
+            .expect("exclusions poisoned")
+            .insert(id.to_string(), Arc::new(set));
         roots.insert(id.to_string(), (path.to_string(), root.clone()));
         Ok(root)
     }
