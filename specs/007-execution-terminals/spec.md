@@ -37,16 +37,39 @@ Assumptions.
 
 ## What this feature is not
 
-- **Not task persistence across a dropped connection.** F020 `detached-engine` owns whether the
-  engine and its children survive the client going away. This feature owns what happens to a
-  running task at the moment the connection drops, which is a smaller question and a different
-  one.
+- **Not general engine detachment.** F020 `detached-engine` owns whether the engine survives the
+  client going away. This feature owns that a **task** does, and reattachment to it (A-TASKLIFE).
+  That overlap is deliberate and was chosen over shipping a behaviour known to be wrong; it
+  narrows F020 rather than removing it.
 - **Not the language server supervisor.** §7.3 spawns children too, with its own lifecycle and
   resource policy. F007 owns that.
 - **Not a task runner.** Nothing here discovers, configures or names tasks. It runs a command
   the developer or another feature supplies.
 - **Not a shell.** A login shell is a command like any other; this feature does not implement
   one, configure one, or assume one.
+
+## Clarifications
+
+### Session 2026-09-24
+
+- Q: A developer starts a 20-minute build, then their connection drops. What should happen to
+  that running build? → A: It keeps running, and a reconnecting client reattaches and receives
+  what it missed. §7.3's precedent — stop child processes on disconnect — is about language
+  servers, which the developer never asked for and which restart invisibly. A build is twenty
+  minutes of work they did ask for, and a dropped link is not a decision to abandon it.
+
+  **Consequence, recorded rather than discovered during implementation**: this builds part of
+  F020 `detached-engine` inside F010. That was the argument against it, and it was made
+  deliberately — shipping a known-wrong behaviour to preserve a feature boundary is the worse
+  trade. Recorded in the system specification as **A-TASKLIFE** rather than only here, because a
+  decision that binds F020 is one F020 must be able to find. F020's remaining scope is the engine
+  itself and everything that is not a task.
+
+  **Second consequence, for F005**: A-EC2 stops the instance after thirty minutes without
+  interactive traffic, and a detached task produces none — so without a change to idle detection
+  the surviving task dies half an hour after the disconnect it survived. Whether a running task
+  defers the idle stop is idle-detection policy, which F005 `ec2-lifecycle` owns. Recorded, not
+  decided here: the trade is about billing a machine by the hour.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -147,6 +170,33 @@ and confirm interactive actions continue to meet their budget throughout.
 3. **Given** output arriving faster than the panel can render, **When** it does, **Then** the panel
    stays responsive.
 
+---
+
+### User Story 5 - Come back to a build that kept going (Priority: P2)
+
+A developer's connection drops twelve minutes into a build. They reconnect. The build is still
+running, the panel fills in what they missed, and it carries on.
+
+**Why this priority**: P2 because it does not affect the common path, and P2 rather than P3
+because the alternative is losing work to a network blip — which is the failure A-TASKLIFE was
+recorded to prevent, and the reason this feature reaches into F020's territory at all.
+
+**Independent Test**: Start a long-running task, sever the connection, restore it, and confirm
+the task never stopped and no output was lost.
+
+**Acceptance Scenarios**:
+
+1. **Given** a running task, **When** the connection drops, **Then** the task continues running.
+2. **Given** a task that continued running, **When** the developer reconnects and reattaches,
+   **Then** they receive the output produced while they were away, in order, before anything
+   produced since.
+3. **Given** a task that exited while nobody was attached, **When** the developer reattaches,
+   **Then** they are told it ended and how.
+4. **Given** an identity already running, **When** a client tries to start a task under it,
+   **Then** it is refused rather than starting a second process.
+5. **Given** a reconnection, **When** it completes, **Then** the developer is told which of their
+   tasks survived and what they missed, rather than inferring it from a panel that resumed.
+
 ### Edge Cases
 
 - **A command that does not exist.** The failure belongs to the request, not to a task that
@@ -162,8 +212,19 @@ and confirm interactive actions continue to meet their budget throughout.
   observed must not be lost or reordered past it.
 - **Binary output.** A command that writes raw bytes rather than text, which must not be mangled
   into something that renders as replacement characters.
-- **The connection dropping mid-task.** The boundary with F020, and the subject of a
-  clarification below.
+- **The connection dropping mid-task.** The task survives (A-TASKLIFE), which raises the rest of
+  this list.
+- **A task that finishes while no client is attached.** Its exit has nobody to report to at the
+  moment it happens, and must still be reportable to whoever returns.
+- **A client that never comes back.** The task runs until it ends on its own, or until A-EC2's
+  idle stop takes the instance — which is thirty minutes after the disconnect unless F005 decides
+  a running task defers it.
+- **A client reattaching to a task that has already exited.** The output and the exit are still
+  owed to it.
+- **A client reattaching with an identity that was never started**, or starting one that is
+  already running.
+- **Output retained for an absent client reaching its bound.** The same slowing applies; the
+  process must not behave differently for being unobserved.
 - **The engine restarting under a running task.** §15.2 tracks task IDs and PID mappings for
   exactly this, and F002's session contract says what survives.
 - **Two panels on one task.** Whether a task has one viewer or many is a scope question.
@@ -251,16 +312,20 @@ and confirm interactive actions continue to meet their budget throughout.
 
 **Disconnection**
 
-- **FR-031**: When the connection drops, the system MUST have a stated behaviour for running
-  tasks [NEEDS CLARIFICATION: does a dropped connection terminate running tasks, following
-  §7.3's precedent for language servers, or leave them running for a client that reconnects?
-  §7.3 stops child processes "so a dropped connection does not leave orphaned servers holding
-  memory", but
-  a developer whose link blipped mid-build would lose twenty minutes of work — and F020
-  `detached-engine` owns surviving a disconnection, so this choice decides how much of F020 is
-  already built].
-- **FR-032**: Whatever that behaviour is, the developer MUST be told what happened to their tasks
-  rather than discovering it by inference.
+- **FR-031**: A running task MUST continue running when the client's connection drops
+  (A-TASKLIFE). It MUST NOT be stopped merely because nobody is watching it.
+- **FR-031a**: Output produced while no client is attached MUST be retained, bounded by the same
+  limit that bounds output for an attached client (FR-013a). A task that outruns that bound while
+  detached MUST be slowed, exactly as it would be while attached — the process must not discover
+  it is unobserved by being treated differently.
+- **FR-031b**: A reconnecting client MUST be able to reattach to a task by the identity it
+  chose when starting it, and MUST receive the output produced while it was away, in order,
+  before any output produced after.
+- **FR-031c**: Reattaching MUST be distinguishable from starting, so that a client cannot
+  silently start a second task under an identity that is already running.
+- **FR-032**: The developer MUST be told what happened to their tasks across a disconnection —
+  which survived, and what was missed — rather than discovering it by inference from a panel that
+  resumed or did not.
 
 **Verification**
 
@@ -310,6 +375,16 @@ and confirm interactive actions continue to meet their budget throughout.
 - **SC-015**: A command that cannot be started is reported as a start failure in 100% of
   exercised cases, and as a task exiting in zero.
 - **SC-016**: The panel's colours resolve entirely to design-system tokens, with zero raw values.
+- **SC-018**: A task running when the connection drops is still running afterwards, in 100% of
+  exercised cases, with zero terminated by the disconnection alone.
+- **SC-019**: A client reattaching receives every byte produced while it was away, in order and
+  before anything produced after, with zero loss and zero reordering.
+- **SC-020**: A task that exits while no client is attached has its exit reported to the client
+  that reattaches, in 100% of exercised cases.
+- **SC-021**: A detached task that outruns the retention bound is slowed rather than losing
+  output, with zero bytes dropped — the same outcome as an attached one.
+- **SC-022**: Starting a task under an identity already running is refused in 100% of exercised
+  cases, and produces a second process in zero.
 - **SC-017**: The full suite for this feature runs with no remote host and no network.
 
 ## Assumptions

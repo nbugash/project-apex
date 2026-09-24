@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,21 @@
 
 ## Notes
 
-**One item fails, and it is the one that is supposed to.** Two `[NEEDS CLARIFICATION]` markers
-remain, both on questions with no reasonable default. `/speckit-clarify` is the phase that
-resolves them; this checklist is complete in every other respect.
+**16 of 16.** The specification opened with two `[NEEDS CLARIFICATION]` markers and closed with
+none, by two different routes.
+
+**FR-013, backpressure, was resolved rather than asked**, because the template reserves a marker
+for questions with no reasonable default and this one had one: behave as a terminal already does
+and slow the process, since a program writing to a terminal nobody reads from blocks when the
+buffer fills. The alternatives are not symmetrical — dropped output is a transcript that is wrong
+in a way nothing marks, and unbounded buffering moves a runaway build's cost onto an instance
+billed by the hour. How much is buffered before slowing is a stated plan value (FR-013a).
+
+**FR-031, task lifetime across a disconnection, was a judgement stop and was asked.** It decided
+how much of F020 `detached-engine` gets built inside F010, which is a scope divergence a reviewer
+should agree with before planning rather than after implementing. The answer — tasks survive,
+clients reattach — is recorded as **A-TASKLIFE** in the system specification rather than only in
+this feature's Clarifications, because a decision binding F020 is one F020 must be able to find.
 
 **Implementation details were removed on the first pass**, and the pattern is the same one F004's
 checklist recorded. The draft named the panel library, the specific stop signal, the resource

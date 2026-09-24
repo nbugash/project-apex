@@ -2664,6 +2664,65 @@ port is already the seam, so either is a new adapter rather than a change to any
 
 ---
 
+## A-TASKLIFE — A running task outlives the connection that started it (2026-09-24)
+
+**Decision.** A task keeps running when the client's connection drops. Its output is retained
+while no client is attached, bounded by the same limit that bounds output for an attached one,
+and a reconnecting client reattaches by task identity and receives what it missed.
+
+**Rationale.** §7.3 already stops child processes on disconnect, and this decision departs from
+that precedent deliberately. The precedent is about language servers: infrastructure the
+developer never asked for, which restarts invisibly and costs nothing to lose. A build is
+different in every respect that matters. The developer started it on purpose, it may be twenty
+minutes in, and a dropped link is not a decision to abandon it. Stopping a language server on
+disconnect loses nothing; stopping a build loses the work.
+
+The client already has the identity it needs. §4.8 has the client choose `taskId` on
+`execution/runTask`, so reattachment is a client that remembers what it started rather than a
+discovery protocol. §15.2 anticipates the rest: the engine tracks active task IDs and PID
+mappings "so a transient crash can be recovered rather than requiring the developer to rebuild
+their session by hand". This decision is that sentence applied to a dropped connection as well
+as a crash.
+
+**The consequence worth stating plainly.** This builds part of F020 `detached-engine` inside
+F010. F020 owns surviving a disconnection, and a task that survives one is that, for tasks. The
+alternative was to stop tasks now and let F020 change it later, which is the more conservative
+sequencing — and it was rejected because it ships a known-wrong behaviour to preserve a feature
+boundary, and because a developer losing a build to a wifi blip is a worse thing to ship than an
+overlap two features can reconcile. F020's remaining scope is the engine itself and everything
+that is not a task.
+
+**Second-order consequence, for F005.** A-EC2 stops the instance after thirty minutes without
+interactive traffic. A detached task produces no interactive traffic, so under that rule the
+instance stops and the surviving task dies anyway, thirty minutes after the disconnect this
+decision exists to survive. Whether a running task defers the idle stop is an idle-detection
+policy, which F005 `ec2-lifecycle` owns explicitly. Recorded here rather than decided here,
+because the trade is about billing a machine by the hour and belongs with the decision that set
+the threshold.
+
+**Rejected — stop tasks on disconnect, matching §7.3.** The narrow, reversible choice, and the
+one that leaves F020 its whole job. Rejected because it makes a wifi blip cost a build, for the
+whole interval until F020 ships, in exchange for a boundary that is an artefact of how the work
+was divided rather than of how the product behaves.
+
+**Rejected — hold the task for a grace period, then stop it.** Reads as a middle ground and is
+not: holding a process for an absent client is the same machinery as keeping it, only
+short-lived, so it pre-decides F020 exactly as much while adding a duration no requirement asks
+for.
+
+**Rejected — specify F020 first.** The cleanest sequencing. Rejected on cost: F020 depends only
+on F002 and could have been built at any point, and reordering again would delay the feature
+that makes F004 observable for a second time in one session.
+
+### Reversal conditions
+
+F020 arriving with a different model of survival, in which case this is the thing it reconciles
+rather than a constraint it inherits. Or retained output for absent clients proving expensive
+enough on a per-hour instance that a bounded hold beats an unbounded one — which is a number, not
+a direction, and would narrow this decision rather than reverse it.
+
+---
+
 # Appendix B — Open Items
 
 **All items resolved 2026-09-23.** Nothing here blocks a feature. The table is kept as a record
