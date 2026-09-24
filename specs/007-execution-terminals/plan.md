@@ -108,8 +108,27 @@ bounded by resource limits rather than a count.
 | **VII. Every Feature Ships With Tests** | Yes | Chunking, ordering and backpressure are decidable without a process — the reader is fed bytes and asked what it emits. The mock daemon's `notify` directive carries server-originated frames under latency and loss. Real pty behaviour (does a process believe it is a terminal?) needs a real process, and those tests spawn one locally: no remote host, no network. |
 | **VIII. Ports and Adapters** | Yes | `TaskRunner` is an outbound port — a capability, not a pty. The adapter naming the pseudo-terminal is one file, guarded as `inotify` is. Chunking, ordering and the retention bound are pure application code, fed bytes and told the time by the `Clock` port F004 added. Svelte components are inbound adapters; the terminal library lives in one of them. |
 
-**Verdict: passes. The Principle II amendments have landed.** That work is
-Phase 0 work. No task may depend on attaching to a running task until §4.8 defines how.
+**Verdict before Phase 0: passes**, conditional on the Principle II amendments landing. They did.
+
+### Re-check after Phase 2 design
+
+The gate says re-check after design, and design moved four of these rows.
+
+| Principle | Before | After | What moved it |
+|---|---|---|---|
+| **I. Design Fidelity** | Pass | **Pass, narrowed** | The row claimed the library's "default palette is a violation like any other raw value". Design found the system defines three of the sixteen colours a terminal renders, so satisfying that claim meant inventing thirteen — the act this principle exists to prevent. **A-TERMPALETTE** records the library's palette as the accepted source for what the system does not define, and SC-016 was narrowed to match. The principle holds; the row's absolute reading did not. |
+| **II. One Source of Truth** | Blocking | **Pass** | Three methods added (`attach`, `list`, `workspace/close`), plus the encoding, arity, exit-shape, signal-typing and optionality statements the existing rows needed to be implementable. Nine §4.8 edits in total, and §4.6 rewritten to state its rule per direction. |
+| **III. Decisions Recorded** | Pass | **Pass, two more** | **A-TASKSTREAM** (Phase 0) and **A-TASKEXEC** and **A-TERMPALETTE** (Phase 1 and 2). Appendix A holds 40 records. Each carries rejected alternatives and a reversal condition. |
+| **V. Interaction Budget** | Pass | **Pass, and the claim was wrong** | The row credited F004's frame writer as the seam this measures. It is the serialisation seam; priority is a different property that happens to live in the same place, and a mutex provides the first while precluding the second. F010 builds `send_queue.rs`. Recorded above. |
+| **VIII. Ports and Adapters** | Pass | **Pass, sharpened** | The port splits into `TaskOutput` and `TaskControl` so a keystroke never waits behind a blocked read. Design found that split defeated by a single map-wide mutex over the task set, which satisfies every document as written — per-task locks are now stated, with control handles reachable without the map lock. |
+
+Principles **IV**, **VI** and **VII** are unchanged: no live open items in any section F010 implements, containment still enforced engine-side independently of the client, and every decidable behaviour still testable with no remote host and no network.
+
+**Verdict after design: passes.** Three things design found are foundational rather than story
+work, and `tasks.md` must order them first: the id-less dispatch path, without which the engine
+cannot receive a notification at all; the engine-side send queue, without which SC-006 fails while
+everything else passes; and `WorkspaceRoots::deregister`, without which `workspace/close` cannot
+close anything.
 
 ## Project Structure
 
