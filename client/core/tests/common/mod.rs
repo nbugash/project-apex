@@ -762,7 +762,8 @@ impl EngineSpawner {
         // handshake test failing with ConnectionLost, a symptom that says nothing about the
         // cause. A missing binary is obvious; a stale one is the expensive kind of wrong.
         let built = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
-        // Only the inputs that actually produce the binary: `engine/src` and the manifest.
+        // Only `engine/src`, which is the one input whose change cargo will not notice on our
+        // behalf.
         //
         // This used to walk the whole `engine/` directory, which swept in `engine/tests/`. Test
         // files cannot change the binary, so adding one made the guard demand a rebuild that
@@ -770,17 +771,17 @@ impl EngineSpawner {
         // learn to work around, which is exactly how the staleness it exists to catch gets back
         // in. F003 is the first feature to put tests in the engine crate, which is why this
         // surfaced now.
+        //
+        // `Cargo.toml` came out for the same reason, in F010. It is pure false-positive
+        // surface: a manifest change that *does* affect the binary makes cargo rebuild it, so
+        // the binary is newer and the guard passes without the manifest's help — and a change
+        // that does not affect it, such as a dev-dependency the examples need, leaves the
+        // binary untouched and the guard firing at nothing.
         let engine = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
             .join("engine");
-        let newest = [
-            newest_source(&engine.join("src")),
-            newest_source(&engine.join("Cargo.toml")),
-        ]
-        .into_iter()
-        .flatten()
-        .max();
+        let newest = newest_source(&engine.join("src"));
         if let (Some(built), Some(newest)) = (built, newest) {
             assert!(
                 built >= newest,

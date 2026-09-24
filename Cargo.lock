@@ -66,6 +66,7 @@ dependencies = [
  "apex-protocol",
  "bytes",
  "inotify",
+ "libc",
  "nix",
  "serde",
  "serde_json",

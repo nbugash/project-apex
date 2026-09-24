@@ -54,3 +54,8 @@ nix = { version = "0.31", default-features = false, features = [
 [dev-dependencies]
 serde_json = "1"
 tempfile = "3"
+# For the fixture programs in examples/ only. They ask the kernel questions a test cannot ask
+# on their behalf -- isatty, window size, signal disposition, process groups -- and they use
+# libc directly rather than nix so that `nix` stays confined to the one adapter
+# `engine/tests/pty_confinement.rs` allows it in.
+libc = "0.2"
