@@ -28,7 +28,28 @@ sha2 = "0.10"
 # collapse, when a flood becomes an invalidation -- is tested without a filesystem.
 # Still no async runtime: the watcher is one std thread polling a descriptor.
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.11"
+# `default-features = false` drops inotify's `stream` feature, which pulls in futures-util and
+# tokio. The comment above says this engine is runtime-free and it was not: F004 added inotify
+# with its defaults and tokio arrived transitively. A runtime nothing calls is dead weight in a
+# binary the client ships on every first connect, which is the reason the claim exists.
+inotify = { version = "0.11", default-features = false }
+# The pseudo-terminal, the process group and the per-process resource limits (F010).
+# Named in exactly one file: adapters/outbound/pty_runner.rs, on the same terms as inotify
+# above -- `engine/tests/pty_confinement.rs` fails the build if it appears anywhere else.
+# Everything that decides anything -- how output is chunked, when a producer is slowed, what
+# the retention bound admits, when an escalation is due -- is tested without a process.
+#
+# Four features and no default. `term` is the pty itself, `process` the fork/exec and the
+# process group, `resource` the rlimits A-TASKLIMIT bounds a task with, `signal` the stop
+# path. The default feature set pulls in mount, mqueue and much else this has no use for.
+#
+# Still no async runtime: a task is one std thread reading a descriptor, as the watcher is.
+nix = { version = "0.31", default-features = false, features = [
+  "term",
+  "process",
+  "resource",
+  "signal",
+] }
 
 [dev-dependencies]
 serde_json = "1"
