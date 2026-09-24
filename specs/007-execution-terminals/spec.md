@@ -71,6 +71,18 @@ Assumptions.
   defers the idle stop is idle-detection policy, which F005 `ec2-lifecycle` owns. Recorded, not
   decided here: the trade is about billing a machine by the hour.
 
+- **Coverage scan, no further questions.** A scan across functional scope, data model,
+  interaction, non-functional attributes, integration, failure handling, trade-offs, terminology
+  and completion signals found four gaps, each with a reasonable default, each recorded in
+  Assumptions rather than asked: a task inherits the engine's environment with the caller's
+  variables over it; the developer-facing entry point starts a shell; a client that restarts
+  remembers what it started, with A-EC2's idle stop bounding the case where it does not; and
+  concurrency is bounded by §7.3's existing resource limits rather than by a count.
+
+  The one ambiguity with a genuine trade-off was task lifetime across a disconnection, and it was
+  asked and answered above — front-loaded into the specify phase rather than left for this one,
+  because it decided how much of another feature gets built inside this one.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Run a command and watch it work (Priority: P1)
@@ -250,6 +262,9 @@ the task never stopped and no output was lost.
 - **FR-004**: Starting a task MUST report the failure of a command that cannot be started, and
   that failure MUST be distinguishable from a task that started and exited immediately.
 - **FR-005**: A task MUST run as the developer's own user with no escalation (A-SEC, A-EC2).
+- **FR-005a**: A task's environment MUST NOT be written to any log or crash report. It is a
+  common place for credentials, and A-OBS already requires the crash reporter to redact — this
+  states what it must redact here.
 - **FR-006**: A task's children MUST be constrained by the same resource limits as the task
   (§7.3), so that a runaway build cannot destabilise the instance.
 
@@ -307,6 +322,10 @@ the task never stopped and no output was lost.
   displaying the escape sequences.
 - **FR-028**: The panel MUST remain responsive while output arrives faster than it can be read.
 - **FR-029**: The panel MUST state when a task has ended and how, rather than simply stopping.
+- **FR-029a**: The panel MUST retain a bounded history the developer can scroll back through, and
+  the bound MUST be **a stated quantity fixed in the plan** rather than a judgement made per
+  panel. "Keep a reasonable amount" is neither implementable nor testable, and an unbounded one
+  makes a long build a memory leak on the developer's own machine.
 - **FR-030**: The panel's appearance MUST come from the design system (Principle I), including
   the colours ANSI names — a terminal's palette is a design decision, not a default.
 
@@ -323,6 +342,16 @@ the task never stopped and no output was lost.
   before any output produced after.
 - **FR-031c**: Reattaching MUST be distinguishable from starting, so that a client cannot
   silently start a second task under an identity that is already running.
+
+  **This requires a way to attach to a task that is already running, which §4.8 does not
+  define.** The catalogue has `execution/runTask`, which *starts* one, and six further methods
+  that all address a task already known to the caller. There is nothing that says "this task
+  exists; connect me to it". Recorded here as a consequence rather than discovered during
+  implementation, the way F004 recorded `workspace/watch` — it is the sixth absence of this kind,
+  and it exists because A-TASKLIFE made a task outlive the connection that started it.
+- **FR-031d**: A client that has restarted, rather than merely reconnected, MUST be able to reach
+  the tasks it started. What it remembers across its own restart is its own business; what it
+  MUST NOT do is leave a task running with no way to reach it.
 - **FR-032**: The developer MUST be told what happened to their tasks across a disconnection —
   which survived, and what was missed — rather than discovering it by inference from a panel that
   resumed or did not.
@@ -385,6 +414,12 @@ the task never stopped and no output was lost.
   output, with zero bytes dropped — the same outcome as an attached one.
 - **SC-022**: Starting a task under an identity already running is refused in 100% of exercised
   cases, and produces a second process in zero.
+- **SC-023**: A client that restarts and reattaches reaches every task it started, in 100% of
+  exercised cases, and leaves zero running tasks unreachable.
+- **SC-024**: A panel's retained history stays within its stated bound across a task producing
+  50 MiB, with the memory held measured and printed rather than asserted.
+- **SC-025**: A task's environment appears in zero log lines and zero crash reports, including
+  when the task fails to start.
 - **SC-017**: The full suite for this feature runs with no remote host and no network.
 
 ## Assumptions
@@ -411,6 +446,27 @@ the task never stopped and no output was lost.
 - **A hundred cycles for the leak case (SC-014)** because a leak of one identity or one process
   per cycle is invisible in a single pass and unmistakable in a hundred — the same reasoning
   F004's SC-009 used for watches.
+- **A task inherits the engine's environment, with the caller's variables applied over it.**
+  Starting from an empty environment would mean no `PATH`, and therefore no `cargo`, no `git` and
+  no shell — every task would fail for the same reason. Inheriting is what a terminal does, and
+  the override is what makes the environment parameter useful rather than decorative.
+
+- **The developer can open a terminal and type into it**, and what it starts is a shell — a
+  command like any other, in the terms of this specification. This is not a separate capability:
+  it is the entry point without which the feature has no user, and it is the one F004 needs,
+  because the change F004 exists to notice is a `git checkout` a developer types. Which shell,
+  and whether it is a login shell, are plan decisions.
+
+- **A client that restarts, rather than reconnecting, remembers the tasks it started.** F002
+  already persists session state across a client restart, so extending what it persists costs
+  nothing and needs no protocol. The failure it leaves — a client whose stored state is lost
+  entirely cannot reach its running tasks — is bounded rather than permanent, because A-EC2 stops
+  the instance after thirty minutes without interactive traffic and reaps them.
+
+- **There is no fixed limit on concurrent tasks.** They are bounded by the resource limits §7.3
+  already applies to child processes, which is a real bound rather than an arbitrary count, and
+  one a developer running two builds and a test watcher would not trip.
+
 - The specific signals an interrupt and a stop request send, the escalation after a process
   ignores one, the mechanism that provides terminal attachment, the panel library, and the
   resource-limit mechanism are all **plan-level decisions**. They are named in the system
