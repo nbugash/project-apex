@@ -180,17 +180,27 @@ the other key is absent from `params` rather than present and null.
     and releases it, which is what the writer was built for, and which makes half of this a claim
     about how long the lock is held rather than about how fast the reader is.
 
-    The one F010 builds: **an engine-side outbound priority queue**
-    (`engine/src/adapters/outbound/send_queue.rs`, plan.md's Structure Decision), which puts
-    editor, LSP and command traffic ahead of a task's output and drains to that writer. §4.6 now
-    states the rule **per direction**, and the engine-to-client half had no implementation —
-    `FrameWriter` is a `Mutex<Box<dyn Write + Send>>` and a mutex is first-come by acquisition, so
-    a 50 MiB build acquires it roughly 800 times and a completion response takes its turn by
-    arrival. The priority-queued behaviour A-PRI implements in `client/core`'s send queue runs
-    client-to-engine and does nothing for this direction. This guarantee therefore depends on a
-    **new component**, not on existing behaviour, and it is unmet until that component exists. The
-    queue is FIFO within a class, which is what keeps guarantee 3 true: it reorders across classes
-    deliberately and within one never.
+    The one F010 builds: **a fairness gate on that same writer**
+    (`engine/src/adapters/outbound/frame_writer.rs`). §4.6 now states the rule **per direction**,
+    and the engine-to-client half had no implementation — `FrameWriter` is a
+    `Mutex<Box<dyn Write + Send>>` and a mutex is first-come by acquisition, so a 50 MiB build
+    acquires it roughly 800 times and a completion response takes its turn by arrival. The
+    priority-queued behaviour A-PRI implements in `client/core`'s send queue runs client-to-engine
+    and does nothing for this direction.
+
+    The gate is a count of writers with interactive traffic waiting. An interactive writer raises
+    it, takes the lock, writes and wakes the waiters; a bulk writer yields while the count is
+    non-zero, and after **eight consecutive yields** (plan.md's *Fixed Quantities*) goes through
+    regardless, so the preference is strong and never a monopoly — F007's language servers are a
+    sustained interactive producer and would otherwise stall a build for the length of an index.
+
+    **The engine does not queue, and that is the guarantee, not an implementation detail.**
+    Nothing buffers between a reader thread and the wire, so a blocked write still reaches back
+    through the pseudo-terminal to the process (guarantee 11, FR-013), and a task's output and its
+    `onExit` are written by the one thread in the order it produced them (guarantee 3, FR-022) —
+    ordering that comes from the thread rather than from a priority class, which is what a
+    two-class queue would have removed. This guarantee therefore depends on a **change to an
+    existing component**, and it is unmet until that change exists.
 
     SC-006 measures it under 50 MiB and **prints the measurement rather than asserting a
     threshold** (A-NFR). This is a measurement obligation, not a comment. A terminal is the

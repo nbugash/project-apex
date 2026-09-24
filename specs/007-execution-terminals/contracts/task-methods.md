@@ -12,7 +12,7 @@ of truth for the catalogue; this document states the guarantees its table has no
 added — `execution/attach`, `execution/list` and `workspace/close`; `runTask` gained `cols?` and
 `rows?`; `attach`'s result gained `exitCode?` and `signal?`; `onExit` became `exitCode?` plus
 `signal?`; §4.4 narrowed `-32006` to "Task not found" and added `-32010` and `-32011`; plan.md's
-*Fixed Quantities* table fixed thirteen values four requirements said it owed. Every row, code and
+*Fixed Quantities* table fixed fourteen values four requirements said it owed. Every row, code and
 quantity cited below was read from those files, not carried from a summary of them. What this
 contract previously listed as *Amendments still required* has been applied in full; what is left
 is in *What was open here, and is not any more*, whose two entries have both since been closed.
@@ -397,16 +397,25 @@ where the reader meets the rule.
    enough that a developer who asked is not left waiting. This is the engine choosing a signal
    because no client named one — it is not `execution/terminate`, where FR-017 requires the
    caller to state the signal and the engine to send that one and no other.
-3. **The response is written after the last of those tasks has ended** (A-WSCLOSE), so SC-013's scan is
-   checkable against the response rather than against a later moment nobody defined. The wait is
-   bounded by guarantee 2's escalation — about five seconds in the worst case, for all the
-   workspace's tasks together rather than five seconds each, because the escalation runs per task
-   concurrently. A process blocked in `write` against a full retention buffer (FR-013) is the
-   worst case and is still bounded: it cannot flush, so it reaches `SIGKILL` at five seconds.
+3. **The response is written after every one of those tasks has been signalled** (A-WSCLOSE) — not
+   after the last has **ended**, which is what this guarantee said in its first version. Ending
+   takes up to guarantee 2's five-second escalation, and the use case runs on the engine's single
+   dispatch thread, which is also the only reader of the client's stdin. Waiting there would mean
+   five seconds in which no keystroke, resize or cancellation is so much as read off the pipe,
+   which is §1.4 and FR-012 failing through the mechanism meant to satisfy FR-024. There is no
+   deferred reply to fall back on: an `Action` is a reply, nothing, or a restart.
 
-   The alternative — answer immediately, having only sent `SIGTERM` — was rejected because it
-   makes "closing a workspace leaves zero of its tasks running" true only eventually, and leaves
-   a client no moment at which it may say so.
+   SC-013 stays checkable without it. "Closing a workspace leaves zero of its tasks running" is
+   observed through each task's `execution/onExit`, which is a defined event with a defined order,
+   rather than through a response whose timing hid the wait: a test waits for N exits, not for a
+   sleep. The escalations still run concurrently across the workspace's tasks, so closing ten
+   costs about five seconds and not fifty, and a process blocked in `write` against a full
+   retention buffer (FR-013) is the worst case and is still bounded — it cannot flush, so it
+   reaches `SIGKILL` at five seconds.
+
+   The alternative — answer immediately, having sent nothing — was rejected because it makes
+   "closing a workspace leaves zero of its tasks running" true only eventually, and leaves a
+   client no moment at which it may say the close has begun.
 4. **It is deliberately not the same event as a dropped connection** (§4.8, A-TASKLIFE). A drop
    leaves tasks running, because a laptop moving between networks must not kill a build; a close
    is the developer saying they are done. Conflating the two would make the protocol unable to
@@ -872,7 +881,7 @@ five seconds later and the result would have arrived then (plan.md). A second
 | That an absent `taskId` in a full listing means the identity is free | That the task never existed — a released identity leaves no trace (FR-023) |
 | That a `terminate` result means the signal was delivered | That the process is dead (guarantee 4), or that its children are — only `onExit` says the first, and only after it |
 | That `terminate` sends exactly the signal named **first** | That nothing follows it — a `SIGTERM` becomes a `SIGKILL` five seconds later, and a `SIGINT` does not (guarantee 1) |
-| That a `workspace/close` result means that workspace's tasks have ended (guarantee 3) | That their `onExit` frames have already been delivered, or that the workspace is still registered |
+| That a `workspace/close` result means every one of that workspace's tasks has been **signalled** (guarantee 3) | That they have **ended** — a `SIGTERM` takes up to five seconds to become a `SIGKILL` — or that their `onExit` frames have already been delivered, or that the workspace is still registered |
 | That a `writeStdin` frame was written to the pipe | That the process received it. A notification reports nothing, including failure (guarantee 1) |
 | That a `pty: true` task's `0x03` is an interrupt (guarantee 4) | That the same holds with `pty: false`, where it is a literal byte |
 | That `cols` and `rows` on `runTask` sized the terminal, and that omitting them yields 80 x 24 (guarantee 7) | That 80 x 24 is the panel's size — it is the specification's default, and a client whose panel differs still owes a `resizePty` |

@@ -70,8 +70,8 @@ flowchart TD
         thread[reader thread, one per task]
         chunk[Chunker and RetainedOutput<br/>pure application]
         clock[Clock port, F004]
-        queue[Outbound priority queue<br/>NEW, see Phase 1 Reconciliation]
-        writer[FrameWriter, F004 seam]
+        writer[FrameWriter, F004 seam<br/>NEW fairness gate, see Phase 1 Reconciliation]
+        esc[escalation thread, one per engine<br/>owns the deadline set]
         sess[SessionRegistry unpreserved<br/>A-TASKEXEC]
         rpc --> uc
         uc --> tset
@@ -82,9 +82,11 @@ flowchart TD
         outh --> thread
         thread --> chunk
         clock --> chunk
-        chunk --> queue
-        rpc --> queue
-        queue --> writer
+        chunk --> writer
+        rpc --> writer
+        uc --> esc
+        esc --> ctl
+        clock --> esc
         uc --> ctl
         uc --> sess
     end
@@ -113,7 +115,7 @@ flowchart TD
 | Component | Responsibility | Entities owned |
 |-----------|----------------|----------------|
 | `rpc::dispatch` (engine inbound adapter) | Route the **six inbound** of §4.8's nine `execution/*` rows — `runTask`, `attach`, `list`, `writeStdin`, `resizePty`, `terminate`; the other three are notifications the engine emits and reach no dispatch — and `workspace/close`; **reach the method match for a frame with no `id`**, which it cannot do today | none |
-| `StartTask` / `AttachTask` / `ListTasks` / `WriteInput` / `Resize` / `Stop` / `CloseWorkspace` (engine use cases) | Refuse a live identity (`-32010`), resolve and contain `cwd`, merge the environment, choose 80 x 24 when the client named no size, time the `SIGTERM`-to-`SIGKILL` escalation, release a delivered identity | `TaskSet` |
+| `StartTask` / `AttachTask` / `ListTasks` / `WriteInput` / `Resize` / `Stop` / `CloseWorkspace` (engine use cases) | Refuse a live identity (`-32010`), resolve and contain `cwd`, merge the environment, choose 80 x 24 when the client named no size, send `SIGTERM` and **register a deadline** for the `SIGKILL` the escalation thread sends, release a delivered identity | `TaskSet` |
 | `TaskSet` (engine domain) | The engine's live tasks, keyed engine-wide rather than per workspace; start, get, release, list, drain per workspace, drain all | `Task`, `TaskId` |
 | `TaskRunner` (engine port) | Spawning a process as a **capability**, yielding a pid and the two halves of it | `ResourceLimits` |
 | `PtyRunner` (engine outbound adapter) | The only code naming a pseudo-terminal; the pty pair or three pipes, the fork and exec, the process group, the limits between them, `waitpid` and its cached status | none |
@@ -121,8 +123,8 @@ flowchart TD
 | reader thread, one per task (`task_threads.rs`) | Block on one descriptor with the chunker's remaining time as its timeout; hand bytes up; stop reading at the bound | none |
 | Chunker and retention (`application/output.rs`, pure) | The 64 KiB and 20 ms bounds, per-task ordering, the 4 MiB retention bound, the decision to stop reading, and what an attachment is still owed | `OutputChunk`, `RetainedOutput`, `ExitStatus` |
 | `Clock` (engine port, F004's) | Time, so the time bound is driven by `advance` and never by the wall clock | none |
-| Outbound priority queue (engine, **new**) | A-PRI's two classes on the engine's outbound path, `Interactive` ahead of `Background`, a task's output being `Background`, so §4.6 holds in the direction F010 floods | none |
-| `FrameWriter` (engine, F004's) | One frame under the lock, then release | none |
+| escalation thread, one per engine (`task_threads.rs`) | The five-second wait and the `SIGKILL` that follows it, so the dispatch thread answers `terminate` and `workspace/close` immediately and never waits | the deadline set |
+| `FrameWriter` (engine, F004's, **gated here**) | One frame under the lock, then release — plus the fairness gate F010 adds: a count of waiting interactive writers, a bulk writer that yields while it is non-zero, and one bulk frame through after eight consecutive yields, so §4.6 holds in the direction F010 floods **without anything buffering between the producer and the wire** | none |
 | `SessionRegistry` (engine) | Carries F010's terminated task identities in `unpreserved` across a re-execution | none |
 | `ObserveTask` (client use case) | Chunk to panel, exit to panel, and what a reconnection is told (FR-032) | none |
 | `TaskProvider` (client port) | start, attach, list, write, resize, stop — one seam, two adapters | none |
@@ -157,9 +159,11 @@ flowchart LR
     end
     subgraph ec2[EC2 instance, single tenant, 16 vCPU 128 GB]
         subgraph proc[ide-engine process, synchronous, no runtime]
-            disp[dispatch thread]
+            disp[dispatch thread<br/>reads stdin, answers, never waits]
             rd1[reader thread, task 1]
             rdn[reader thread, task N]
+            esc[escalation thread, one<br/>SIGKILL at the deadline]
+            wat[watcher thread, one per watch<br/>F004, already here]
         end
         pg1[(Process group 1<br/>16 GiB address space, no core dumps)]
         pgn[(Process group N)]
@@ -168,6 +172,16 @@ flowchart LR
     end
     core -->|SSH port 22, one control channel| disp
 ```
+
+Four kinds of thread, and exactly one of them may never block: the dispatch thread reads the
+client's stdin and is the only reader of it, so a use case that waits there is a client that
+cannot type. The other three block by design.
+A reader thread blocks on its own task's descriptor and on `FrameWriter`'s bulk gate, which is
+exactly what slows the task behind it. The escalation thread blocks on the deadline set's condvar
+and then on `Clock::sleep_until`; it is the vehicle for the five-second wait the use cases used to
+be described as doing themselves. F004's watcher thread is the second writer to the pipe and the
+reason `FrameWriter` exists at all. **There is no drain thread**: nothing buffers between a
+producer and the wire (§4.6).
 
 F004 added no runtime unit. **F010 adds one per task**, and it is the first runtime unit in this
 system that is neither the client nor the engine: a process group on the instance, outside the
@@ -289,10 +303,15 @@ three documents assume exists and no code provides. None was absorbed silently.
 **Status, recorded after the reconciliation pass this table provoked.** Eight of the nine are now
 fixed in the documents they were raised against: `signal` is a name throughout, `Exit::Signal`
 carries what the kernel delivered, the default terminal size is 80 x 24 everywhere,
-`data-model.md`'s quantities table has all thirteen rows and its error table carries `-32007`,
+`data-model.md`'s quantities table has every one of plan.md's rows and its error table carries `-32007`,
 per-task locks are stated, `attached` is aligned on one attachment per task, and the two questions
-this table listed as open upstream are closed. The ninth — the missing outbound priority queue — is
-not a documentation fix but a component, and `send_queue.rs` is foundational work in `tasks.md`.
+this table listed as open upstream are closed. The ninth — nothing in the engine preferring
+interactive traffic — is not a documentation fix but a mechanism, and it is foundational work in
+`tasks.md`. Its row below is kept **as raised**, and its resolution has since been reversed: the
+two-class queue the row proposed was reviewed before implementation and found to remove four
+properties the blocking writer provided for free. §4.6 now states the rule per direction — the
+client queues, the engine does not — and the engine's answer is a **fairness gate** on
+`FrameWriter` (design.md **[CONFLICT 9]**).
 The rows below are kept as raised, because a conflict and its resolution are more useful together
 than a table that reads as though nothing was ever wrong.
 
@@ -301,7 +320,7 @@ than a table that reads as though nothing was ever wrong.
 | **A signal is a name on the wire, and `data-model.md`'s wire types make it an integer.** §4.8 states it — "the signal's **name** ... not its number" — and both contracts type it `string, signal name`. `data-model.md`'s *The types* block declares `AttachResult::signal`, `TaskSummary::signal` and `ExitParams::signal` as `Option<i32>`, and leaves `TerminateParams { signal: ??? } // UNRESOLVED`, calling the encoding "the last undetermined field" | **Architecture follows §4.8 and the contracts: a name.** `data-model.md` is flagged for correction in four places; it is now describing a question the catalogue closed. An implementer following its wire block emits `{"signal": 15}` against every contract example's `{"signal":"SIGTERM"}` — it compiles, and every signal-death criterion fails |
 | **`Exit::Signal(TaskSignal)` cannot carry the signal that actually killed a task.** `runner-port.md` closes `TaskSignal` at `Int`, `Term`, `Kill` and has `reap` report `Exit::Signal` for a signal death (T9). A task killed by `SIGSEGV`, `SIGPIPE` or the out-of-memory killer has no variant, and FR-020 requires "the signal that killed it" | **Architecture separates two vocabularies that the port conflated.** The **outbound** set is closed at three — what a client may ask `terminate` to send, which task-methods.md refuses otherwise with `-32602`. The **inbound** set is open: whatever the kernel delivered, named for the wire. `runner-port.md` is flagged; `data-model.md`'s `Signalled { signal: i32 }` holds the value but cannot produce the name, so both halves need the same edit |
 | **The default terminal size is 80 x 24, and both contracts still say nobody chose one.** plan.md's *Fixed Quantities* fixes it and §4.8 states it. `runner-port.md`'s `Shape::Pty` doc comment instructs the use case to "pass zero" because "neither §4.8 nor plan.md's *Fixed Quantities* fixes a fallback"; `task-methods.md` keeps the 0 x 0 reading in four places — `runTask` guarantee 7's second paragraph, `resizePty` guarantee 4, the `runTask` worked example and the may/may-not-infer table — while one line of guarantee 7 and *What was open here* say 80 x 24 | **Architecture applies 80 x 24 in the use case**, so the port still invents nothing and the rule stays where FR-006b wants it. Both contracts flagged. The contradiction is internal to `task-methods.md`, which now states both outcomes for the same input, and 0 x 0 is the one value `resizePty` is specified to refuse |
-| **The engine has no outbound priority queue, and `task-events.md` guarantee 10 asserts one.** §4.6 requires priority queueing and A-PRI implements it — in the **client**, in `client/core/src/adapters/outbound/openssh/sendq.rs`, two classes with the class as a parameter of the send call. The engine's only writer is `FrameWriter`, a `Mutex<Box<dyn Write + Send>>` that writes and flushes with the lock held and has no classes at all. plan.md's Structure Decision adds `task_threads.rs` writing **through** that writer and lists no change to it | **Architecture adds the two-class queue to the engine's outbound path**, mirroring A-PRI's client-side shape, and names it as a component. This is the mechanism FR-012 and SC-006 measure and it does not exist in the direction F010 floods: a mutex is FIFO by acquisition, a 50 MiB burst acquires it roughly 800 times, and a blocked `stdout` write holds it for the duration. The plan's Principle V row treats F004's seam as sufficient; it is necessary and not sufficient |
+| **The engine has no outbound priority queue, and `task-events.md` guarantee 10 asserts one.** §4.6 requires priority queueing and A-PRI implements it — in the **client**, in `client/core/src/adapters/outbound/openssh/sendq.rs`, two classes with the class as a parameter of the send call. The engine's only writer is `FrameWriter`, a `Mutex<Box<dyn Write + Send>>` that writes and flushes with the lock held and has no classes at all. plan.md's Structure Decision adds `task_threads.rs` writing **through** that writer and lists no change to it | **Architecture adds a preference to the engine's outbound path**, and names it as a component. The diagnosis stands: a mutex is FIFO by acquisition, a 50 MiB burst acquires it roughly 800 times, and a blocked `stdout` write holds it for the duration, so F004's seam is necessary and not sufficient. **The remedy was reversed.** This row first proposed the two-class queue, mirroring A-PRI's client-side shape; a queue in the engine ends the backpressure FR-013 is made of, lets a task's `onExit` overtake its output, leaves a per-task bound nothing to decrement, and deadlocks against the per-task lock when bounded. §4.6 was rewritten to state the rule per direction, and the engine now grants priority by **making a bulk producer wait its turn** — a count of waiting interactive writers on `FrameWriter`, a bulk writer that yields while it is non-zero, and one bulk frame through after eight consecutive yields (design.md **[CONFLICT 9]**, plan.md *Fixed Quantities*) |
 | **The reader thread and the dispatch thread contend on one map, undoing the port's split.** `runner-port.md` justifies `TaskOutput` being `Send` and not `Sync` and `TaskControl` being `Send + Sync` precisely so a keystroke never waits behind a read (T12) and a close reaches a blocked task immediately (T13). `data-model.md` then holds every `Task` — including its `RetainedOutput`, which the reader thread appends to per chunk — in one `BTreeMap` inside `TaskSet`, and neither document says where the lock is | **Architecture places the locks**: per-task state behind per-task locks, and `TaskControl` handles reachable without the map lock. Recorded rather than deferred, because a single map-wide mutex satisfies both documents as written and defeats T12 and T13 in the same line of code — and SC-006 would measure the result |
 | **`data-model.md`'s *Quantities the plan fixes* table is two rows short of plan.md's.** It omits **Default terminal size** (80 x 24) and **File size** (not limited) | **plan.md is the source and the architecture takes it.** `data-model.md` flagged. The first omission is not incidental: it is why `data-model.md` can still say the window size lives only in the kernel with nothing choosing the absent case, which is the conflict above |
 | **`execution/list` is unpaged and can exceed the frame cap; neither error table admits it.** §4.8 states the arithmetic and accepts it — "a large enough set would exceed §4.1's frame cap and answer `-32007` against the engine's own listing". `task-methods.md`'s `execution/list` errors are `-32001`, `-32601`, `-32602`; `data-model.md`'s error table does not carry it either | **Architecture records `execution/list` as the one engine-originated result whose size is unbounded by construction.** Both artefacts flagged to add `-32007`. Accepted rather than paged, on §4.8's grounds that the realistic count is tens — but a failure mode a client can meet is one its contract should name |
@@ -311,6 +330,9 @@ than a table that reads as though nothing was ever wrong.
 The pattern is the one F004 named, arriving from the other direction. Every conflict above was found
 by checking the Phase 1 artefacts against the **amended** system specification and the **real code**,
 rather than against each other. Four of them — the integer signal, the closed `TaskSignal`, the
-0 x 0 terminal and the map-wide lock — would have compiled. The fifth, the missing priority queue,
-would have compiled, passed every functional criterion, and failed only SC-006, which is the one
-criterion the whole architecture exists to satisfy.
+0 x 0 terminal and the map-wide lock — would have compiled. The fifth, nothing preferring
+interactive traffic, would have compiled, passed every functional criterion, and failed only
+SC-006, which is the one criterion the whole architecture exists to satisfy. Its first remedy
+would have compiled too, passed SC-006, and failed FR-013 and FR-022 instead — which is the
+argument for reviewing a mechanism against the properties it replaces rather than only against
+the requirement that asked for it.

@@ -263,10 +263,13 @@ pub enum Exit {
 /// it. The same `Term`-then-`Kill` rule ends a workspace's tasks, where no caller named anything
 /// (`workspace/close`, FR-024) and the engine begins at `Term`.
 ///
-/// **The escalation is not behind this port.** It is two `signal` calls with a `Clock` wait
-/// between them, which is a decision and therefore lives above the line (*The dividing line*).
-/// A port that escalated on its own would make those five seconds untestable without a real
-/// process that ignores `SIGTERM`.
+/// **The escalation is not behind this port.** The use case sends `Term` and **registers a
+/// deadline**; a single escalation thread waits on `Clock::sleep_until` and sends the `Kill`.
+/// Both halves are decisions and therefore live above the line (*The dividing line*). An
+/// earlier version of this comment called it "two `signal` calls with a `Clock` wait between
+/// them", which describes a dispatch thread blocking for five seconds per stop — the shape
+/// design.md **[CONFLICT 8]** replaced. A port that escalated on its own would make those five
+/// seconds untestable without a real process that ignores `SIGTERM`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskSignal {
     Int,
@@ -517,16 +520,19 @@ against the fake.
 
 ## What is NOT behind this port
 
-**The wire.** The reader thread serialises notifications itself and hands them to the engine's
-outbound priority queue (`engine/src/adapters/outbound/send_queue.rs`, new in plan.md's Structure
-Decision), which drains to the `FrameWriter` F004 built
-(`engine/src/adapters/outbound/frame_writer.rs`), and the writer holds the output mutex for exactly
-one frame. The port yields bytes; `task_threads.rs` turns chunks into frames. What that path must
-not do is hold the mutex for longer than one frame, and — the half F004's seam does not
+**The wire.** The reader thread serialises notifications itself and writes them straight to the
+`FrameWriter` F004 built (`engine/src/adapters/outbound/frame_writer.rs`) on its task's own
+thread, taking the bulk entry point; the writer holds the output mutex for exactly one frame.
+Nothing queues between the two, which is what keeps a blocked write reaching back to the process
+(FR-013) and keeps a task's `onExit` behind the output it follows (FR-022) — one thread writes
+both, in order. The port yields bytes; `task_threads.rs` turns chunks into frames. What that path
+must not do is hold the mutex for longer than one frame, and — the half F004's seam does not
 provide — it must not let a task's output take its turn ahead of a completion response: §4.6
-requires priority queueing **in both directions** and a mutex orders by acquisition. **That is a
+requires interactive traffic to win the race to the wire **in both directions**, and a mutex
+orders by acquisition. The engine's answer is `FrameWriter`'s fairness gate, a bulk writer that
+yields while an interactive writer is waiting (design.md **[CONFLICT 9]**). **That is a
 measurement obligation under Principle V, not a comment** — and F010 is the first feature to put
-real volume through the seam, so SC-006 measures the queue and the writer as much as the runner.
+real volume through the seam, so SC-006 measures the gate and the writer as much as the runner.
 
 **The session and the identity.** `TaskId`, the live set, refusing an identity that is already
 running (FR-031c), releasing one whose exit has been delivered (FR-023) and knowing which

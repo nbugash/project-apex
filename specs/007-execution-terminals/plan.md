@@ -73,13 +73,15 @@ research.md's *Chunking, ordering, and what is pure*, as data-model.md's *Quanti
 fixes* states. The fourth used to go unnamed here, which left this preamble listing three and then
 counting five. They are fixed below, with the reasoning, because a number chosen during
 implementation is a number nobody reviewed. The table carries more than those five: a quantity
-found to be missing while the contracts were written is fixed here too, on the same grounds.
+found to be missing while the contracts were written is fixed here too, and a second found while
+the design was reviewed, on the same grounds.
 
 | Quantity | Value | Why this value |
 |---|---|---|
 | Chunk size bound | **64 KiB** raw | §4.1 caps a frame at 1 MiB and base64 inflates by 4/3, so the true ceiling is 3/4 of the frame budget — about 786 KB, and a bound naively set to 1 MiB overflows by a third. 64 KiB sits an order of magnitude under that ceiling while keeping a 50 MiB burst to roughly 800 frames rather than the 6 400 an 8 KiB chunk would cost. |
 | Chunk time bound | **20 ms** | The size bound alone starves an interactive prompt, which never fills a chunk and would therefore never be sent. 20 ms is below the threshold at which a prompt reads as delayed, is negligible against the round-trip to the instance, and leaves almost all of SC-001's 500 ms to transport and render. Under a burst the size bound dominates, so this costs nothing where volume is high. |
 | Buffered before slowing | **4 MiB** per task | research.md makes backpressure the absence of a mechanism: the engine stops reading, the pseudo-terminal's buffer fills, and the process blocks in `write` as it would against any slow consumer. This is how much the engine holds before that happens. Generous enough that a bursty producer is never slowed by a brief stall, bounded per task so concurrency cannot make it unbounded. |
+| Consecutive yields before a bulk frame | **8** | §4.6 makes interactive traffic a strong preference and never a monopoly, and the fairness gate needs a number to say where the preference stops. A bulk writer yields while any interactive writer is waiting; at the eighth consecutive yield it writes anyway. Eight is large enough that no ordinary interactive burst is interrupted by a build's frame — a keystroke echo, a completion response, a batch of diagnostics — and §4.6 rule 2 already keeps each of those small, since bulk payloads move to SFTP and what stays on the control pipe is responses and events of a few hundred bytes. Eight of them is tens of microseconds of wire time, not a stall. One would make the preference nominal, since every second frame would be bulk; a hundred would let F007's language servers, which are a **sustained** interactive producer, hold a build's output back for as long as indexing lasts. The bound costs a counter and makes that failure impossible rather than unlikely. |
 | Panel retained history | **10 000 lines** per terminal | The library's default of 1 000 is too few to scroll back through a compile, which is the thing a developer most often wants to re-read. At roughly 200 bytes a line this is about 2 MB per terminal, which is what SC-024 measures against. |
 | Task address space | **16 GiB**, soft **and** hard | Under 128 GB this is fatal to a runaway allocator and generous to any real build, including a linker doing LTO on a large workspace. Both limits are set deliberately: a process may raise its own soft limit up to the hard one, so setting the soft limit alone makes the constraint advisory and a runaway task simply lifts it. This is invisible until the first measurement of a runaway finds it was never bounded. |
 | Task CPU time | **Not limited** | Deliberate. A legitimate build burns CPU for minutes and `RLIMIT_CPU` counts per process, so any value low enough to catch a spinning process is low enough to kill a real compile. The runaway that actually takes the instance down is memory; a process spinning on CPU stays visible in the task list and stoppable through `execution/terminate`. |
@@ -105,7 +107,7 @@ bounded by resource limits rather than a count.
 | **II. One Source of Truth** | **Yes — amendments landed** | §4.8 defined seven `execution/*` methods and **none attached to a task already running**; A-TASKLIFE made a task outlive its connection, so reattachment was required (FR-031b) and undefined — the sixth absence of this kind, after `workspace/register` and `workspace/watch`. `execution/attach` was added in Phase 0. Phase 1 found two more: `execution/list`, without which a client that has lost its identities cannot reach running tasks (SC-023), and `workspace/close`, which FR-024 and SC-013 both name. All three have landed, along with the encoding, arity and exit-shape statements the rows needed to be implementable. |
 | **III. Decisions Recorded** | **Already satisfied, and re-checked here** | Two decisions closing genuine alternatives are recorded: **A-TASKLIFE** (a task outlives its connection) and **A-TASKLIMIT** (bounded per process, not per tree). Both were made before this plan, both carry rejected alternatives and reversal conditions. A third is owed and named in Phase 0: the attach method's shape. |
 | **IV. Open Items Block** | Passes | Checked at the cycle's step 2 with the bounded detector — no live `[OPEN: id]` in any section F010 implements — and the detector was proven by injecting a marker and confirming it fired. |
-| **V. Interaction Budget Verified** | **Yes, and this is the feature that tests it hardest — and the first to find the seam insufficient** | A terminal is the largest producer the control channel carries. FR-012 forbids output delaying interactive traffic and SC-006 measures it under 50 MiB, printed rather than asserted (A-NFR). The frame writer F004 built is **necessary and not sufficient**: it is a `Mutex<Box<dyn Write + Send>>` that holds the lock across a write and a flush, so it serialises correctly and orders by acquisition. §4.6 requires priority queueing, and the only implementation of it is `client/core`'s send queue — the client-to-engine direction. Engine to client there is none, so a 50 MiB build acquires that lock hundreds of times and a completion response queues behind it by arrival. F010 adds the engine-side queue. This is the failure that would compile, pass every functional criterion, and fail only SC-006. |
+| **V. Interaction Budget Verified** | **Yes, and this is the feature that tests it hardest — and the first to find the seam insufficient** | A terminal is the largest producer the control channel carries. FR-012 forbids output delaying interactive traffic and SC-006 measures it under 50 MiB, printed rather than asserted (A-NFR). The frame writer F004 built is **necessary and not sufficient**: it is a `Mutex<Box<dyn Write + Send>>` that holds the lock across a write and a flush, so it serialises correctly and orders by acquisition. §4.6 requires interactive traffic to win the race to the wire in both directions, and nothing in the engine prefers anything, so a 50 MiB build acquires that lock hundreds of times and a completion response takes its turn by arrival. F010 adds the **fairness gate** on that writer — a count of waiting interactive writers, and a bulk writer that yields while it is non-zero. This is the failure that would compile, pass every functional criterion, and fail only SC-006. |
 | **VI. Trust Boundaries Both Sides** | Yes | A task's working directory is resolved and contained by the engine through `ResolvedPath`, independently of the client (FR-003, §4.7). A task identity arriving from the client is untrusted: FR-031c requires attaching to be distinguishable from starting, so a client cannot silently start a second process under a live identity. |
 | **VII. Every Feature Ships With Tests** | Yes | Chunking, ordering and backpressure are decidable without a process — the reader is fed bytes and asked what it emits. The mock daemon's `notify` directive carries server-originated frames under latency and loss. Real pty behaviour (does a process believe it is a terminal?) needs a real process, and those tests spawn one locally: no remote host, no network. |
 | **VIII. Ports and Adapters** | Yes | `TaskRunner` is an outbound port — a capability, not a pty. The adapter naming the pseudo-terminal is one file, guarded as `inotify` is. Chunking, ordering and the retention bound are pure application code, fed bytes and told the time by the `Clock` port F004 added. Svelte components are inbound adapters; the terminal library lives in one of them. |
@@ -126,16 +128,16 @@ it was written into. Two more were added after: **A-STATE2**, superseding A-STAT
 identities must join the client's durable payload and Principle III forbids editing a record in
 place, and **A-WSCLOSE**, because three `workspace/close` decisions with stated rejected
 alternatives had been recorded in a contract rather than in Appendix A. |
-| **V. Interaction Budget** | Pass | **Pass, and the claim was wrong** | The row credited F004's frame writer as the seam this measures. It is the serialisation seam; priority is a different property that happens to live in the same place, and a mutex provides the first while precluding the second. F010 builds `send_queue.rs`. Recorded above. |
+| **V. Interaction Budget** | Pass | **Pass, and the claim was wrong twice** | The row first credited F004's frame writer as the seam this measures. It is the serialisation seam; priority is a different property that happens to live in the same place, and a mutex provides the first while saying nothing about the second. The correction was then an engine-side priority queue, which was wrong in the other direction: a queue removes the blocking that FR-013's backpressure is made of, and lets an exit overtake the output it must follow. §4.6 now states the rule per direction — the client queues, the engine does not — and F010 adds a **fairness gate** to `frame_writer.rs` instead. Recorded above and in design.md **[CONFLICT 9]**. |
 | **VIII. Ports and Adapters** | Pass | **Pass, sharpened** | The port splits into `TaskOutput` and `TaskControl` so a keystroke never waits behind a blocked read. Design found that split defeated by a single map-wide mutex over the task set, which satisfies every document as written — per-task locks are now stated, with control handles reachable without the map lock. |
 
 Principles **IV**, **VI** and **VII** are unchanged: no live open items in any section F010 implements, containment still enforced engine-side independently of the client, and every decidable behaviour still testable with no remote host and no network.
 
 **Verdict after design: passes.** Three things design found are foundational rather than story
 work, and `tasks.md` must order them first: the id-less dispatch path, without which the engine
-cannot receive a notification at all; the engine-side send queue, without which SC-006 fails while
-everything else passes; and `WorkspaceRoots::deregister`, without which `workspace/close` cannot
-close anything.
+cannot receive a notification at all; the frame writer's fairness gate, without which SC-006 fails
+while everything else passes; and `WorkspaceRoots::deregister`, without which `workspace/close`
+cannot close anything.
 
 ## Project Structure
 
@@ -177,10 +179,13 @@ engine/src/
     │                                 #   notification can reach a handler at all
     └── outbound/
         ├── pty_runner.rs            # NEW: the ONLY file naming the pty mechanism
-        ├── task_threads.rs          # NEW: a reader per task, writing through the send queue
-        └── send_queue.rs            # NEW: engine-side priority queue (§4.6), A-PRI's
-                                     #      `Interactive` ahead of `Background`; FrameWriter
-                                     #      becomes its drain
+        ├── task_threads.rs          # NEW: a reader per task, writing its own frames
+        ├── system_clock.rs          # NEW: the engine's only impl Clock, moved out of
+        │                            #      inotify_watcher.rs and NOT Linux-gated
+        └── frame_writer.rs          # + the fairness gate (§4.6): a count of waiting
+                                     #   interactive writers, a bulk writer that yields
+                                     #   while it is non-zero. No queue, so nothing
+                                     #   buffers between the reader and the wire
 
 client/core/src/
 ├── application/

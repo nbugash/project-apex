@@ -228,12 +228,13 @@ the threshold at which a prompt reads as delayed and leaves almost all of SC-001
 transport and render; under a burst the size bound dominates and the time bound costs nothing.
 
 **A chunk carries no sequence number, and ordering is structural rather than checkable.** One
-reader thread owns one task's descriptor, the engine's outbound priority queue (plan.md,
-`engine/src/adapters/outbound/send_queue.rs`) is FIFO **within** a class and all of a task's output
-is one class, and one `FrameWriter` holds the lock for exactly one frame. So chunks reach the wire
-in the order they were read and the transport preserves it, which satisfies FR-010 and SC-004. The
-queue's two classes reorder **across** classes deliberately — that is what §4.6 asks it for — and
-must not reorder within one, or this paragraph stops being true.
+reader thread owns one task's descriptor, that same thread writes every one of its frames itself,
+and one `FrameWriter` holds the lock for exactly one frame. So chunks reach the wire in the order
+they were read and the transport preserves it, which satisfies FR-010 and SC-004. **Nothing
+buffers between the reader and the wire** (§4.6): the engine grants interactive traffic priority
+by making a bulk writer yield at `FrameWriter`'s fairness gate, not by queueing its output, and a
+queue is exactly what would let a task's frames be reordered against one another or against its
+own `onExit` — which is why this paragraph, and not only FR-012, decided the mechanism.
 
 The cost is worth naming: a client cannot *detect* a lost or reordered chunk, because there is
 nothing to compare. This is acceptable for the same reason A-REQ
@@ -989,7 +990,7 @@ Four requirements and one research decision say a value must be **a stated quant
 plan** — FR-006b (resource limits), FR-013a (the amount buffered before a process is slowed),
 FR-029a (the panel's retained history), FR-011 by way of research.md's *Chunking, ordering, and
 what is pure* (the chunker's two bounds). plan.md's **Fixed Quantities** table now states all of
-them, with the reasoning attached. All of them are reproduced here, including the two no entity
+them, with the reasoning attached. All of them are reproduced here, including the three no entity
 above depends on, because a quantity missing from this table reads as a quantity nobody fixed; the
 plan is the source and this document does not restate its justifications.
 
@@ -998,6 +999,7 @@ plan is the source and this document does not restate its justifications.
 | Chunk size bound | 64 KiB raw | `OutputChunk` (FR-011, SC-005) |
 | Chunk time bound | 20 ms | `OutputChunk` (SC-001) |
 | Buffered before slowing | 4 MiB per task | `RetainedOutput` (FR-013a, FR-031a, SC-021) |
+| Consecutive yields before a bulk frame | 8 | `FrameWriter`'s fairness gate — an adapter bound, no entity here (FR-012, SC-006, §4.6) |
 | Panel retained history | 10 000 lines per terminal | Client-side, outside this model (FR-029a, SC-024) |
 | Task address space | 16 GiB, soft and hard | `ResourceLimits` (FR-006, SC-026) |
 | Task CPU time | not limited | `ResourceLimits` (FR-006b) |
@@ -1009,10 +1011,12 @@ plan is the source and this document does not restate its justifications.
 | Stop escalation | `SIGTERM`, then `SIGKILL` after 5 s, to the process **group** | `execution/terminate`, A-TASKEXEC (FR-017, FR-018, SC-027) |
 | Developer shell | `$SHELL`, falling back to `/bin/sh`, not a login shell | `Task::command` (spec Assumptions) |
 
-All thirteen of plan.md's rows are reproduced, including the two that bound nothing in this
-document — *File size*, declined explicitly rather than forgotten, and *Default terminal size*,
-which is the row whose earlier absence let this document say the size a client omits is one nobody
-chose. A table two rows short of its source is a table a reader trusts and should not.
+All fourteen of plan.md's rows are reproduced, including the three that bound nothing in this
+document — *File size*, declined explicitly rather than forgotten; *Default terminal size*, the
+row whose earlier absence let this document say the size a client omits is one nobody chose; and
+*Consecutive yields before a bulk frame*, which lives on `FrameWriter` rather than on any entity
+modelled here and is reproduced on the same grounds. A table short of its source is a table a
+reader trusts and should not.
 
 Two of these were raised by this document as gaps and are now closed by the plan rather than by
 this file: the **soft-and-hard** rule on the address-space limit, which the plan states and
@@ -1032,7 +1036,7 @@ Things a test should be able to break and find something wrong.
 | 1 | Starting under a live `TaskId` is refused with `-32010` and produces no second process | `TaskSet::start` rejects a present key | FR-031c, SC-022 |
 | 2 | A command that cannot be started fails the request with `-32011` and emits no `onExit` | No `Task` is inserted until the spawn returns a pid | FR-004, SC-015 |
 | 3 | Output arrives byte-for-byte, including invalid UTF-8 | `Vec<u8>` in the domain, base64 on the wire; no `String` on the path | FR-009, SC-003 |
-| 4 | Output for one task arrives in the order produced | One reader thread per task; the send queue is FIFO within its class; `FrameWriter` holds the lock for one frame | FR-010, SC-004 |
+| 4 | Output for one task arrives in the order produced | One reader thread per task, writing its own frames in sequence with nothing buffered between it and the wire; `FrameWriter` holds the lock for one frame | FR-010, SC-004 |
 | 5 | No chunk produces a frame over §4.1's cap, including for output with no line break | The 64 KiB raw size bound, an order of magnitude under the 786 KB base64 ceiling | FR-011, SC-005 |
 | 6 | With `pty: true`, `onStderr` carries zero bytes and `isatty` is true | One device; the runner gives the child one descriptor | FR-008, A-TASKSTREAM, SC-028 |
 | 7 | With `pty: false`, the two streams are separable and `isatty` is false | Separate pipes | FR-008, FR-008a, SC-028 |

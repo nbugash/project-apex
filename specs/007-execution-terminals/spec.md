@@ -25,9 +25,10 @@ Assumptions.
   exit-shape statements the existing rows needed in order to be implementable at all.
 - **§4.1** caps a frame at 1 MiB. A build's output exceeds that many times over, so output is
   chunked by definition.
-- **§4.6** is the one that shapes this feature: one pipe is one queue, and outbound frames are
-  priority-queued with interactive traffic ahead of background work. A terminal is the highest
-  volume producer the channel will ever carry.
+- **§4.6** is the one that shapes this feature: one pipe is one queue, and interactive traffic
+  wins the race to the wire in both directions — the client by queueing, the engine by making a
+  bulk producer wait its turn. A terminal is the highest volume producer the channel will ever
+  carry.
 - **§7.3** sets the precedent for child processes: they are stopped cleanly on workspace close
   and on client disconnect, "so a dropped connection does not leave orphaned servers holding
   memory", and they run under resource limits that stop one runaway process destabilising the

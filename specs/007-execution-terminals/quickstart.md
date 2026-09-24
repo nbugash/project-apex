@@ -280,8 +280,8 @@ sentence, and the client that has to branch on it is left guessing.
 
 **Set up**: `FakeRunner` driving 50 MiB through the real chunker and the real `FrameWriter`
 F004 built, `FakeClock` for the time bound, and the recording transport counting and timing what
-crosses the boundary. No process: the question is what the queue does, and §4.6 is about the
-queue.
+crosses the boundary. No process: the question is who reaches the wire first under load, and
+§4.6 is about that ordering rather than about any mechanism for achieving it.
 
 ```bash
 cargo test -p apex-engine --test task_budget    -- --nocapture
@@ -458,7 +458,7 @@ the chunk size, which is the moment the assertion stopped meaning anything — F
 this and it applies four times over here. Note that 64 KiB **is** `65536`, so the literal now
 looks right, which makes this the easiest of the four to get wrong and the hardest to notice.
 
-**And the values now exist.** plan.md's *Fixed Quantities* table states thirteen of them, with the
+**And the values now exist.** plan.md's *Fixed Quantities* table states fourteen of them, with the
 reasoning for each. The four this section depends on are the chunker's size bound (**64 KiB** raw),
 the chunker's time bound (**20 ms**), the amount buffered before a process is slowed (**4 MiB** per
 task) and the panel's retained history (**10 000 lines**). Every `bound` column above is now
@@ -606,7 +606,7 @@ Stated here rather than discovered by a reviewer.
 
 **Six gaps this guide carried are closed, recorded here so nobody re-opens them as though they
 were still live.** The plan stated none of the quantities four criteria needed; it now fixes
-thirteen, in *Fixed Quantities*, and §8 measures against them. Two of those thirteen closed gaps
+fourteen, in *Fixed Quantities*, and §8 measures against them. Two of those fourteen closed gaps
 of their own: a `pty: true` task started without `cols`/`rows` had no chosen size and landed on the
 kernel's 0×0 — the one value `resizePty` refuses — and now defaults to 80×24; and `execution/list`
 was published with a `retained` field the catalogue never named, a divergence now closed in the

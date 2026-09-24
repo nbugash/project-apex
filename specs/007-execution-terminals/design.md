@@ -137,6 +137,7 @@ classDiagram
     class Clock {
         <<interface>>
         +now() Millis
+        +sleep_until(Millis)
     }
     class Chunker {
         +accept(Stream, bytes, Millis)
@@ -172,6 +173,9 @@ classDiagram
     class TaskService {
         +spawn_reader(TaskId, TaskOutput)
         +control(TaskId) Option~Arc~TaskControl~~
+        +register_deadline(TaskId, Pid, Millis)
+        +cancel_deadline(TaskId)
+        +close()
     }
     TaskRunner <|.. PtyRunner
     TaskRunner <|.. FakeRunner
@@ -185,7 +189,9 @@ classDiagram
     TaskService --> Chunker
     TaskService --> RetainedOutput
     Chunker --> Clock
-    CloseWorkspace --> Clock
+    TaskService --> Clock : the escalation thread waits here
+    StopTask --> TaskService : registers a deadline
+    CloseWorkspace --> TaskService : registers a deadline
 ```
 
 | Type | Kind | Responsibility |
@@ -204,7 +210,7 @@ classDiagram
 | `AttachTask` | struct (use case) | Resolve the id, count what is owed, order the replay behind the response |
 | `ListTasks` | struct (use case) | A pure read over `TaskSet`. Touches the port zero times |
 | `WriteInput`, `ResizeTask` | struct (use case) | The two notification paths. Report nothing, by construction |
-| `StopTask` | struct (use case) | Send the named signal to the group, then escalate on the `Clock` |
+| `StopTask` | struct (use case) | Send the named signal to the group, then **register a deadline**; the escalation thread sends the `SIGKILL` |
 | `CloseWorkspace` | struct (use case) | Drain the workspace's tasks, stop each, release its watches, deregister |
 | `DrainAllTasks` | struct (use case) | Engine exit and re-execution. Produces the `unpreserved` list (A-TASKEXEC) |
 | `TaskService` | struct (adapter) | Owns the reader threads and the `Arc<dyn TaskControl>` map. The only thing that joins them |
@@ -341,16 +347,18 @@ fn ResizeTask::execute(&self, id: &TaskId, cols: u16, rows: u16)
 
 fn StopTask::execute(&self, id: &TaskId, signal: TaskSignal) -> Result<(), StopRefusal>
     postcondition: sends exactly the named signal FIRST, to the group (FR-017)
-    postcondition: Term schedules Kill 5 s later on the Clock; Int does not escalate; Kill has
-                   nothing to escalate to (plan.md Fixed Quantities)
+    postcondition: Term registers a deadline at now + 5 s for the escalation thread to act on,
+                   keyed on (TaskId, Pid) so a reused id is never signalled; Int does not
+                   escalate; Kill has nothing to escalate to (plan.md Fixed Quantities)
     postcondition: succeeds for a task that has already exited (FR-019); the identity is NOT
                    released by this call — release follows delivery of the exit (FR-023)
     raises:        StopRefusal::NoSuchTask only
 
 fn CloseWorkspace::execute(&self, ws: &WorkspaceId) -> Result<(), CloseRefusal>
-    postcondition: every task of ws is signalled Term then Kill after 5 s, the escalations run
+    postcondition: every task of ws is signalled Term and given a deadline, the escalations run
                    concurrently so the bound is 5 s for the workspace rather than per task, and
-                   the response is written after the last of them has ended (close guarantee 3)
+                   the response is written once every task has been SIGNALLED rather than once
+                   the last has ended (A-WSCLOSE, close guarantee 3)
     postcondition: the workspace's watches are released and the workspace is deregistered
     raises:        CloseRefusal::NotRegistered — including a second close (close guarantee 8)
 
@@ -580,7 +588,7 @@ sequenceDiagram
         Th->>W: write(frame n)
         W-->>C: execution/onStdout
     end
-    Note over W: §4.6 is one pipe and one queue. FR-012 is a claim about how long<br/>this lock is held, not about how fast the reader is — SC-006 measures it and prints it
+    Note over W: §4.6 is one pipe and one queue. FR-012 is a claim about how long this lock is<br/>held and about who takes it next — Th yields while an interactive writer waits —<br/>and not about how fast the reader is. SC-006 measures it and prints it
 ```
 
 Reattaching after a disconnection, with replay before live output (US5, FR-031b, SC-019, SC-020):
@@ -629,7 +637,7 @@ sequenceDiagram
     participant U as StopTask
     participant S as TaskSet
     participant Ctl as TaskControl
-    participant K as Clock
+    participant E as escalation thread
     participant G as the process group
     participant W as FrameWriter
 
@@ -640,13 +648,16 @@ sequenceDiagram
     else present (running OR already exited)
         U->>Ctl: signal(Term)
         Ctl->>G: to the GROUP, so compilers go with the build
+        U->>E: register (task_id, pid) at now() + 5 s, and notify the set
         U-->>C: result: null
-        Note over U,C: the result says the signal was delivered, never that the process died
-        U->>K: now() + 5 s
+        Note over U,C: the result says the signal was delivered, never that the process died.<br/>The dispatch thread registered a deadline and waited for nothing
+        E->>E: sleep_until(deadline) on the shared Clock
         alt the group ends first
             G-->>Ctl: reaped
-        else still alive at 5 s
-            U->>Ctl: signal(Kill)
+            S->>E: release(id) cancels the deadline, so a re-used id is never signalled
+        else still alive when now >= deadline
+            E->>E: the live task is still the (task_id, pid) that was registered
+            E->>Ctl: signal(Kill)
             Ctl->>G: SIGKILL
         end
         Ctl->>U: reap() -> Exit (idempotent; a second caller still sees Some)
@@ -665,7 +676,7 @@ sequenceDiagram
     participant D as DrainAllTasks
     participant S as TaskSet
     participant Ctl as TaskControl
-    participant K as Clock
+    participant E as escalation thread
     participant Sess as session.rs
     participant N as new image
 
@@ -673,12 +684,14 @@ sequenceDiagram
     R->>D: execute()
     D->>S: drain_all()
     S-->>D: every Task, across every workspace
-    loop each task, concurrently
+    loop each task
         D->>Ctl: signal(Term)
-        D->>K: wait 5 s
-        D->>Ctl: signal(Kill) if still alive
-        D->>Ctl: reap()
+        D->>E: register (task_id, pid) at now() + 5 s
     end
+    Note over D,E: the deadlines run concurrently on the one escalation thread,<br/>so draining ten tasks costs five seconds and not fifty
+    E->>Ctl: signal(Kill) for each task still alive at its deadline
+    D->>Ctl: reap() each
+    Note over D: this use case DOES wait for the set to empty, where workspace/close does not:<br/>the process is about to be replaced, so there is no responsiveness left to protect,<br/>and an exec before the last task dies orphans it and makes unpreserved a lie
     D-->>R: the terminated task ids
     R->>Sess: hand the ids across the exec, beside APEX_SESSION_ID [CONFLICT 4]
     R-->>C: result: null (written and flushed BEFORE exec — afterwards there is no process)
@@ -845,7 +858,8 @@ its own defeats every test that advances one clock and asserts about work on ano
 ```rust
 pub trait Clock: Send + Sync {
     fn now(&self) -> Millis;
-    /// Block until `deadline` has passed, or until the clock is advanced past it.
+    /// Block until `now() >= deadline`, whether by time passing or by the clock being advanced
+    /// to or past it. The boundary is `>=` everywhere, which is what makes 5 000 a kill.
     fn sleep_until(&self, deadline: Millis);
 }
 ```
