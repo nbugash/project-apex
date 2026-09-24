@@ -21,7 +21,7 @@ use crate::domain::path::CanonicalRoot;
 /// How a watcher and a clock are made for one workspace. A closure rather than a type so the
 /// composition root decides, and so tests substitute in-memory doubles without a filesystem.
 pub type WatcherFactory =
-    Box<dyn Fn(&CanonicalRoot) -> Option<(Box<dyn FileWatcher>, Box<dyn Clock>)> + Send + Sync>;
+    Box<dyn Fn(&CanonicalRoot) -> Option<(Box<dyn FileWatcher>, Arc<dyn Clock>)> + Send + Sync>;
 
 pub struct Watchers {
     services: Mutex<HashMap<String, WatchService>>,

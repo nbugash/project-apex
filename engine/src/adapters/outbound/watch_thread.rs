@@ -58,7 +58,7 @@ impl WatchService {
         workspace: WorkspaceId,
         root: CanonicalRoot,
         mut watcher: Box<dyn FileWatcher>,
-        clock: Box<dyn Clock>,
+        clock: Arc<dyn Clock>,
         fs: Arc<dyn FileSystem>,
         exclusions: Arc<ExclusionSet>,
         writer: Arc<FrameWriter>,

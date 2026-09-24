@@ -40,7 +40,7 @@ fn harness(capacity: Option<usize>) -> Harness {
         };
         Some((
             Box::new(watcher) as Box<_>,
-            Box::new(FakeClock::new()) as Box<_>,
+            Arc::new(FakeClock::new()) as Arc<_>,
         ))
     });
     let codec = FrameCodec::new();
