@@ -86,6 +86,11 @@ const DENSITY_TOKENS = {
   dock: { token: '--vk-dock', what: 'dock height' },
 };
 
+// The prototype declares its three semantic hues once, as module-level constants its terminal
+// transcript, diff gutter, squiggles, minimap and VCS counts all read. That single declaration is
+// the anchor; see the three entries in the table below.
+const HUES = /const ERR='(#[0-9a-fA-F]{6})',\s*WARN='(#[0-9a-fA-F]{6})',\s*OK='(#[0-9a-fA-F]{6})'/;
+
 // Literals on identifiable elements. These are genuine constants in the prototype — they
 // do not vary with density — so they are measured where they are written.
 const LITERAL_TOKENS = [
@@ -114,6 +119,34 @@ const LITERAL_TOKENS = [
     re: /pad:\((\d+)\+d\*\d+\)\+'px'/,
     what: 'file tree base left padding',
     unit: 'px',
+  },
+  {
+    // The three semantic hues, read from the prototype's own declaration of them. One regex
+    // spanning all three rather than three matching a bare hex string each: a lone `#d4736a`
+    // occurs wherever the prototype draws something red, so three independent patterns would
+    // each anchor on whichever occurrence came first and would keep matching after the
+    // declaration they are supposed to track had changed. Spanning the declaration means a
+    // change to it breaks all three loudly, which is the same reason the surfaces below
+    // anchor on structure.
+    //
+    // Sixteen ANSI colours, three of them defined here. The other thirteen are the terminal
+    // library's own and are not invented (A-TERMPALETTE).
+    token: '--vk-term-ansi-red',
+    re: HUES,
+    group: 1,
+    what: 'terminal ANSI red (prototype ERR)',
+  },
+  {
+    token: '--vk-term-ansi-yellow',
+    re: HUES,
+    group: 2,
+    what: 'terminal ANSI yellow (prototype WARN)',
+  },
+  {
+    token: '--vk-term-ansi-green',
+    re: HUES,
+    group: 3,
+    what: 'terminal ANSI green (prototype OK)',
   },
   {
     // The tab's state dot. The prototype draws it as a filled circle for unsaved local
@@ -164,9 +197,9 @@ if (densityDefault && densTable) {
   }
 }
 
-for (const { token, re, what, unit } of LITERAL_TOKENS) {
+for (const { token, re, what, unit, group = 1 } of LITERAL_TOKENS) {
   const m = re.exec(prototypeMarkup);
-  if (m) extracted.push({ token, value: unit ? `${m[1]}${unit}` : m[1], what });
+  if (m) extracted.push({ token, value: unit ? `${m[group]}${unit}` : m[group], what });
   else missing.push(`${token} (${what})`);
 }
 
@@ -231,6 +264,27 @@ const SURFACES = [
       [0, 'padding-right', '--vk-tree-pad-right', 'file tree row right padding'],
       [1, 'font-size', '--vk-tree-icon', 'file tree icon size'],
       [3, 'font-size', '--vk-tree-vcs-size', 'file tree vcs marker size'],
+    ],
+  },
+  {
+    name: 'terminal panel',
+    // The `isTerminal` branch, which is the one structural marker the terminal surface has.
+    // Five styles follow it: the transcript container, one transcript row, the prompt row, the
+    // prompt itself, and the block cursor.
+    //
+    // 12.5px is a **third** font size, distinct from `--vk-fs` and `--vk-code`, which are both
+    // 13.5px. A component writing `font-size: 12.5px` would be the application asserting a
+    // value the prototype owns, which is the exact failure this file exists to prevent.
+    anchor: /<sc-if value=\\?"\{\{ isTerminal \}\}\\?"/,
+    count: 5,
+    read: [
+      [0, 'font-size', '--vk-term-fs', 'terminal font size'],
+      [0, 'line-height', '--vk-term-line-height', 'terminal line height'],
+      [0, 'padding', '--vk-term-pad', 'terminal padding'],
+      [2, 'gap', '--vk-term-prompt-gap', 'terminal prompt row gap'],
+      [4, 'width', '--vk-term-cursor-w', 'terminal cursor width'],
+      [4, 'height', '--vk-term-cursor-h', 'terminal cursor height'],
+      [4, 'animation', '--vk-term-cursor-blink', 'terminal cursor blink'],
     ],
   },
   {

@@ -9,9 +9,17 @@
   import { MIN_TOOL_WINDOW_WIDTH } from '../rail';
   import TabStrip from '../tabs/TabStrip.svelte';
   import StatusBar from '../statusbar/StatusBar.svelte';
+  import TerminalPanel from '../terminal/TerminalPanel.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
   import { shellState } from '../state.svelte';
+
+  /// `Terminal — <workspace>` remotely, `Terminal — local` locally, following the prototype.
+  const dockTitle = $derived.by(() => {
+    const ws = shellState.workspace;
+    if (!ws) return 'Terminal';
+    return ws.location_type === 'REMOTE' ? `Terminal \u2014 ${ws.name}` : 'Terminal \u2014 local';
+  });
 
   interface Props {
     session: SessionSnapshot;
@@ -169,12 +177,12 @@
           onresize={(e) => resizeRegion('output', e)}
         />
         <Region
-          label="Output"
+          label={dockTitle}
           visible={layout.output.visible}
           extent={layout.output.extent}
           axis="block"
         >
-          <pre class="placeholder">Output</pre>
+          <TerminalPanel workspace={shellState.workspace} />
         </Region>
       {/if}
     </main>
@@ -221,31 +229,5 @@
     padding: var(--space-3);
     color: var(--color-neutral-400);
     font-size: var(--vk-fs);
-  }
-  .placeholder {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3);
-    margin: 0;
-  }
-  .placeholder button {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-1) var(--space-2);
-    background: transparent;
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-sm);
-    color: var(--color-text);
-    font-family: var(--font-body);
-    cursor: pointer;
-  }
-  .placeholder button:hover {
-    background: var(--color-accent-800);
-  }
-  .placeholder button:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
   }
 </style>

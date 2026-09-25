@@ -3168,6 +3168,62 @@ a supervisor tidying up after a crash, say — then refusing the second close be
 answer and idempotent success becomes right. Under A-EC2's single tenancy and one client per
 engine, no such caller exists.
 
+## A-E2ESCOPE — Which acceptance scenarios owe an end-to-end test (2026-09-25)
+
+**Decision.** Principle VII's "each one MUST have a corresponding automated test" is read
+**loosely**: the corresponding test must exist at the level where the scenario's substance is
+**observable**, which is end to end for most scenarios and is not end to end for all of them. A
+scenario covered below the end-to-end level carries a **written justification in its own feature's
+specification**, naming the level that covers it and the property that is not observable through a
+driven interface. The justification is per scenario, not per feature and not per level.
+
+**Rationale.** The sentence is genuinely ambiguous and both readings are defensible. It sits under
+the **End to end** bullet, which is the strict reading's whole case; it says "a corresponding
+automated test" rather than "a corresponding end-to-end test", which is the loose reading's. A
+principle that can be satisfied two ways satisfies neither until someone writes down which, and
+Principle III says the writing down happens here.
+
+The strict reading fails on a class of scenario this project has several of, where the property
+under test is an **absence** and the interface cannot show it. F010's FR-005a is the clearest: a
+task's environment must never reach a log or a crash report. A driver can observe a terminal panel
+showing output; it cannot observe a core dump that was not written, because `RLIMIT_CORE = 0` means
+there is no artifact to inspect and the passing state is that nothing exists. An end-to-end test
+written for it would assert something adjacent — that the app still runs, that the panel still
+scrolls — and pass whether or not the property held. That is a test that cannot fail, which
+Principle VII's own rationale rejects in its last sentence, and which this project has already
+produced five of.
+
+Per **scenario** rather than per **level** is the operative part, and it is where this record adds
+something the constitution does not already say. Principle VII's closing paragraph permits omitting
+a level with a one-line justification naming why the feature has **no surface** there. That is an
+all-or-nothing instrument: a feature either has end-to-end surface or it does not. F010 has plenty
+— a build runs, its output appears, a keystroke interrupts it — alongside a handful of scenarios
+that have none. Under the strict reading F010 cannot use the omission clause honestly, because the
+level is not absent, and so it would owe an end-to-end test for every scenario including the ones
+where that test would be theatre.
+
+**Alternatives rejected.** *Strict, with the omission clause used per feature* was rejected above:
+it forces a false statement, since the feature does have end-to-end surface. *Strict, with no
+escape* was rejected because it buys its rigour with tests that pass unconditionally, which is worse
+than the gap it closes — an unconditionally passing test is a claim of coverage that is not true,
+and it is durable, because nothing ever fails to prompt a second look. *Loose with a blanket
+per-feature justification* was rejected because a blanket justification is the thing that decays: it
+is written once, and then every later scenario shelters under it without anyone re-asking whether it
+applies. Requiring the sentence next to the scenario keeps the cost proportional to the number of
+exemptions, which is the only pressure that keeps the number small.
+
+**Consequences.** A feature specification's acceptance scenarios acquire a third state. A scenario
+is either covered end to end, or covered lower with a named level and a named reason, and a scenario
+with neither is an incomplete specification that `/speckit-analyze` should surface. The justification
+names a level that must actually contain the test; "covered by unit tests" without one is the
+blanket form this record rejects.
+
+**Reversal conditions.** If the exemptions stop being a handful — if a feature's justifications
+outnumber its end-to-end tests — the loose reading has become the default rather than the exception
+and the pressure this record relies on has failed. The remedy then is not to tighten the wording but
+to ask why so much of that feature is unobservable through its own interface, which is usually a
+statement about the interface rather than about the tests.
+
 # Appendix B — Open Items
 
 **All items resolved 2026-09-23.** Nothing here blocks a feature. The table is kept as a record
