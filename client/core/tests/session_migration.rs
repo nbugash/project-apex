@@ -11,7 +11,7 @@ use apex_shell::application::ports::session_store::SessionStore;
 use apex_shell::application::use_cases::restore_session::RestoreSession;
 use apex_shell::domain::geometry::DisplayBounds;
 use apex_shell::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
-use apex_shell::domain::session::{PersistedSession, SCHEMA_VERSION};
+use apex_shell::domain::session::{PersistedSession, PersistedTask, SCHEMA_VERSION};
 use std::sync::Arc;
 
 /// Exactly what the previous release wrote: schema version 1, no tool window field.
@@ -155,4 +155,148 @@ impl DocumentIdShim {
     fn b() -> apex_shell::domain::session::DocumentId {
         apex_shell::domain::session::DocumentId("doc-b".into())
     }
+}
+
+/// Exactly what the release before F010 wrote: schema version 2, tool window but no tasks.
+const VERSION_TWO_SESSION: &str = r#"{
+  "schema_version": 2,
+  "workspace": { "name": "payments-platform", "location_type": "REMOTE" },
+  "window": { "x": 100, "y": 80, "width": 1440, "height": 900, "maximized": false },
+  "layout": { "output": { "visible": true, "extent": 268 },
+              "document_area": { "visible": true, "extent": 600 } },
+  "documents": [],
+  "focused_document_id": null,
+  "tool_window": { "active_destination_id": "project", "collapsed": false, "width": 310 }
+}"#;
+
+#[test]
+fn a_store_written_before_tasks_existed_still_loads() {
+    // The migration, and the reason `serde(default)` is the mechanism rather than a version
+    // check somebody has to remember to extend. A user upgrading into F010 has a version 2 file
+    // and no tasks; refusing it would erase their geometry, layout and tabs to add a field they
+    // have no value for yet.
+    let (_dir, restored) = restore_from(VERSION_TWO_SESSION);
+
+    assert_eq!(
+        restored.workspace.as_ref().map(|w| w.name.as_str()),
+        Some("payments-platform"),
+        "the upgrade discarded the workspace"
+    );
+    assert_eq!(
+        restored.window.width, 1440,
+        "the upgrade discarded the geometry"
+    );
+    assert_eq!(
+        restored.tool_window.width, 310,
+        "the upgrade discarded the tool window the previous version stored"
+    );
+    assert!(
+        restored.tasks.is_empty(),
+        "a store with no tasks produced some from nowhere"
+    );
+}
+
+#[test]
+fn a_stored_task_identity_survives_a_client_restart() {
+    // FR-031d and A-STATE2. A task outlives the connection that started it, and `attach` reaches
+    // one by an identity the client must already know -- so the identity has to survive the
+    // restart or reattachment works only for a client that never closed.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("session.json");
+    let store = JsonFileSessionStore::new(path.clone());
+
+    let session = PersistedSession {
+        schema_version: SCHEMA_VERSION,
+        tasks: vec![
+            PersistedTask {
+                task_id: "build-01".into(),
+                workspace_id: "ws1".into(),
+            },
+            PersistedTask {
+                task_id: "test-02".into(),
+                workspace_id: "ws1".into(),
+            },
+        ],
+        ..PersistedSession::default()
+    };
+    store.save(&session).expect("save");
+
+    // A **new** store over the same file, which is what a restarted client has: nothing in
+    // memory, only what is on disk.
+    let reopened = JsonFileSessionStore::new(path);
+    let loaded = reopened.load().expect("load");
+
+    let ids: Vec<&str> = loaded.tasks.iter().map(|t| t.task_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["build-01", "test-02"],
+        "the identities did not survive"
+    );
+    assert_eq!(loaded.tasks[0].workspace_id, "ws1");
+}
+
+#[test]
+fn the_store_carries_the_identity_and_nothing_else_about_a_task() {
+    // FR-005a's boundary, checked on the bytes rather than on the type. A command would put a
+    // credential passed in argv on disk; output would make the store grow without bound for a
+    // client that never returns.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("session.json");
+    let store = JsonFileSessionStore::new(path.clone());
+
+    let session = PersistedSession {
+        tasks: vec![PersistedTask {
+            task_id: "build-01".into(),
+            workspace_id: "ws1".into(),
+        }],
+        ..PersistedSession::default()
+    };
+    store.save(&session).expect("save");
+
+    let raw = std::fs::read_to_string(&path).expect("read");
+    assert!(
+        raw.contains("build-01"),
+        "the identity was not stored: {raw}"
+    );
+    assert!(
+        !raw.contains("\"command\""),
+        "the store carried a task's command: {raw}"
+    );
+    assert!(
+        !raw.contains("\"env\""),
+        "the store carried a task's environment: {raw}"
+    );
+}
+
+#[test]
+fn a_client_that_lost_its_store_entirely_has_nothing_to_reattach_to() {
+    // SC-023's second half, and it has to **discard** the store rather than ignore it. A harness
+    // that kept the identities in a variable and called `list` for form's sake would be testing
+    // nothing: the whole claim is that a client with no record of its tasks can still find them,
+    // and a client that secretly still has the record has not lost anything.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("session.json");
+    let store = JsonFileSessionStore::new(path.clone());
+
+    let session = PersistedSession {
+        tasks: vec![PersistedTask {
+            task_id: "build-01".into(),
+            workspace_id: "ws1".into(),
+        }],
+        ..PersistedSession::default()
+    };
+    store.save(&session).expect("save");
+    assert!(path.exists());
+
+    // Gone, as after a profile wipe or a move to a new machine.
+    std::fs::remove_file(&path).expect("remove");
+
+    let reopened = JsonFileSessionStore::new(path);
+    let loaded = reopened.load().unwrap_or_default();
+    assert!(
+        loaded.tasks.is_empty(),
+        "the store was supposed to be gone and still produced identities"
+    );
+    // Which is precisely why `execution/list` exists: without it these tasks keep running and
+    // are unreachable until the instance idles out (SC-023).
 }
