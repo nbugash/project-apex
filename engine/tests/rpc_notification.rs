@@ -28,7 +28,7 @@ fn dispatch_body(body: &str) -> Action {
     let fs = Arc::new(FakeFileSystem::new());
     let roots = InMemoryRoots::new(fs.clone());
     let codec = FrameCodec;
-    dispatch(&registry, &roots, fs.as_ref(), None, &codec, body)
+    dispatch(&registry, &roots, fs.as_ref(), None, None, &codec, body)
 }
 
 #[test]

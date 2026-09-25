@@ -7,6 +7,7 @@
 use apex_engine::adapters::inbound::rpc::{self, Action};
 use apex_engine::adapters::outbound::frame_writer::FrameWriter;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
+use apex_engine::adapters::outbound::task_threads::TaskService;
 use apex_engine::adapters::outbound::watchers::{WatcherFactory, Watchers};
 use apex_engine::application::ports::file_system::FileSystem;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
@@ -41,6 +42,24 @@ fn main() {
     let factory: WatcherFactory = Box::new(|_root| None);
     let watchers = Watchers::new(factory, Arc::clone(&fs), Arc::clone(&writer), codec.clone());
 
+    // One clock, shared. `Arc` rather than `Box` because the chunker reads it on every reader
+    // thread while the escalation thread and the stop path read it too -- a `Box` can be handed
+    // to exactly one of them.
+    let clock: Arc<dyn apex_engine::application::ports::clock::Clock> =
+        Arc::new(apex_engine::adapters::outbound::system_clock::SystemClock);
+
+    // How a task is run. The pty factory lives **inside** its adapter, on the terms the watcher
+    // factory does: Linux gets a real runner, anything else gets none, and `execution/runTask`
+    // is refused with a reason rather than appearing to succeed.
+    #[cfg(target_os = "linux")]
+    let tasks = Some(TaskService::new(
+        Arc::clone(&writer),
+        Arc::clone(&clock),
+        Arc::new(apex_engine::adapters::outbound::pty_runner::PtyRunner::new()),
+    ));
+    #[cfg(not(target_os = "linux"))]
+    let tasks: Option<TaskService> = None;
+
     // A restart is announced, never inferred. The client learns about it because it was told,
     // and the identity it carries is what distinguishes a restart from a new session.
     if registry.restarted() {
@@ -65,6 +84,7 @@ fn main() {
                         &roots,
                         fs.as_ref(),
                         Some(&watchers),
+                        tasks.as_ref(),
                         &codec,
                         &frame.0,
                     ) {

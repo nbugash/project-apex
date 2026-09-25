@@ -265,12 +265,22 @@ impl ServiceInner {
 /// Runs tasks: one reader thread each, and the escalation thread they share.
 pub struct TaskService {
     inner: Arc<ServiceInner>,
+    runner: Arc<dyn crate::application::ports::task_runner::TaskRunner>,
+    /// The domain's record of which tasks exist and which workspace owns each. The single
+    /// source for that, which is why `TaskEntry` does not carry a workspace of its own.
+    set: Mutex<crate::domain::task::TaskSet>,
     readers: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 impl TaskService {
-    pub fn new(writer: Arc<FrameWriter>, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(
+        writer: Arc<FrameWriter>,
+        clock: Arc<dyn Clock>,
+        runner: Arc<dyn crate::application::ports::task_runner::TaskRunner>,
+    ) -> Self {
         Self {
+            runner,
+            set: Mutex::new(crate::domain::task::TaskSet::new()),
             inner: Arc::new(ServiceInner {
                 entries: Mutex::new(BTreeMap::new()),
                 writer,
@@ -311,6 +321,30 @@ impl TaskService {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push(handle);
+    }
+
+    /// Start a task and take ownership of it: the use case decides, this adopts the result.
+    ///
+    /// The two are one call because they must not be separable. A caller that could start
+    /// without adopting would hold a running process nothing reads and nothing can stop, which
+    /// is FR-025's abandoned process arrived at through the API rather than through a failure.
+    pub fn run(
+        &self,
+        params: &apex_protocol::wire::RunTaskParams,
+        roots: &dyn crate::application::ports::roots::WorkspaceRoots,
+        fs: &dyn crate::application::ports::file_system::FileSystem,
+    ) -> Result<Pid, crate::application::use_cases::task::StartRefusal> {
+        let mut set = self.set.lock().unwrap_or_else(|p| p.into_inner());
+        let (pid, spawned) = crate::application::use_cases::task::start_task(
+            params,
+            roots,
+            fs,
+            self.runner.as_ref(),
+            &mut set,
+        )?;
+        drop(set);
+        self.adopt(params.task_id.clone(), pid, spawned.control, spawned.output);
+        Ok(pid)
     }
 
     /// The control half, without touching the map lock for anything but the lookup.

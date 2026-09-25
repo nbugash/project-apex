@@ -82,10 +82,13 @@ fn run_scripted(script: Script, shape: Shape) -> Vec<Frame> {
     let sink = Sink::default();
     let writer = Arc::new(FrameWriter::new(Box::new(sink.clone())));
     let clock: Arc<FakeClock> = Arc::new(FakeClock::new());
-    let mut service = TaskService::new(writer, Arc::clone(&clock) as Arc<_>);
-
-    let runner = FakeRunner::new();
+    let runner = Arc::new(FakeRunner::new());
     runner.script(script);
+    let mut service = TaskService::new(
+        writer,
+        Arc::clone(&clock) as Arc<_>,
+        Arc::clone(&runner) as Arc<_>,
+    );
 
     let fs = Arc::new(FakeFileSystem::new());
     fs.dir("/w");

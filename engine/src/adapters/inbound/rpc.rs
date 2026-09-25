@@ -8,7 +8,7 @@ use crate::application::use_cases::workspace;
 use crate::handshake;
 use crate::session::{self, SessionRegistry};
 use apex_protocol::framing::FrameCodec;
-use apex_protocol::wire::HandshakeRequest;
+use apex_protocol::wire::{codes, HandshakeRequest};
 use bytes::BytesMut;
 use std::io::Write;
 
@@ -25,6 +25,55 @@ pub enum Action {
     Nothing,
     /// Replace this process, once anything still buffered has been answered.
     Restart(Vec<u8>),
+}
+
+/// Which §4.4 code a start refusal becomes, and what a human is told.
+///
+/// Every `SpawnFailure` becomes `-32011`, because FR-004 and SC-015 admit one outcome for a
+/// command that could not be started and §4.4 gives that outcome one code. The distinction that
+/// matters to a developer is whose fault it is, which is what the message carries -- and no
+/// message may carry the environment (FR-005a, SC-025).
+fn refusal_to_wire(
+    refusal: &crate::application::use_cases::task::StartRefusal,
+) -> (i32, &'static str) {
+    use crate::application::ports::task_runner::SpawnFailure;
+    use crate::application::use_cases::task::StartRefusal as R;
+    match refusal {
+        R::NotRegistered => (
+            codes::WORKSPACE_NOT_REGISTERED,
+            "workspace is not registered",
+        ),
+        R::RootGone => (codes::WORKSPACE_GONE, "the workspace root no longer exists"),
+        R::PathRefused => (
+            codes::PATH_REFUSED,
+            "the working directory escapes the workspace root",
+        ),
+        R::NotFound => (codes::NOT_FOUND, "the working directory does not exist"),
+        R::AlreadyRunning => (
+            codes::TASK_ALREADY_RUNNING,
+            "a task is already running under that identity; attach to it rather than starting it",
+        ),
+        R::CouldNotStart(SpawnFailure::NotExecutable) => (
+            codes::COMMAND_NOT_STARTED,
+            "the command was not found, or is not executable",
+        ),
+        R::CouldNotStart(SpawnFailure::CwdUnusable) => (
+            codes::COMMAND_NOT_STARTED,
+            "the working directory could not be entered",
+        ),
+        R::CouldNotStart(SpawnFailure::NoDevice) => (
+            codes::COMMAND_NOT_STARTED,
+            "the instance could not allocate a terminal or a pipe",
+        ),
+        R::CouldNotStart(SpawnFailure::LimitRefused) => (
+            codes::COMMAND_NOT_STARTED,
+            "the instance refused the task's resource limits",
+        ),
+        R::CouldNotStart(SpawnFailure::Failed(_)) => (
+            codes::COMMAND_NOT_STARTED,
+            "the command could not be started",
+        ),
+    }
 }
 
 /// Act on a frame that carries no `id`.
@@ -44,11 +93,20 @@ fn dispatch_notification(_method: &str, _params: Option<&serde_json::Value>) -> 
 }
 
 /// Answer one request, or say what else the loop must do.
+/// Seven parameters, which is one more than is comfortable and **does not extend again**.
+///
+/// F004 threaded `watchers` this way and F010 threads `tasks` the same way, which is the right
+/// call for the second collaborator and the wrong one for the third. The next feature that needs
+/// one introduces a `DispatchContext` carrying these by reference rather than an eighth argument
+/// -- recorded here because the moment to notice is when adding the next one, not when reading
+/// the signature afterwards.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch(
     registry: &SessionRegistry,
     roots: &crate::application::use_cases::workspace::InMemoryRoots,
     fs: &dyn crate::application::ports::file_system::FileSystem,
     watchers: Option<&crate::adapters::outbound::watchers::Watchers>,
+    tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
     codec: &FrameCodec,
     body: &str,
 ) -> Action {
@@ -70,6 +128,39 @@ pub fn dispatch(
     let id = &id;
 
     match method {
+        "execution/runTask" => {
+            let Some(service) = tasks else {
+                // No task service composed: the engine builds and runs without one, and
+                // `runTask` is refused with a reason rather than appearing to succeed --
+                // F004's degradation shape (FR-027, A-WATCHLOCAL).
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::COMMAND_NOT_STARTED,
+                    "this engine has no task service",
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::RunTaskParams>(params) {
+                Ok(p) => match service.run(&p, roots, fs) {
+                    Ok(pid) => reply_or_nothing(encode_result(
+                        codec,
+                        id,
+                        &apex_protocol::wire::RunTaskResult { pid },
+                    )),
+                    Err(refusal) => {
+                        let (code, message) = refusal_to_wire(&refusal);
+                        reply_or_nothing(encode_error(codec, id, code, message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
         "auth/handshake" => {
             let params = parsed
                 .get("params")
@@ -452,7 +543,8 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":"3","method":"auth/handshake","params":{"protocol_version":"not a number"}}"#,
             r#"{"jsonrpc":"2.0","id":"4","method":"auth/handshake","params":null}"#,
         ] {
-            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, &codec, body) else {
+            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, None, &codec, body)
+            else {
                 panic!("expected a reply, not a panic or silence: {body}")
             };
             let v = decode(&reply);
@@ -479,6 +571,7 @@ mod tests {
             &roots,
             &fs,
             None,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"1","method":"auth/handshake","params":{}}"#,
         );
@@ -486,6 +579,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"2","method":"auth/handshake","params":{"client_version":"0.1.0","protocol_version":1,"capabilities":[]}}"#,
@@ -507,6 +601,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"9","method":"workspace/writeFile","params":{}}"#,
@@ -535,7 +630,7 @@ mod tests {
         );
         for body in ["this is not json", "", "{}"] {
             assert!(matches!(
-                dispatch(&registry, &roots, &fs, None, &codec, body),
+                dispatch(&registry, &roots, &fs, None, None, &codec, body),
                 Action::Nothing
             ));
         }
