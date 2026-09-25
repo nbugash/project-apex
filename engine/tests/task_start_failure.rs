@@ -205,3 +205,68 @@ fn an_unstartable_command_and_a_live_identity_are_different_codes() {
     assert_ne!(unstartable["error"]["code"], -32006, "{unstartable}");
     assert_ne!(second["error"]["code"], -32006, "{second}");
 }
+
+/// How many children this process has, running or zombie.
+fn children() -> usize {
+    let ours = std::process::id();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            let Some((_, after)) = stat.rsplit_once(')') else {
+                return false;
+            };
+            let mut fields = after.split_whitespace();
+            let _state = fields.next();
+            fields.next().and_then(|p| p.parse::<u32>().ok()) == Some(ours)
+        })
+        .count()
+}
+
+#[test]
+fn a_second_task_under_a_live_identity_never_becomes_a_process() {
+    // **FR-031c, counted rather than read.** The refusal returns -32010 either way, so a test
+    // that asserts on the reply passes for an implementation that spawns the process and then
+    // refuses -- and two builds under one identity is exactly what the refusal exists to prevent.
+    //
+    // That is not hypothetical. The identity is checked twice: once before the spawn and once by
+    // `TaskSet::start` afterwards. Removing the first leaves the reply unchanged and the second
+    // process created and reaped, which quickstart §10's fifth mutation does and which every
+    // reply-reading assertion passes.
+    let mut h = harness();
+
+    let first = h.run("twice", &[&fixture("fixture_signals")]);
+    assert!(
+        first.get("error").is_none(),
+        "the first start failed: {first}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && h.service.control(&TaskId("twice".into())).is_none() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Let the first settle, so the count below is of a steady state rather than of a spawn in
+    // flight.
+    std::thread::sleep(Duration::from_millis(200));
+    let before = children();
+
+    let second = h.run("twice", &[&fixture("fixture_signals")]);
+    assert_eq!(second["error"]["code"], -32010, "{second}");
+
+    // A process spawned and reaped would show here as a zombie or a live child; either is a
+    // process that was created.
+    std::thread::sleep(Duration::from_millis(200));
+    let after = children();
+    assert_eq!(
+        after,
+        before,
+        "a refused start created {} process(es); FR-031c says the second must never be created, \
+         not created and then cleaned up",
+        after.saturating_sub(before)
+    );
+}

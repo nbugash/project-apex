@@ -116,6 +116,14 @@ fn an_allocation_past_the_limit_is_refused_and_the_refusal_is_prompt() {
         text.contains("ALLOC-REFUSED"),
         "the allocation was never refused, so the limit was not applied: {text}"
     );
+    // **The limit must not be liftable.** Both the soft and the hard value are set, so the task's
+    // attempt to raise its own ceiling fails. A soft-only limit is advisory: a runaway lifts it
+    // and carries on, and nothing fails until a real runaway arrives -- the one occasion nobody
+    // is watching a test.
+    assert!(
+        text.contains("ALLOC-CEILING lifted=false"),
+        "the task raised its own address-space ceiling, so the limit was advisory: {text}"
+    );
 
     // **Refused at *our* limit, not merely refused.** Without the rlimit the fixture is still
     // refused eventually -- the system runs out of address space on its own -- so "a refusal

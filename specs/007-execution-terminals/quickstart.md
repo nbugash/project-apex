@@ -552,17 +552,82 @@ command was not enough and a persistent `Xvfb :77` was; `make gate` already defa
 
 ## 12. Validation record
 
-*To be completed when the feature is implemented. Left empty deliberately: a table of results
-nobody produced is the failure mode A-TEST names — confidence that has not been earned.*
+*Completed 2026-09-25 on the project's Linux development host (x86-64, uid 1000, unprivileged).
+Where a check could not be made on this host it is recorded as a **skip**, never as a pass.*
 
 | Check | Result |
 |---|---|
-| `make test` | |
-| `make gate` | |
-| `make no-network` (SC-017) | |
-| The eight printed measurements (§8) | |
-| The nine negative checks (§9), each with its fixture condition confirmed present | |
-| The eight mutations (§10), each failing then reverted | |
+| `make test` | **PASS** — 815 Rust, 103 webview, 103 end-to-end assertions across 31 spec files |
+| `make gate` | **PASS** — clippy `-D warnings`, `fmt --check`, `lint:ds`, build, all suites |
+| `make no-network` (SC-017) | **SKIP** — unprivileged user namespaces are unavailable here, so the `unshare -rn` mode did not run. The source-scan fallback reported no network literal, which is recorded as a skip and not a pass: it greps for addresses, F010 adds none, and it would report success whatever the code did |
+| The eight printed measurements (§8) | **PASS** — all eight below, each p99 over ≥100 samples, printed |
+| The nine negative checks (§9) | **PASS** — each fixture condition confirmed present, two of them added during the audit; see below |
+| The eight mutations (§10) | **7 confirmed, 1 unfalsifiable on this host** — see the table below |
+
+### The eight measurements
+
+Measured in one run, so the numbers are of one build rather than assembled from several.
+
+| Criterion | Measured (p99) | Budget | Headroom |
+|---|---|---|---|
+| **SC-001** output to the boundary | 20.524 ms | 500 ms | 479.476 ms |
+| **SC-006** interactive traffic under 3 × 50 MiB, at the transport | 21.372 ms | 500 ms | 478.628 ms |
+| **SC-009** a resize reaching the process | 41.291 ms | 500 ms | 458.709 ms |
+| **SC-026** an allocation denied | 0.001 ms | 2 s | ~2 s |
+| **SC-030** a keystroke answered under 50 MiB, at the panel | 0.017 ms | 250 ms | 249.983 ms |
+
+| Criterion | Measured | Bound | Spare |
+|---|---|---|---|
+| **SC-005** largest raw chunk of a 4 MiB line | 65 536 B | 65 536 B | 0 |
+| **SC-005** largest encoded frame | 87 384 B | 1 048 576 B | 961 192 B |
+| **SC-021** bytes held, client **attached** | 65 536 B | 4 194 304 B | 4 128 768 B |
+| **SC-021** bytes held, client **detached** | 4 194 304 B | 4 194 304 B | 0 |
+| **SC-024** bytes held by an unmounted panel after 50 MiB | 2 096 640 B | 2 097 152 B | 512 B |
+
+SC-021 is measured in both states because only one of them reaches the bound. With a client
+attached, retention is released as each frame goes out and the peak is whatever is in flight —
+one chunk — so an assertion made only there is satisfied by never approaching the ceiling. That
+was this suite's first version, and §10's third mutation passed against it.
+
+Two of the numbers deserve a sentence rather than a tick. SC-001's ~20 ms is dominated by
+`CHUNK_INTERVAL_MS`: each write waits out the time bound rather than filling a 64 KiB chunk, so
+what is measured is the deliberate coalescing delay and not the cost of moving bytes. SC-009's
+~40 ms is that bound again on the way back, plus `fixture_winsize`'s own 20 ms poll — the cost of
+**observing** the resize, not of performing it.
+
+### The eight mutations
+
+| # | Mutation | Outcome |
+|---|---|---|
+| 1 | Emit only on the size bound | **FAILED as expected** — 5 cases across `task_latency` and the `output` unit tests |
+| 2 | Remove the process group (`kill`, not `killpg`) | **FAILED as expected** — `task_process_group`'s pipes case. The terminal case passes either way, because a dying session leader makes the kernel send `SIGHUP` to its terminal's foreground group; with pipes there is no second mechanism |
+| 3 | Read past the 4 MiB retention bound | **FAILED as expected**, after the suite was fixed. It passed first time: the held-bytes assertion ran only with a client attached, where the bound is never approached |
+| 4 | Deliver the exit before the last output chunk | **FAILED as expected** — both of `task_ordering`'s SC-011 cases |
+| 5 | Make `runTask` attach when the identity is live | **FAILED as expected**, after the suite was fixed. It passed first time: the identity is checked twice, and removing the first check leaves the reply unchanged while a second process is spawned and reaped between them. FR-031c says the second must never be **created**, so the new case counts processes rather than reading the reply |
+| 6 | Encode output as a lossy UTF-8 string | **FAILED as expected** — all three `task_binary_output` cases |
+| 7 | Set the memory limit soft only | **FAILED as expected**, after the fixture was fixed. It passed first time: `fixture_alloc` never tried to raise its own ceiling, so an advisory limit behaved exactly like a real one. The fixture now attempts the lift and reports whether it succeeded |
+| 8 | `setuid` to another user between fork and exec | **UNFALSIFIABLE ON THIS HOST** — `setuid(65534)` as uid 1000 is refused with `EPERM`, confirmed by running it. Recorded as unfalsified rather than as a mutation that passed. SC-029 holds by construction under `fork`/`exec`; re-run this on a host with `CAP_SETUID` to earn the falsifier |
+
+Three of the eight found a test that did not discriminate, which is the entire reason the table
+exists. Mutation 2 also hung rather than failing, because the teardown signalled only the leader
+and the surviving tree held the pseudo-terminal open — a teardown relying on the property under
+test. It now kills every level directly and fails in ten seconds instead of hanging.
+
+### The nine negative checks
+
+Each row is the fixture condition §9 names, and whether it is actually present.
+
+| Must not happen | Condition that lets it fail | Present |
+|---|---|---|
+| A byte on `onStderr` under a terminal (SC-028) | `fixture_tty_streams` writes loudly to stderr, and is run with `pty: false` in the same suite | **yes** — `pty_runner_smoke.rs`, both shapes |
+| Output lost when a producer outruns the link (SC-021) | The producer outruns the consumer long enough to fill the bound, and held bytes are asserted | **yes** — `fixture_burst`'s 50 MiB against a 4 MiB bound, detached, plus the held-bytes assertion |
+| A process surviving a stop at any depth (SC-027) | A **grandchild**, and both descendants ignoring their parent's signal | **yes** — `fixture_tree` builds three levels and installs no handler |
+| A task terminated by a disconnection alone (SC-018) | The engine still running when the transport closes, and a task with no reason of its own to exit | **yes** — `task_detach.rs` drops the client without touching the service; `fixture_signals` never exits |
+| A second process under a live identity (SC-022) | The first still **running** at the second call, and the count on processes rather than the error | **yes** — added for mutation 5; `a_second_task_under_a_live_identity_never_becomes_a_process` |
+| A task's environment in a log line (SC-025) | A sentinel that could only have come from the environment, on **both** start paths | **yes** — `task_env_redaction.rs`, success and `-32011`, plus the listing |
+| A core file from a crash (SC-025, FR-005a) | The fixture really crashes, and `ulimit -c` is raised first | **yes** — the harness raises its own `RLIMIT_CORE` to unlimited (this host's soft limit is 0 and its hard limit unlimited), `fixture_crash` segfaults, and the exit is asserted to carry a signal. The discriminating assertion is **not** the directory scan: this host's `core_pattern` pipes to a handler, so no dump would land in a working directory whatever the engine did. It reads the task's own `/proc/<pid>/limits` instead — `0` with the engine's limit, `unlimited` without it, confirmed by mutation |
+| An exit carrying both fields or neither (SC-010) | Both fixtures in one suite, asserted on which field is **present** | **yes** — `task_lifecycle.rs`, four endings, asserted on presence and on `signal` being a name |
+| A task surviving a re-execution (A-TASKEXEC) | Tasks running at the restart, and the check counting **processes** as well as reading the list | **yes** — `task_reexec.rs` asserts both halves |
 
 ---
 

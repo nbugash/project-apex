@@ -22,7 +22,7 @@ use apex_engine::adapters::outbound::pty_runner::PtyRunner;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
 use apex_engine::adapters::outbound::system_clock::SystemClock;
 use apex_engine::adapters::outbound::task_threads::TaskService;
-use apex_engine::application::output::RETENTION_BYTES;
+use apex_engine::application::output::{CHUNK_BYTES, RETENTION_BYTES};
 use apex_engine::application::ports::file_system::FileSystem;
 use apex_engine::application::ports::roots::WorkspaceRoots;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
@@ -162,5 +162,89 @@ fn every_byte_is_delivered_and_the_engine_holds_few_of_them() {
     if let Some(control) = service.control(&id) {
         let _ = control.signal(TaskSignal::Kill);
     }
+    service.close();
+}
+
+#[test]
+fn a_detached_engine_holds_the_bound_and_stops_reading() {
+    // **FR-013a, and the only state in which the bound is reached at all.** While a client is
+    // attached, retention is released as each frame goes out, so what is held is whatever is in
+    // flight -- one chunk -- and an assertion made there is satisfied by never approaching the
+    // ceiling. That was this file's first version, and the mutation that lets the reader read
+    // past the bound passed against it.
+    //
+    // Detached, nothing drains. Output accumulates until the bound, and then the reader stops
+    // calling `read`: the pseudo-terminal's buffer fills and the task blocks in its own `write`.
+    // Nothing is dropped, nothing is marked and nothing is announced.
+    let sink = Sink::default();
+    let writer = Arc::new(FrameWriter::new(Box::new(sink.clone())));
+    let runner = Arc::new(PtyRunner::new());
+    let mut service = TaskService::new(writer, Arc::new(SystemClock) as Arc<_>, runner);
+
+    let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
+    let roots = InMemoryRoots::new(Arc::clone(&fs));
+    roots.register("ws1", "/tmp").expect("register");
+
+    // Detached **before** the task starts, so nothing it writes is ever drained.
+    service.detach();
+
+    let id = TaskId("held".into());
+    let params = RunTaskParams {
+        workspace_id: WorkspaceId("ws1".into()),
+        task_id: id.clone(),
+        // `fixture_burst` writes 50 MiB as fast as the pipe takes it, which is far past the
+        // 4 MiB bound -- a fixture that fitted inside it would never trigger the mechanism.
+        command: vec![fixture("fixture_burst")],
+        cwd: None,
+        env: Some(
+            [(
+                "PATH".to_string(),
+                std::env::var("PATH").unwrap_or_default(),
+            )]
+            .into_iter()
+            .collect(),
+        ),
+        pty: false,
+        cols: None,
+        rows: None,
+    };
+    service.run(&params, &roots, fs.as_ref()).expect("run");
+
+    // Long enough for a 50 MiB producer to have run well past the bound had nothing stopped it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut peak = 0usize;
+    while Instant::now() < deadline {
+        peak = peak.max(service.retained_bytes(&id).unwrap_or(0));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    println!("SC-021 detached: bytes held {peak} (bound {RETENTION_BYTES})");
+    println!(
+        "SC-021 detached: bytes on the wire {} (a detached engine writes to nobody)",
+        delivered_bytes(&frames_of(&sink)).len()
+    );
+
+    // The bound is **reached**, or this measures a producer that finished early rather than a
+    // reader that stopped.
+    assert!(
+        peak > 0,
+        "nothing was retained, so the detached path was never exercised"
+    );
+    // And not exceeded by more than the chunk in flight when the bound was crossed.
+    assert!(
+        peak <= RETENTION_BYTES + CHUNK_BYTES,
+        "the engine held {peak} bytes, past the {RETENTION_BYTES} byte bound"
+    );
+    // Nothing went out: there is nobody to write to.
+    assert_eq!(
+        delivered_bytes(&frames_of(&sink)).len(),
+        0,
+        "a detached engine wrote to the wire"
+    );
+
+    if let Some(control) = service.control(&id) {
+        let _ = control.signal(TaskSignal::Kill);
+    }
+    service.reattach();
     service.close();
 }

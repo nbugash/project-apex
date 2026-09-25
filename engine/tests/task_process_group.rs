@@ -60,9 +60,21 @@ struct Tree {
 }
 
 impl Drop for Tree {
+    /// Kill every level, not only the one the service knows about.
+    ///
+    /// The service signals the **group**, which is the thing under test -- so a teardown that
+    /// relied on it would be relying on the property the mutation removes. With only the leader
+    /// signalled, the surviving descendants keep the pseudo-terminal open, the reader never sees
+    /// end of file, and `close` waits on it forever: quickstart §10's second mutation hung for
+    /// ten minutes instead of failing in one second, which is a failure nobody can read.
     fn drop(&mut self) {
         if let Some(control) = self.service.control(&self.id) {
             let _ = control.signal(TaskSignal::Kill);
+        }
+        for pid in self.pids() {
+            // SAFETY: `kill` with a valid signal on a pid that may no longer exist is defined;
+            // it answers ESRCH, which is the ordinary case here.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
         }
         self.service.close();
     }

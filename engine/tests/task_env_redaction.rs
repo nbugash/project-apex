@@ -196,6 +196,65 @@ fn a_listing_does_not_carry_the_environment_either() {
     );
 }
 
+/// The task's own core-size limit, as the kernel reports it.
+fn core_limit_of(pid: i32) -> Option<String> {
+    let limits = std::fs::read_to_string(format!("/proc/{pid}/limits")).ok()?;
+    let line = limits
+        .lines()
+        .find(|l| l.starts_with("Max core file size"))?;
+    // "Max core file size   0   unlimited   bytes" -> the soft value.
+    Some(line.split_whitespace().nth(4)?.to_string())
+}
+
+#[test]
+fn a_task_is_given_no_room_for_a_core_dump_at_all() {
+    // **The check that discriminates**, and the reason the directory scan below is not enough.
+    //
+    // §9 asks the harness to raise `ulimit -c` first, so the host would write a dump if the
+    // engine did not stop it -- otherwise the absence of one is free. This host's soft limit is
+    // 0 and its hard limit unlimited, so it is raised here. But its `core_pattern` pipes to a
+    // handler rather than writing a file, so **no dump would land in a working directory on this
+    // host whatever the engine did**, and a directory scan proves nothing.
+    //
+    // What does prove it is the limit the kernel reports for the task itself. FR-005a requires
+    // RLIMIT_CORE to be 0 because a dump is a crash report carrying the whole environment, and
+    // this reads that back from the process rather than from the code that set it.
+    let raised = libc::rlimit {
+        rlim_cur: libc::RLIM_INFINITY,
+        rlim_max: libc::RLIM_INFINITY,
+    };
+    // SAFETY: `raised` is a valid `rlimit` whose soft value does not exceed its hard value; the
+    // host's hard limit is unlimited, so this succeeds and the engine's own 0 is the only thing
+    // left stopping a dump.
+    let lifted = unsafe { libc::setrlimit(libc::RLIMIT_CORE, &raised) } == 0;
+    println!("SC-025 harness raised its own core limit: {lifted}");
+
+    let mut h = harness();
+    let _ = h.run("limits", &fixture("fixture_signals"));
+    let pid = h
+        .service
+        .pid(&TaskId("limits".into()))
+        .expect("the task is live");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut reported = None;
+    while Instant::now() < deadline && reported.is_none() {
+        reported = core_limit_of(pid.0);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    println!("SC-025 task core limit: {reported:?}");
+
+    match reported {
+        Some(limit) => assert_eq!(
+            limit, "0",
+            "a task may write a core dump of {limit} bytes, and a dump carries the whole \
+             environment"
+        ),
+        // Printed above, so a host that will not say is visible as a skip rather than a pass.
+        None => println!("SC-025 SKIPPED: /proc did not report this task's limits"),
+    }
+}
+
 #[test]
 fn a_crashing_task_leaves_no_core_file() {
     // §9's other check, and the reason RLIMIT_CORE is zero rather than merely small: a core dump
