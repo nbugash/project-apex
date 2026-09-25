@@ -167,7 +167,7 @@ fn a_released_tasks_deadline_reaches_nothing() {
 #[test]
 fn closing_releases_the_thread_rather_than_hanging() {
     let clock = Arc::new(FakeClock::new());
-    let mut esc = Escalations::spawn(Arc::clone(&clock) as Arc<_>);
+    let esc = Escalations::spawn(Arc::clone(&clock) as Arc<_>);
     let rec = Arc::new(Recording::with_counter(Arc::new(AtomicUsize::new(0))));
     let control: Arc<dyn TaskControl> = rec.clone();
     esc.register(TaskId("build".into()), Pid(1), &control, u64::MAX);
