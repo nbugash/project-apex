@@ -236,7 +236,7 @@ fn serve(
                         }
                         Action::Nothing => {}
                         Action::Restart(ack) => {
-                            rpc::drain_and_exec(registry, codec, &mut buf, &ack);
+                            rpc::drain_and_exec(registry, codec, &mut buf, &ack, tasks);
                         }
                     }
                 }

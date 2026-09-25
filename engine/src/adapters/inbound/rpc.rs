@@ -681,9 +681,48 @@ pub fn drain_and_exec(
     codec: &mut FrameCodec,
     buf: &mut BytesMut,
     ack: &[u8],
+    tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
 ) -> ! {
     let mut out = std::io::stdout();
     let _ = out.write_all(ack);
+
+    // **Stop every task before replacing the image** (A-TASKEXEC). `exec` keeps the descriptors
+    // and discards everything else, including the reader threads -- a task left running would be
+    // a process nobody is reading and nobody can reach, orphaned exactly the way §15.2 describes
+    // a crash orphaning one.
+    //
+    // The same Term-then-Kill escalation as `workspace/close`, and for the same reason: a build
+    // given no chance to remove its half-written output leaves the next one to discover it.
+    let terminated: Vec<String> = match tasks {
+        Some(service) => {
+            let plans = service.drain_all();
+            // **Term, then Kill, with no wait between.**
+            //
+            // A-TASKEXEC requires zero survivors, and a task that catches SIGTERM and keeps
+            // running -- which plenty do, deliberately -- would otherwise survive the `exec` and
+            // be orphaned: alive, reparented, reachable by pid and by nothing the protocol
+            // exposes. That is the outcome §15.2 describes for a crash, produced here by an
+            // update the developer asked for.
+            //
+            // The grace period cannot be honoured. It is served by the escalation thread, and
+            // `exec` is about to discard that thread along with everything else that is not a
+            // descriptor; and holding the client for five seconds before a restart it requested
+            // is worse than the cleanup it buys. A task that wanted to tidy up on SIGTERM gets
+            // the same warning it would get from a machine rebooting under it.
+            //
+            // Kill to a group that already left on the Term is harmless: the kernel has nobody
+            // to deliver it to.
+            for plan in &plans {
+                let Some(control) = service.control(&plan.id) else {
+                    continue;
+                };
+                let _ = control.signal(plan.send);
+                let _ = control.signal(crate::domain::task::TaskSignal::Kill);
+            }
+            plans.into_iter().map(|p| p.id.0).collect()
+        }
+        None => Vec::new(),
+    };
 
     while let Ok(Some(frame)) = codec.decode(buf) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&frame.0) {
@@ -703,7 +742,10 @@ pub fn drain_and_exec(
     }
     let _ = out.flush();
 
-    let err = exec_self(&registry.current().0);
+    // The ids travel in the environment, because `session/onRestart` is emitted by the **new**
+    // image and this list is built in the old one. An empty list then asserts that nothing was
+    // lost rather than that nothing was checked.
+    let err = exec_self(&registry.current().0, &terminated);
     // Only reachable if exec failed. The old image is intact, so report and keep serving
     // rather than exiting and taking the session down with us.
     eprintln!("re-execution failed, continuing on the current image: {err}");
@@ -713,7 +755,7 @@ pub fn drain_and_exec(
 /// Replace this process with a fresh copy of the engine binary, carrying the session forward.
 ///
 /// Returns only on failure: on success there is no longer a process to return into.
-fn exec_self(session_id: &str) -> std::io::Error {
+fn exec_self(session_id: &str, unpreserved: &[String]) -> std::io::Error {
     use std::os::unix::process::CommandExt;
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -721,6 +763,10 @@ fn exec_self(session_id: &str) -> std::io::Error {
     };
     std::process::Command::new(exe)
         .env(session::SESSION_ENV, session_id)
+        .env(
+            session::UNPRESERVED_ENV,
+            session::unpreserved_to_env(unpreserved),
+        )
         .exec()
 }
 

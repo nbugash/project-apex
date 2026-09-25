@@ -3044,6 +3044,28 @@ during an update the developer did not ask for and does not observe. A terminate
 developer is told about is a smaller harm than a surviving task whose owner and format are
 negotiated across a version boundary.
 
+**Amendment (2026-09-25): the escalation is not the one `execution/terminate` uses.** This record
+said "the same escalation", meaning `SIGTERM` followed by `SIGKILL` after five seconds. That grace
+cannot be honoured here and the implementation sends both signals with no wait between them.
+
+Two reasons, and the first is decisive. The grace is served by the escalation thread, and `exec`
+discards every thread — so the `SIGKILL` that makes "zero survivors" true would be scheduled onto
+something that is about to stop existing. A task that catches `SIGTERM` and keeps running, which
+many deliberately do, would then survive the re-execution and be orphaned: alive, reparented, and
+reachable by pid and by nothing the protocol exposes. That is precisely the outcome this record
+exists to prevent, reached through the mechanism meant to prevent it.
+
+The second is that waiting is worse for the developer than not waiting. Five seconds of silence
+before a restart they asked for buys a cleanup nobody observes: the reader threads are already
+going, so whatever the task writes in its grace period reaches no one.
+
+A task that wanted to tidy up on `SIGTERM` gets the same warning it would get from a machine
+rebooting under it. `SIGKILL` to a group that already left on the `SIGTERM` is harmless — the
+kernel has nobody to deliver it to.
+
+Found by a test rather than by review: `fixture_signals` catches `SIGTERM` and keeps running, and
+two of three tasks survived a drain written to this record's original wording.
+
 **Reversal conditions.** Two, either of which is sufficient. First, if the engine ever holds its
 task map outside its own process image — a supervisor process, or a small on-disk record of
 identity-to-pid — then carrying tasks across a re-execution stops requiring descriptors to survive
