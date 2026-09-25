@@ -11,13 +11,16 @@ use std::sync::Arc;
 
 use apex_protocol::wire::{Pid, RunTaskParams, TaskId};
 
+use crate::application::ports::clock::Millis;
 use crate::application::ports::file_system::FileSystem;
 use crate::application::ports::roots::{RootError, WorkspaceRoots};
 use crate::application::ports::task_runner::{
-    ResourceLimits, SpawnFailure, SpawnRequest, SpawnedTask, TaskRunner,
+    ResourceLimits, SpawnFailure, SpawnRequest, SpawnedTask, TaskControl, TaskRunner,
 };
 use crate::domain::path::{PathRefusal, ResolvedPath};
-use crate::domain::task::{EnvOverrides, Shape, StartRefused, Task, TaskSet, TaskState};
+use crate::domain::task::{
+    EnvOverrides, Shape, StartRefused, Task, TaskSet, TaskSignal, TaskState,
+};
 
 /// The terminal size a task gets when the client names neither dimension.
 ///
@@ -172,6 +175,132 @@ pub fn split(id: &TaskId, spawned: SpawnedTask) -> (TaskId, StartedTask) {
     )
 }
 
+/// How long a `SIGTERM` is given before `SIGKILL` follows (§4.8, plan.md *Escalation grace*).
+///
+/// Stated here, in the use case, because it is a decision rather than a mechanism: the adapter
+/// is handed a deadline somebody chose, and the same number is what a test asserts against
+/// instead of restating it.
+pub const ESCALATION_GRACE_MS: Millis = 5_000;
+
+/// Write bytes to a task's input.
+///
+/// **Returns nothing, by construction.** `execution/writeStdin` is a notification and §4.2 gives
+/// it no response, so an unknown id, an exited task and a full buffer are indistinguishable to
+/// the caller. Making this fallible would invent a failure the protocol has nowhere to put.
+///
+/// The outcome is still distinguished *here*, so a caller can tell "nobody to write to" from
+/// "the write was refused" even though neither reaches the client. It takes no task id: the
+/// caller resolved the control from one already, and a parameter carried only to be logged by
+/// nothing is dead weight.
+pub fn write_input(data: &[u8], control: Option<Arc<dyn TaskControl>>) -> InputOutcome {
+    let Some(control) = control else {
+        return InputOutcome::NoSuchTask;
+    };
+    if data.is_empty() {
+        // A legal frame that asks for nothing. Writing zero bytes to a pipe is not the same as
+        // writing nothing -- on some paths it signals end of file -- so it is skipped rather
+        // than passed through.
+        return InputOutcome::Written;
+    }
+    match control.write_stdin(data) {
+        Ok(()) => InputOutcome::Written,
+        Err(_) => InputOutcome::Refused,
+    }
+}
+
+/// What a write did. Never reaches the client; exists so a test and a log can tell these apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputOutcome {
+    Written,
+    NoSuchTask,
+    Refused,
+}
+
+/// Change a task's terminal size.
+///
+/// A no-op for a task started without a terminal, and for a zero in either dimension. Zero is
+/// the value some programs read as "no terminal at all" and change what they print accordingly,
+/// so forwarding one would alter a task's behaviour rather than its layout -- and the client
+/// that sent it is almost certainly reporting an element it has not laid out yet.
+///
+/// Returns nothing to the client, for `write_input`'s reason.
+pub fn resize_task(
+    shape: Option<Shape>,
+    cols: u16,
+    rows: u16,
+    control: Option<Arc<dyn TaskControl>>,
+) -> ResizeOutcome {
+    let Some(shape) = shape else {
+        return ResizeOutcome::NoSuchTask;
+    };
+    if !matches!(shape, Shape::Pty { .. }) {
+        // A task with pipes has no window to resize. Not an error: a client showing a panel for
+        // it is right to report its size, and A-TASKSTREAM makes the shape the client's choice.
+        return ResizeOutcome::NoTerminal;
+    }
+    if cols == 0 || rows == 0 {
+        return ResizeOutcome::Refused;
+    }
+    let Some(control) = control else {
+        return ResizeOutcome::NoSuchTask;
+    };
+    match control.resize(cols, rows) {
+        Ok(()) => ResizeOutcome::Resized,
+        Err(_) => ResizeOutcome::Refused,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeOutcome {
+    Resized,
+    NoTerminal,
+    NoSuchTask,
+    Refused,
+}
+
+/// Stop a task: send exactly the named signal, to the group, and decide what follows.
+///
+/// **This never sleeps.** A `Term` registers a deadline and returns; the waiting and the second
+/// signal belong to the escalation thread. A use case that slept here would block the dispatch
+/// thread for five seconds per stop -- and that thread is also the only reader of the client's
+/// stdin, so nothing would be read off the pipe in the meantime, which is §1.4 and FR-012
+/// failing through the mechanism meant to satisfy FR-024.
+///
+/// The deadline is keyed on the `(TaskId, Pid)` pair rather than on the id alone. An id can be
+/// reused once its task has ended, and a deadline that found its target by identity could kill
+/// a process that merely inherited the name.
+pub fn stop_task(id: &TaskId, signal: TaskSignal, now: Millis) -> Result<StopPlan, StopRefusal> {
+    Ok(StopPlan {
+        send: signal,
+        // `Int` deliberately does not escalate: a program that legitimately handles an interrupt
+        // must not be killed for having handled it. `Kill` has nothing to escalate to.
+        escalate_at: match signal {
+            TaskSignal::Term => Some(now + ESCALATION_GRACE_MS),
+            TaskSignal::Int | TaskSignal::Kill => None,
+        },
+        id: id.clone(),
+    })
+}
+
+/// What a stop asks the adapter to do. A value rather than an effect, so the policy is testable
+/// without a process, a clock thread or a signal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopPlan {
+    pub id: TaskId,
+    /// Sent first, and to the **group**: a build's own children are the things still holding the
+    /// terminal, and signalling only the named process leaves them running (FR-006a, SC-027).
+    pub send: TaskSignal,
+    /// When `SIGKILL` follows, if it does.
+    pub escalate_at: Option<Millis>,
+}
+
+/// Why a stop could not be planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopRefusal {
+    /// No live identity. `-32006`; see FR-019 for why an already-exited task is not this.
+    NotFound,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +324,85 @@ mod tests {
 
     fn value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
         env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_term_registers_exactly_one_deadline_five_seconds_out() {
+        // The grace period is read from the constant, never restated: a test with 5_000 written
+        // into it passes after somebody changes the policy, which is the test agreeing with a
+        // number rather than with a decision.
+        let plan = stop_task(&TaskId("t".into()), TaskSignal::Term, 1_000).expect("planned");
+        assert_eq!(plan.send, TaskSignal::Term);
+        assert_eq!(plan.escalate_at, Some(1_000 + ESCALATION_GRACE_MS));
+    }
+
+    #[test]
+    fn an_interrupt_does_not_escalate() {
+        // SIGINT deliberately has no follow-up. A program that legitimately handles an interrupt
+        // -- a REPL returning to its prompt, a build cancelling one target -- must not be killed
+        // for having handled it.
+        let plan = stop_task(&TaskId("t".into()), TaskSignal::Int, 1_000).expect("planned");
+        assert_eq!(plan.send, TaskSignal::Int);
+        assert_eq!(plan.escalate_at, None);
+    }
+
+    #[test]
+    fn a_kill_has_nothing_to_escalate_to() {
+        let plan = stop_task(&TaskId("t".into()), TaskSignal::Kill, 1_000).expect("planned");
+        assert_eq!(plan.send, TaskSignal::Kill);
+        assert_eq!(plan.escalate_at, None);
+    }
+
+    #[test]
+    fn the_plan_carries_the_identity_it_was_made_for() {
+        // The adapter keys the deadline on (TaskId, Pid). Losing the id here would leave it
+        // keying on whatever it had to hand, which is how a deadline comes to kill a process
+        // that merely inherited a reused name.
+        let plan = stop_task(&TaskId("build-01".into()), TaskSignal::Term, 0).expect("planned");
+        assert_eq!(plan.id, TaskId("build-01".into()));
+    }
+
+    #[test]
+    fn a_deadline_is_relative_to_now_rather_than_to_zero() {
+        // A clock read once at startup and never again produces deadlines in the past, and every
+        // SIGTERM then escalates immediately -- which looks like a working escalation until
+        // somebody notices nothing is ever given its grace period.
+        let early = stop_task(&TaskId("t".into()), TaskSignal::Term, 0).expect("planned");
+        let late = stop_task(&TaskId("t".into()), TaskSignal::Term, 900_000).expect("planned");
+        assert!(late.escalate_at > early.escalate_at);
+    }
+
+    #[test]
+    fn a_resize_of_a_task_without_a_terminal_changes_nothing() {
+        // US2.3b. Not an error and not a refusal the client hears about: a task with pipes has
+        // no window, and a panel showing it is still right to report its size.
+        assert_eq!(
+            resize_task(Some(Shape::Pipes), 120, 40, None),
+            ResizeOutcome::NoTerminal
+        );
+    }
+
+    #[test]
+    fn a_zero_dimension_is_refused_rather_than_forwarded() {
+        // Some programs read a zero dimension as "no terminal" and change what they print, so
+        // forwarding one alters a task's behaviour rather than its layout. A client reporting an
+        // element it has not laid out yet sends exactly this.
+        let shape = Some(Shape::Pty { cols: 80, rows: 24 });
+        assert_eq!(resize_task(shape, 0, 40, None), ResizeOutcome::Refused);
+        assert_eq!(resize_task(shape, 120, 0, None), ResizeOutcome::Refused);
+        assert_eq!(resize_task(shape, 0, 0, None), ResizeOutcome::Refused);
+    }
+
+    #[test]
+    fn a_resize_for_an_unknown_task_is_not_a_terminal_question() {
+        assert_eq!(resize_task(None, 120, 40, None), ResizeOutcome::NoSuchTask);
+    }
+
+    #[test]
+    fn writing_to_an_unknown_task_is_distinguishable_from_writing_nothing() {
+        // Neither reaches the client -- a notification has no response -- but a log that cannot
+        // tell them apart cannot answer "did my keystroke go anywhere".
+        assert_eq!(write_input(b"x", None), InputOutcome::NoSuchTask);
     }
 
     #[test]
