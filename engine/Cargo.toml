@@ -39,9 +39,16 @@ inotify = { version = "0.11", default-features = false }
 # Everything that decides anything -- how output is chunked, when a producer is slowed, what
 # the retention bound admits, when an escalation is due -- is tested without a process.
 #
-# Four features and no default. `term` is the pty itself, `process` the fork/exec and the
-# process group, `resource` the rlimits A-TASKLIMIT bounds a task with, `signal` the stop
-# path. The default feature set pulls in mount, mqueue and much else this has no use for.
+# Six features and no default. `term` is the pty itself, `process` the fork/exec and the
+# process group, `resource` the rlimits A-TASKLIMIT bounds a task with, `signal` the stop path,
+# `poll` the bounded wait a reader does on a descriptor, and `fs` the descriptor calls --
+# `pipe`, `read`, `write` and the `dup2_std*` redirections.
+#
+# plan.md's Technical Context named the first four, which is what the design called for and not
+# what compiles: a reader that cannot wait on a descriptor has to spin, and the redirections are
+# how a child's stdin, stdout and stderr become the terminal or the pipes at all. Corrected here
+# and in plan.md rather than silently widened. The default set pulls in mount, mqueue and much
+# else this has no use for.
 #
 # Still no async runtime: a task is one std thread reading a descriptor, as the watcher is.
 nix = { version = "0.31", default-features = false, features = [
@@ -49,6 +56,8 @@ nix = { version = "0.31", default-features = false, features = [
   "process",
   "resource",
   "signal",
+  "poll",
+  "fs",
 ] }
 
 [dev-dependencies]

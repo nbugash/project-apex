@@ -29,7 +29,11 @@ TypeScript 5.x with Svelte 5 in the webview.
 
 **Primary Dependencies**: `nix` in the engine, with narrow features — `term` for the
 pseudo-terminal, `process` for the process group, `resource` for the limits, `signal` for
-delivering them. Chosen over `portable-pty`, which is cross-platform and therefore weight for
+delivering them, `poll` for the bounded wait a reader does on a descriptor, and `fs` for the
+descriptor calls themselves: `pipe`, `read`, `write` and the `dup2_std*` redirections. The last
+two were found during implementation: the first four are what the design calls for and not what
+compiles, because a reader that cannot wait must spin and the redirections are how a child's
+stdin, stdout and stderr become the terminal or the pipes at all. Chosen over `portable-pty`, which is cross-platform and therefore weight for
 nothing: the engine runs only on Linux, F004's watcher already assumes it, and A-BOOT makes
 binary size a first-class concern on something transferred on every first connect. **No async
 runtime is added**, for the same reason F004 added none.
