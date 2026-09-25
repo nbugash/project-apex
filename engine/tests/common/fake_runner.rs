@@ -113,7 +113,8 @@ struct Shared {
     exit: Mutex<Option<Exit>>,
     exited: Mutex<bool>,
     /// A blocked `read` waits here until `release` is called.
-    gate: Mutex<bool>,
+    /// Permits for . Counted, not a latch: see .
+    gate: Mutex<usize>,
     opened: Condvar,
 }
 
@@ -156,9 +157,14 @@ impl FakeControl {
         *self.shared.exited.lock().expect("exited")
     }
 
-    /// Let a blocked `read` return.
+    /// Let **one** blocked `read` return.
+    ///
+    /// A permit rather than a latch. The first version set a flag, so one release let every later
+    /// `Block` through and a script could be gated exactly once -- which is not enough to stage
+    /// "before the client left", "while it was away" and "after it came back", and those three
+    /// moments are the whole of what a reattachment test is about.
     pub fn release_read(&self) {
-        *self.shared.gate.lock().expect("gate") = true;
+        *self.shared.gate.lock().expect("gate") += 1;
         self.shared.opened.notify_all();
     }
 }
@@ -215,6 +221,8 @@ impl TaskControl for FakeControl {
 pub struct FakeOutput {
     steps: VecDeque<Step>,
     shared: Arc<Shared>,
+    /// The clock a read advances while it waits. Optional, because most tests never look at time.
+    clock: Option<Arc<crate::common::fake_clock::FakeClock>>,
     /// Set once the scripted steps are spent, so `Ended` is returned exactly once thereafter.
     done: bool,
 }
@@ -242,12 +250,29 @@ impl TaskOutput for FakeOutput {
                     out.extend_from_slice(&bytes);
                     return ReadOutcome::Bytes { stream, len };
                 }
-                Step::Idle => return ReadOutcome::Idle,
-                Step::Block => {
-                    let mut open = self.shared.gate.lock().expect("gate");
-                    while !*open {
-                        open = self.shared.opened.wait(open).expect("gate wait");
+                Step::Idle => {
+                    // **Time passes, as it does in a real read.**
+                    //
+                    // A read that returns nothing has waited out its timeout, and the chunker's
+                    // time bound is measured against that same clock. Returning instantly makes
+                    // the reader spin: it consumes every scripted idle within one tick, the bound
+                    // never expires, and bytes written before an idle never reach the wire --
+                    // which is a property of the fake, not of the engine, and it hid the ordering
+                    // this suite exists to check.
+                    //
+                    // Advancing rather than sleeping keeps a million-step `silent_forever` free.
+                    if let Some(clock) = &self.clock {
+                        clock.advance(_timeout);
                     }
+                    return ReadOutcome::Idle;
+                }
+                Step::Block => {
+                    let mut permits = self.shared.gate.lock().expect("gate");
+                    while *permits == 0 {
+                        permits = self.shared.opened.wait(permits).expect("gate wait");
+                    }
+                    // Spent, so the next `Block` waits for its own release.
+                    *permits -= 1;
                     // Released: carry on to the next step rather than returning nothing.
                     continue;
                 }
@@ -259,6 +284,8 @@ impl TaskOutput for FakeOutput {
 /// A `TaskRunner` that spawns nothing.
 #[derive(Default)]
 pub struct FakeRunner {
+    /// Handed to each `FakeOutput`, so an idle read advances time the way a real one does.
+    clock: Mutex<Option<Arc<crate::common::fake_clock::FakeClock>>>,
     scripts: Mutex<VecDeque<Script>>,
     failures: Mutex<VecDeque<SpawnFailure>>,
     spawned: Mutex<Vec<SpawnRecord>>,
@@ -272,6 +299,14 @@ impl FakeRunner {
             next_pid: Mutex::new(1000),
             ..Default::default()
         }
+    }
+
+    /// Let an idle read advance this clock by the timeout it was given.
+    ///
+    /// Without it a scripted idle costs no time, the chunker's bound never expires, and anything
+    /// written before that idle waits in the chunker forever.
+    pub fn driving(self: &Arc<Self>, clock: Arc<crate::common::fake_clock::FakeClock>) {
+        *self.clock.lock().expect("clock") = Some(clock);
     }
 
     /// Queue what the next spawn will do.
@@ -360,6 +395,7 @@ impl TaskRunner for FakeRunner {
             output: Box::new(FakeOutput {
                 steps,
                 shared,
+                clock: self.clock.lock().expect("clock").clone(),
                 done: false,
             }),
             control,

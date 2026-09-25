@@ -206,9 +206,9 @@ use apex_protocol::wire::{ExitParams, OutputParams, SignalName};
 
 use crate::adapters::inbound::rpc::encode_notification;
 use crate::adapters::outbound::frame_writer::FrameWriter;
-use crate::application::output::{Chunker, RetainedOutput};
+use crate::application::output::{Admission, Chunker, RetainedOutput, RETENTION_BYTES};
 use crate::application::ports::task_runner::{Exit, ReadOutcome, TaskOutput};
-use crate::domain::task::{ExitStatus, OutputChunk, Stream};
+use crate::domain::task::{ExitStatus, OutputChunk, Stream, TaskState};
 
 /// How long a reader waits when the chunker has nothing pending.
 ///
@@ -236,6 +236,14 @@ struct TaskEntry {
     /// `workspace/close` drains through it -- a copy in this adapter would be a second source
     /// that can disagree with the first.
     streams: Mutex<Streams>,
+    /// How this task ended, when it ended while nobody was listening.
+    ///
+    /// An ending is delivered **once**, and the identity is released once it has been. While
+    /// detached there is nobody to deliver it to, so it waits here -- and the identity waits with
+    /// it, because releasing on a delivery that did not happen means a client reconnecting to a
+    /// build that finished while it was away is told `-32006` and never learns the result. That
+    /// is SC-020 failing in exactly the case it was written for.
+    ending: Mutex<Option<ExitStatus>>,
 }
 
 struct ServiceInner {
@@ -246,6 +254,16 @@ struct ServiceInner {
     writer: Arc<FrameWriter>,
     codec: FrameCodec,
     clock: Arc<dyn Clock>,
+    /// Whether a client is on the other end.
+    ///
+    /// **On the service, never on the `TaskSet`.** Invariant 12 is that the task set has no
+    /// opinion about the transport, so that "a disconnection terminates nothing" is true because
+    /// there is nothing that could do the terminating. What the service needs to know is a
+    /// narrower thing: whether a frame written now would reach anybody.
+    ///
+    /// An `AtomicBool` rather than a lock, because every chunk of every task reads it and a
+    /// mutex here would serialise readers that otherwise never meet.
+    attached: std::sync::atomic::AtomicBool,
     /// The domain's record of which tasks exist and which workspace owns each.
     ///
     /// Held here rather than on `TaskService` because a reader thread is what learns that a task
@@ -289,6 +307,7 @@ impl TaskService {
                 writer,
                 codec: FrameCodec,
                 clock: Arc::clone(&clock),
+                attached: std::sync::atomic::AtomicBool::new(true),
                 set: Mutex::new(crate::domain::task::TaskSet::new()),
                 escalations: Escalations::spawn(clock),
             }),
@@ -311,6 +330,7 @@ impl TaskService {
                 chunker: Chunker::new(),
                 retained: RetainedOutput::new(),
             }),
+            ending: Mutex::new(None),
         });
         {
             let mut map = match self.inner.entries.lock() {
@@ -445,6 +465,64 @@ impl TaskService {
         self.inner.clock.now()
     }
 
+    /// Record that the client went away.
+    ///
+    /// Output stops going to the wire and starts accumulating in each task's retention instead.
+    /// Nothing is signalled and nothing is released: A-TASKLIFE.
+    pub fn detach(&self) {
+        self.inner
+            .attached
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record that a client is on the other end again, and give it what it missed.
+    ///
+    /// Replayed **in order, on the notification each chunk's own stream would have used when
+    /// live** -- a replayed frame is deliberately indistinguishable from a live one, because a
+    /// flag saying "this is old" would exist only to be ignored or to be branched on and show a
+    /// seam that is not in the build's output (FR-032).
+    pub fn reattach(&self) {
+        self.inner
+            .attached
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let ids: Vec<TaskId> = {
+            let entries = self.inner.entries.lock().unwrap_or_else(|p| p.into_inner());
+            entries.keys().cloned().collect()
+        };
+        for id in ids {
+            self.replay(&id);
+        }
+    }
+
+    /// Send one task's retained output, oldest first, and release it as it goes.
+    ///
+    /// Taken out from under the lock before anything is written. Holding a task's stream lock
+    /// while writing to a socket would stop its reader thread for the length of the replay, which
+    /// for four megabytes over a slow link is the task blocked in `write` for the whole of it.
+    pub fn replay(&self, id: &TaskId) {
+        let Some(entry) = self.inner.entry(id) else {
+            return;
+        };
+        let held: Vec<OutputChunk> = {
+            let mut streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
+            streams.retained.drain()
+        };
+        for chunk in held {
+            emit_chunk(&self.inner, id, &chunk);
+        }
+        // The ending follows its output, never overtakes it (FR-022), and the identity is
+        // released once it has actually gone out.
+        let ending = entry
+            .ending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(status) = ending {
+            emit_exit(&self.inner, id, status);
+            release(&self.inner, id);
+        }
+    }
+
     pub fn escalations(&self) -> &Escalations {
         &self.inner.escalations
     }
@@ -465,6 +543,14 @@ impl TaskService {
         for h in handles {
             let _ = h.join();
         }
+    }
+}
+
+/// Record how a task ended, where `attach` and `list` will read it.
+fn mark_ended(inner: &ServiceInner, id: &TaskId, status: ExitStatus) {
+    let mut set = inner.set.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(task) = set.get_mut(id) {
+        task.state = TaskState::Ended(status);
     }
 }
 
@@ -523,12 +609,43 @@ fn emit_exit(inner: &ServiceInner, id: &TaskId, status: ExitStatus) {
     }
 }
 
-/// Drain whatever the chunker has ready and send it, retaining as it goes.
-fn flush(inner: &ServiceInner, id: &TaskId, entry: &TaskEntry, chunks: Vec<OutputChunk>) {
+/// How often a paused reader looks again.
+///
+/// A poll rather than a condvar, because what it is waiting for is a client reconnecting -- an
+/// event measured in seconds or minutes, not milliseconds -- and a quarter of a second of extra
+/// latency on resuming a build that was stalled for a minute is not a cost anybody can perceive.
+const BACKPRESSURE_POLL_MS: u64 = 250;
+
+/// Is this task's retention full with nobody to drain it?
+fn paused_at_bound(inner: &ServiceInner, entry: &TaskEntry) -> bool {
+    if inner.attached.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    let streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
+    streams.retained.held_bytes() >= RETENTION_BYTES
+}
+
+/// Drain whatever the chunker has ready and send it, or keep it until somebody can receive it.
+///
+/// Returns **true** when the task's retention has reached its bound, which is the reader's signal
+/// to stop reading (FR-013a).
+fn flush(inner: &ServiceInner, id: &TaskId, entry: &TaskEntry, chunks: Vec<OutputChunk>) -> bool {
+    let attached = inner.attached.load(std::sync::atomic::Ordering::Relaxed);
+    let mut at_bound = false;
     for chunk in chunks {
-        {
+        let admitted = {
             let mut streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
-            streams.retained.push(chunk.clone());
+            streams.retained.push(chunk.clone())
+        };
+        if admitted == Admission::AtBound {
+            at_bound = true;
+        }
+        if !attached {
+            // Nobody to write to. The bytes stay retained and the caller stops reading once the
+            // bound is reached, so the pseudo-terminal's buffer fills and the task blocks in its
+            // own `write` -- **nothing is dropped, nothing is marked and nothing is announced**.
+            // There is no drop path to get wrong and no gap notification to render.
+            continue;
         }
         emit_chunk(inner, id, &chunk);
         // Released as soon as it is written. Retention holds what an absent client has not seen;
@@ -536,6 +653,7 @@ fn flush(inner: &ServiceInner, id: &TaskId, entry: &TaskEntry, chunks: Vec<Outpu
         let mut streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
         let _ = streams.retained.drain();
     }
+    at_bound
 }
 
 fn read_loop(
@@ -556,6 +674,17 @@ fn read_loop(
             }
         };
 
+        // **Stop reading at the bound.** Not a sleep to slow things down: a reader that is not
+        // reading is a pseudo-terminal buffer filling, and then the task blocked in its next
+        // `write`. That chain is the whole of FR-013, and it exists only because nothing buffers
+        // between the producer and the wire.
+        //
+        // Reading resumes once the retention has drained, which happens when a client reattaches
+        // and the replay releases it.
+        while paused_at_bound(inner, entry) {
+            std::thread::sleep(Duration::from_millis(BACKPRESSURE_POLL_MS));
+        }
+
         buf.clear();
         let outcome = output.read(timeout, &mut buf);
         let now = inner.clock.now();
@@ -567,14 +696,14 @@ fn read_loop(
                     streams.chunker.accept(stream, &buf[..len], now);
                     streams.chunker.drain_due(now)
                 };
-                flush(inner, id, entry, due);
+                let _ = flush(inner, id, entry, due);
             }
             ReadOutcome::Idle => {
                 let due = {
                     let mut streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
                     streams.chunker.drain_due(now)
                 };
-                flush(inner, id, entry, due);
+                let _ = flush(inner, id, entry, due);
             }
             ReadOutcome::Ended | ReadOutcome::Failed(_) => {
                 // Everything still held goes out first, due or not: bytes below the size bound
@@ -584,7 +713,7 @@ fn read_loop(
                     let mut streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
                     streams.chunker.drain_all()
                 };
-                flush(inner, id, entry, rest);
+                let _ = flush(inner, id, entry, rest);
 
                 let status = match entry.control.reap() {
                     Some(Exit::Code(code)) => ExitStatus::Exited { code },
@@ -597,6 +726,19 @@ fn read_loop(
                 // Cancel first. A task that ended on its own must not be signalled by a
                 // deadline its own stop registered, and the identity may be reused.
                 inner.escalations.cancel(id);
+                // **Record the ending in the domain before anything is sent.**
+                //
+                // `attach` and `list` answer from that record, so a task whose state was never
+                // updated is reported as running right up until its identity is released -- and a
+                // client reattaching to a finished build would be told it is still going, then
+                // told the identity does not exist, and never once told the result.
+                mark_ended(inner, id, status);
+                if !inner.attached.load(std::sync::atomic::Ordering::Relaxed) {
+                    // Nobody to tell. The ending waits with the identity until somebody comes
+                    // back for both.
+                    *entry.ending.lock().unwrap_or_else(|p| p.into_inner()) = Some(status);
+                    return;
+                }
                 emit_exit(inner, id, status);
                 // **After** the exit is on the wire, never before.
                 //

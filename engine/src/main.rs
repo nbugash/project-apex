@@ -124,6 +124,13 @@ fn main() {
 
     loop {
         registry.set_attached(false);
+        // Output stops going to a socket nobody is holding and accumulates in each task's
+        // retention instead. Nothing is signalled and nothing is released (A-TASKLIFE); the
+        // reader threads stop reading once that retention is full, so the tasks block in their
+        // own `write` rather than anything being dropped (FR-013a).
+        if let Some(service) = tasks.as_ref() {
+            service.detach();
+        }
 
         // **Exit when there is nothing to preserve** (A-ENGINELIFE rule 3). Checked here and on
         // every tick below, because the last task can end while this is waiting: a check made
@@ -144,6 +151,12 @@ fn main() {
         };
         writer.retarget(Box::new(outbound));
         registry.set_attached(true);
+        // Give the returning client what it missed, before anything produced since. Replayed on
+        // the notification each chunk's own stream would have used when live: a replayed frame is
+        // deliberately indistinguishable from a live one (FR-032).
+        if let Some(service) = tasks.as_ref() {
+            service.reattach();
+        }
         // A reconnecting client starts a fresh conversation, so anything half-read from the
         // previous one is discarded: a partial frame from a connection that is gone can only
         // corrupt the first frame of the one that replaced it.
