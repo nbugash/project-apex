@@ -11,6 +11,7 @@
 #![allow(dead_code)] // each test binary uses a different subset
 
 pub mod fake_clock;
+pub mod fake_runner;
 pub mod fake_watcher;
 
 use apex_engine::application::ports::file_system::{FileSystem, RawEntry, RawMeta};

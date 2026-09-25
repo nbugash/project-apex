@@ -25,6 +25,8 @@ pub enum Owner {
     F006Editor,
     /// Engine-side content search.
     F013Search,
+    /// Running tasks on the developer's own machine rather than the instance.
+    F015LocalMode,
 }
 
 impl std::fmt::Display for Owner {
@@ -33,6 +35,7 @@ impl std::fmt::Display for Owner {
             Self::F004FileWatch => "F004 file-watch-sync",
             Self::F006Editor => "F006 editor-integration",
             Self::F013Search => "F013 global-search",
+            Self::F015LocalMode => "F015 local-mode",
         };
         write!(f, "{s}")
     }
