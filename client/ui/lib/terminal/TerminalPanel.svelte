@@ -12,7 +12,7 @@
   import type { WorkspaceReference } from '../ipc';
   import { readPalette, watchPalette } from './palette';
   import { taskSink } from './sink';
-  import { encodeInput } from './wire';
+  import { inputBytes } from './wire';
   import { terminals } from './terminals.svelte';
 
   interface Props {
@@ -65,7 +65,7 @@
           taskSink().terminate(id, 'SIGINT');
           return;
         }
-        taskSink().writeStdin(id, encodeInput(data));
+        taskSink().writeStdin(id, inputBytes(data));
       });
 
       panel.onResize((cols, rows) => taskSink().resize(id, cols, rows));

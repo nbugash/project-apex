@@ -105,6 +105,14 @@ export class TerminalPanel {
 
   /// Accept output, whether or not anything is on screen to show it.
   ///
+  /// **Written through the library's queue, never rendered synchronously here.** `Terminal.write`
+  /// returns as soon as the bytes are queued and the library parses them on its own schedule, so
+  /// a fifty-megabyte burst arriving as eight hundred chunks does not become eight hundred
+  /// synchronous parses on the thread that also has to answer a keystroke. Doing the parse here
+  /// -- or forcing it with a callback per chunk -- is what makes a panel stop responding under
+  /// exactly the load it exists for (SC-024, SC-030).
+  ///
+  ///
   /// Takes bytes or text. Output arrives as bytes and stays bytes; the string form is for the
   /// panel's own writing -- a reconnection summary, an ending -- which this application authored
   /// and therefore knows the encoding of.

@@ -32,7 +32,22 @@ export function encodeBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** A keystroke as the terminal library reports it, as the bytes the wire carries. */
+/**
+ * A keystroke as the terminal library reports it, as **bytes**.
+ *
+ * Bytes and not base64, because the sink is what puts things on the wire and it encodes. Handing
+ * it base64 would encode twice, and a task would receive the text `eA==` where the developer
+ * pressed `x` -- which looks like working software until somebody types into a REPL.
+ *
+ * That is not hypothetical: the first version of the panel's input path called `encodeInput` and
+ * passed its result straight to `writeStdin`. The compiler caught it because the two have
+ * different types, which is the argument for them having different types.
+ */
+export function inputBytes(data: string): Uint8Array {
+  return new TextEncoder().encode(data);
+}
+
+/** A keystroke as the wire carries it. For tests that assert on the encoded form. */
 export function encodeInput(data: string): string {
-  return encodeBase64(new TextEncoder().encode(data));
+  return encodeBase64(inputBytes(data));
 }
