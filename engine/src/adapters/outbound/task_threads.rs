@@ -369,6 +369,16 @@ impl TaskService {
         set.get(id).map(|task| task.shape)
     }
 
+    /// How many identities this service is holding.
+    ///
+    /// The number SC-014 compares before and after. Counted from the domain's record rather than
+    /// from the entry map, because the record is what `execution/list` answers from and a leak
+    /// there is a leak a client can see.
+    pub fn live(&self) -> usize {
+        let set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
+        set.len()
+    }
+
     /// Now, by the clock this service was built with. The stop path needs it to date a deadline,
     /// and reading it here keeps the dispatch layer from acquiring a clock of its own -- which
     /// would be a second source of time, and a fake one in tests would no longer govern.
