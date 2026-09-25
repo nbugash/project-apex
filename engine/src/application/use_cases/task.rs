@@ -56,7 +56,20 @@ pub enum StartRefusal {
 /// Sorted, because the port takes a slice and a test asserting on what a task was spawned with
 /// should not depend on hash order.
 fn merged_environment(overrides: &EnvOverrides) -> Vec<(String, String)> {
-    let mut merged: BTreeMap<String, String> = std::env::vars().collect();
+    merge_over(std::env::vars(), overrides)
+}
+
+/// The merge itself, with the inherited environment supplied rather than read.
+///
+/// Pure, so the precedence rule can be tested without mutating this process's environment --
+/// which is global state that sibling tests fork through, and therefore a race rather than a
+/// test. Reading the real environment is the caller's line above, which is where an adapter
+/// concern belongs (Principle VIII).
+fn merge_over(
+    inherited: impl Iterator<Item = (String, String)>,
+    overrides: &EnvOverrides,
+) -> Vec<(String, String)> {
+    let mut merged: BTreeMap<String, String> = inherited.collect();
     for (k, v) in overrides.iter() {
         merged.insert(k.clone(), v.clone());
     }
@@ -157,4 +170,67 @@ pub fn split(id: &TaskId, spawned: SpawnedTask) -> (TaskId, StartedTask) {
             output: spawned.output,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inherited(pairs: &[(&str, &str)]) -> std::vec::IntoIter<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    fn overrides(pairs: &[(&str, &str)]) -> EnvOverrides {
+        EnvOverrides::new(
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+        )
+    }
+
+    fn value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn an_inherited_variable_survives_a_supplied_environment() {
+        // §4.8 merges **over** rather than replacing. An implementation that replaces loses PATH,
+        // and every task spawned by absolute path still runs, so nothing else notices.
+        let merged = merge_over(
+            inherited(&[("PATH", "/usr/bin")]),
+            &overrides(&[("A", "1")]),
+        );
+        assert_eq!(value(&merged, "PATH"), Some("/usr/bin"));
+        assert_eq!(value(&merged, "A"), Some("1"));
+    }
+
+    #[test]
+    fn a_supplied_variable_wins_over_an_inherited_one_of_the_same_name() {
+        // "Over" has a direction. A merge letting the inherited value win passes the case above.
+        let merged = merge_over(
+            inherited(&[("KEY", "inherited")]),
+            &overrides(&[("KEY", "supplied")]),
+        );
+        assert_eq!(value(&merged, "KEY"), Some("supplied"));
+        assert_eq!(
+            merged.iter().filter(|(k, _)| k == "KEY").count(),
+            1,
+            "the variable must appear once, not twice with the winner last"
+        );
+    }
+
+    #[test]
+    fn no_overrides_leaves_the_inherited_environment_alone() {
+        let merged = merge_over(
+            inherited(&[("PATH", "/usr/bin"), ("HOME", "/root")]),
+            &overrides(&[]),
+        );
+        assert_eq!(merged.len(), 2);
+        assert_eq!(value(&merged, "HOME"), Some("/root"));
+    }
 }
