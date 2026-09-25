@@ -52,6 +52,31 @@ not complete until its response arrives, and must never be reported as successfu
 asked for it and background when a prefetch did. Bulk work sent as `Interactive` defeats the
 guarantee for everyone.
 
+### Notifications: no id, no reply, no outcome (F010)
+
+`send` promises exactly one outcome, exactly once. A JSON-RPC notification has none, so it gets
+its own method — `RequestSender::notify` — rather than a flag on `Request`. The difference is not
+a property of the message but of what the caller may do next: §4.2 gives a notification no
+response at all, so putting one through `send` would wait for a reply that is never coming, and
+the caller could not tell that from a slow engine.
+
+Two methods motivated it, and both are keystroke-rate:
+
+| Method | Why it carries no id |
+|---|---|
+| `execution/writeStdin` | A reply per keypress doubles the traffic of typing and tells the typist nothing they will not see in the echo. |
+| `execution/resizePty` | A drag emits a resize per frame; the useful answer is the reflow, not an acknowledgement of the size before last. |
+
+The cost is real and is the contract rather than a shortcoming: an unknown task, an exited task
+and a full buffer are **indistinguishable** to the sender, because there is no response to carry
+a refusal in. Anything that must be refused visibly stays a request — `execution/terminate` and
+`execution/close` have answers for exactly that reason.
+
+On the engine side this is a second dispatch path. A frame with no `id` cannot be answered, so it
+must not be routed through the machinery that builds a reply for every request; an id-less frame
+that took the normal path would emit a response with a null id, which §4.2 forbids and a client
+would have nothing to match against.
+
 ## Connecting
 
 Two phases, and §3.3 makes them mutually exclusive rather than merely ordered:

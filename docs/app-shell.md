@@ -35,6 +35,33 @@ capability rather than the technology — `SessionStore`, not `JsonFileStore`. I
 `ConnectionStatusSource`. Swap the binding in `composition.rs`; nothing else changes. That
 one-line swap is the property the port structure exists to buy.
 
+## What the store remembers (A-STATE, A-STATE2)
+
+`PersistedSession` is at **schema version 3**. Each bump added fields, and each added them with
+`#[serde(default)]` — that attribute *is* the migration. A file written by the previous version
+has no such field, parses, and gets the default, which is what keeps an existing user's geometry,
+layout and tabs across the upgrade instead of discarding the session because one key is missing.
+
+Version 3 added **task identities** (A-STATE2, FR-031d): a `task_id` and the `workspace_id` that
+owns it, per task this client started.
+
+**Identities and nothing else, deliberately.** A task outlives the connection that started it, and
+`execution/attach` reaches one only by an identity the caller already knows — so a client that
+restarts needs its identities to have survived the restart, or reattachment works only for a
+client that never closed.
+
+Two things are excluded for reasons worth keeping:
+
+- **No command.** A command line can carry a credential in argv, and FR-005a's accepted boundary
+  does not extend to writing that to disk.
+- **No output.** Retention belongs to the engine, which bounds it. A store that accumulated output
+  would grow without limit for a client that never comes back.
+
+The identity is the smallest thing that restores reachability. A client that has lost even that
+is not stranded — `execution/list` enumerates what the engine still holds — but that is the
+recovery path, and it costs a round trip on the one path where the developer is waiting and the
+link has just proved unreliable. Remembering is what keeps it off the ordinary path.
+
 ## Things that will bite you
 
 **The window is created hidden.** It becomes visible only when the interface calls
