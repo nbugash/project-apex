@@ -491,6 +491,19 @@ impl TaskControl for PtyControl {
     }
 
     fn signal(&self, signal: TaskSignal) -> Result<(), ControlError> {
+        // A task whose exit has already been observed is not signalled again.
+        //
+        // Not tidiness: the process is gone and its pid is free for the kernel to hand out, so a
+        // signal sent now is a signal to whatever holds that number next -- and it goes to the
+        // whole group, which makes it worse. FR-019's window is exactly this moment, between the
+        // exit being observed and being delivered, and a client that presses stop inside it must
+        // get a success without anything being signalled.
+        //
+        // `Gone` rather than `Ok`: the caller ignores it, so `terminate` still answers success,
+        // and a caller that ever wants to tell "nothing to do" from "done" can.
+        if self.shared.exit.lock().expect("exit lock").is_some() {
+            return Err(ControlError::Gone);
+        }
         let sig = match signal {
             TaskSignal::Int => Signal::SIGINT,
             TaskSignal::Term => Signal::SIGTERM,

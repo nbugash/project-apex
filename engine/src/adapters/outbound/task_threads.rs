@@ -246,6 +246,13 @@ struct ServiceInner {
     writer: Arc<FrameWriter>,
     codec: FrameCodec,
     clock: Arc<dyn Clock>,
+    /// The domain's record of which tasks exist and which workspace owns each.
+    ///
+    /// Held here rather than on `TaskService` because a reader thread is what learns that a task
+    /// has ended, and the ending has to release the identity from the domain's record and from
+    /// the machinery together. Two sources released at different moments is two answers to "is
+    /// this task still running", and the wire asks that question three ways.
+    set: Mutex<crate::domain::task::TaskSet>,
     /// Shared with the reader threads, so a task that ends on its own can cancel the deadline
     /// its own stop registered. Without that the escalation fires into a released identity --
     /// harmless because the entry holds a `Weak`, but it would still be a kill nobody wanted.
@@ -266,9 +273,6 @@ impl ServiceInner {
 pub struct TaskService {
     inner: Arc<ServiceInner>,
     runner: Arc<dyn crate::application::ports::task_runner::TaskRunner>,
-    /// The domain's record of which tasks exist and which workspace owns each. The single
-    /// source for that, which is why `TaskEntry` does not carry a workspace of its own.
-    set: Mutex<crate::domain::task::TaskSet>,
     readers: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
@@ -280,12 +284,12 @@ impl TaskService {
     ) -> Self {
         Self {
             runner,
-            set: Mutex::new(crate::domain::task::TaskSet::new()),
             inner: Arc::new(ServiceInner {
                 entries: Mutex::new(BTreeMap::new()),
                 writer,
                 codec: FrameCodec,
                 clock: Arc::clone(&clock),
+                set: Mutex::new(crate::domain::task::TaskSet::new()),
                 escalations: Escalations::spawn(clock),
             }),
             readers: Mutex::new(Vec::new()),
@@ -334,7 +338,7 @@ impl TaskService {
         roots: &dyn crate::application::ports::roots::WorkspaceRoots,
         fs: &dyn crate::application::ports::file_system::FileSystem,
     ) -> Result<Pid, crate::application::use_cases::task::StartRefusal> {
-        let mut set = self.set.lock().unwrap_or_else(|p| p.into_inner());
+        let mut set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
         let (pid, spawned) = crate::application::use_cases::task::start_task(
             params,
             roots,
@@ -361,7 +365,7 @@ impl TaskService {
     /// Read from the domain's `TaskSet` rather than from the entry, because the set is the single
     /// source for what a task *is* and the entry is the machinery for reaching it.
     pub fn shape(&self, id: &TaskId) -> Option<crate::domain::task::Shape> {
-        let set = self.set.lock().unwrap_or_else(|p| p.into_inner());
+        let set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
         set.get(id).map(|task| task.shape)
     }
 
@@ -393,6 +397,21 @@ impl TaskService {
             let _ = h.join();
         }
     }
+}
+
+/// Forget a task, in the machinery and in the domain's record together.
+///
+/// Both, because they answer the same question and a client can ask it three ways: `terminate`
+/// resolves a control, `resizePty` resolves a shape, and `list` reads the record. Releasing one
+/// and keeping the other leaves a task that can be resized but not stopped, or listed but not
+/// reached.
+fn release(inner: &ServiceInner, id: &TaskId) {
+    {
+        let mut entries = inner.entries.lock().unwrap_or_else(|p| p.into_inner());
+        entries.remove(id);
+    }
+    let mut set = inner.set.lock().unwrap_or_else(|p| p.into_inner());
+    set.release(id);
 }
 
 /// Emit one chunk as `execution/onStdout` or `execution/onStderr`.
@@ -510,6 +529,19 @@ fn read_loop(
                 // deadline its own stop registered, and the identity may be reused.
                 inner.escalations.cancel(id);
                 emit_exit(inner, id, status);
+                // **After** the exit is on the wire, never before.
+                //
+                // The identity is what `execution/terminate` and `execution/attach` reach a task
+                // by, so releasing it earlier would make a client that terminates and then
+                // attaches -- to collect the last of the output -- find nothing, and would turn
+                // FR-019's already-exited terminate into `-32006` during the very window FR-019
+                // is about.
+                //
+                // Releasing it at all is what makes FR-023 and SC-014 hold: a hundred
+                // start-and-exit cycles must leave the same number of live identities as they
+                // started with, and a record that only ever grows is the leak that criterion
+                // exists to catch.
+                release(inner, id);
                 return;
             }
         }

@@ -146,6 +146,16 @@ impl FakeControl {
         v.sort_unstable();
         v
     }
+    /// Whether the scripted process has been marked exited.
+    ///
+    /// Exposed because the window FR-019 is about cannot be observed from the outside: the reader
+    /// drains only when a read returns, so a reader blocked mid-drain flushes nothing and there
+    /// is no frame to wait for. A test that waited on output would wait forever for bytes the
+    /// blocked reader is holding.
+    pub fn has_exited(&self) -> bool {
+        *self.shared.exited.lock().expect("exited")
+    }
+
     /// Let a blocked `read` return.
     pub fn release_read(&self) {
         *self.shared.gate.lock().expect("gate") = true;
@@ -176,6 +186,11 @@ impl TaskControl for FakeControl {
     }
 
     fn signal(&self, signal: TaskSignal) -> Result<(), ControlError> {
+        // The same guard the real control has, and modelled rather than stubbed: a fake that
+        // signalled a task it knows has exited would let the engine do so too and report nothing.
+        if *self.shared.exited.lock().expect("exited") {
+            return Err(ControlError::Gone);
+        }
         self.shared.signals.lock().expect("signals").push(signal);
         // To the **group**. Every member is marked, which is what lets a test tell a group
         // signal from a pid signal -- the distinction FR-018 and SC-027 rest on.
