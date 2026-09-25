@@ -254,6 +254,67 @@ export function applyChunk(panel: TerminalPanel, encoded: string): void {
   panel.write(decodeBase64(encoded));
 }
 
+/// How one task turned out across a reconnection, as the panel is told it.
+///
+/// Mirrors the core's `Outcome` rather than re-deriving it. The client already asked the engine
+/// and got a per-task answer; deciding again here from what the panel happens to be showing would
+/// be a second opinion formed from less.
+export type TaskOutcome =
+  | { kind: 'survived'; taskId: string; retained: number }
+  | { kind: 'finished'; taskId: string; ending: string }
+  | { kind: 'gone'; taskId: string };
+
+/// What the developer is told after a reconnection (FR-032).
+export interface ReconnectionSummary {
+  outcomes: TaskOutcome[];
+  /// Bytes missed while the client was away, summed across the tasks that survived.
+  ///
+  /// **From `attach`'s count, never from a per-frame marker.** A replayed frame is deliberately
+  /// indistinguishable from a live one, so a flag saying "this part is old" would exist only to
+  /// be ignored -- or to be branched on and draw a seam that is not in the build's output. The
+  /// engine counted the bytes it was holding; that number is the answer.
+  retained: number;
+}
+
+/// One line a person can read, or null when a reconnection had nothing to report.
+///
+/// Null rather than "everything is fine": a client with no tasks reconnecting has nothing to say,
+/// and saying nothing is different from reassuring somebody about work that does not exist.
+export function summarise(summary: ReconnectionSummary): string | null {
+  if (summary.outcomes.length === 0) return null;
+
+  const survived = summary.outcomes.filter((o) => o.kind === 'survived').length;
+  const finished = summary.outcomes.filter((o) => o.kind === 'finished');
+  const gone = summary.outcomes.filter((o) => o.kind === 'gone').length;
+
+  const parts: string[] = [];
+  if (survived > 0) {
+    parts.push(`${survived} still running`);
+  }
+  // **How** each finished, not how many did. "2 finished" is a line that makes somebody go and
+  // look, and the endings are already known.
+  for (const outcome of finished) {
+    if (outcome.kind === 'finished') {
+      parts.push(`${outcome.taskId} ${outcome.ending}`);
+    }
+  }
+  if (gone > 0) {
+    parts.push(`${gone} no longer reachable`);
+  }
+  if (summary.retained > 0) {
+    parts.push(`${formatBytes(summary.retained)} missed`);
+  }
+  return parts.join(', ');
+}
+
+/// Bytes as a person reads them. Whole units only: a developer wants to know whether they missed
+/// a line or a megabyte, and the digits after the point answer neither question.
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
 /// The set of panels, keyed by task id.
 export class Terminals {
   /// An array rather than a map: the count is the number of tasks a person is watching, so the
@@ -287,6 +348,22 @@ export class Terminals {
 
   has(taskId: string): boolean {
     return this.panels.some((p) => p.taskId === taskId);
+  }
+
+  /// Show the developer what a reconnection found, in the panel they are looking at.
+  ///
+  /// Written into the terminal as ordinary output, on its own line, because that is where the
+  /// person's attention already is -- and because a build's transcript is the right place for a
+  /// note about that build. The panels themselves are untouched: a task that survived keeps its
+  /// scrollback, and one that finished keeps the output that led to its ending.
+  reconnected(summary: ReconnectionSummary): string | null {
+    const line = summarise(summary);
+    if (line === null) return null;
+    const panel = this.panels.find((p) => p.taskId === this.active) ?? this.panels[0];
+    // `\r\n` and not `\n`: a terminal's cursor does not return on its own, so a bare newline
+    // leaves the next line indented by however long the last one was.
+    panel?.write(`\r\n[reconnected] ${line}\r\n`);
+    return line;
   }
 
   /// Forget one task's panel, leaving every other panel exactly as it was.
