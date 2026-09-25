@@ -10,9 +10,15 @@
   import TabStrip from '../tabs/TabStrip.svelte';
   import StatusBar from '../statusbar/StatusBar.svelte';
   import TerminalPanel from '../terminal/TerminalPanel.svelte';
+  import { terminals } from '../terminal/terminals.svelte';
+  import { installTerminalHarness } from '../terminal/harness';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
   import { shellState } from '../state.svelte';
+
+  // The end-to-end suite's way in to the terminal renderer. Installs nothing outside
+  // automation; `harness.ts` says why that guard is not merely tidiness.
+  $effect(() => installTerminalHarness());
 
   /// `Terminal — <workspace>` remotely, `Terminal — local` locally, following the prototype.
   const dockTitle = $derived.by(() => {
@@ -178,11 +184,12 @@
         />
         <Region
           label={dockTitle}
+          testid="region-output"
           visible={layout.output.visible}
           extent={layout.output.extent}
           axis="block"
         >
-          <TerminalPanel workspace={shellState.workspace} />
+          <TerminalPanel taskId={terminals.active} workspace={shellState.workspace} />
         </Region>
       {/if}
     </main>

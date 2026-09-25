@@ -88,9 +88,16 @@ export class TerminalPanel {
   /// is the one place any of this application's terminal colours is decided.
   async attach(el: HTMLElement, theme: ITheme): Promise<void> {
     if (this.#terminal) return;
+    // The stylesheet travels with the library, on the same terms and for the same reason. It is
+    // not decoration: without it the rows are unpositioned and the hidden input the terminal uses
+    // to receive keystrokes is drawn as a white box over the panel. A terminal whose buffer is
+    // correct and whose pixels are not passes every assertion about cells and is still unusable,
+    // which is the failure end-to-end tests exist for and which this one missed -- it reads the
+    // buffer, and the buffer was right the whole time.
     const [{ Terminal: XTerm }, { FitAddon: Fit }] = await Promise.all([
       import('@xterm/xterm'),
       import('@xterm/addon-fit'),
+      import('@xterm/xterm/css/xterm.css'),
     ]);
     const terminal = new XTerm({
       scrollback: SCROLLBACK_LINES,
@@ -108,6 +115,7 @@ export class TerminalPanel {
     this.#terminal = terminal;
     this.#fit = fit;
     this.fit();
+    publishForAutomation(terminal);
   }
 
   /// Re-resolve the palette without rebuilding the terminal, so a theme change keeps the scrollback.
@@ -148,6 +156,20 @@ export class TerminalPanel {
   }
 }
 
+/// Expose the mounted terminal so the end-to-end suite can read its cell buffer.
+///
+/// The buffer is the only place a *grid* exists: the DOM is a rendering of it that collapses runs
+/// of identical cells, so a column index in the DOM is not a column on screen. SC-002 is a claim
+/// about rows and columns, so it has to be checked against the thing addressed by rows and
+/// columns.
+///
+/// Published only under automation, like the harness that writes into it. A handle to the live
+/// terminal is a handle to everything a person has typed into it.
+function publishForAutomation(terminal: Terminal): void {
+  if (!(import.meta.env.DEV || navigator.webdriver === true)) return;
+  (window as unknown as { __apexTerminal?: Terminal }).__apexTerminal = terminal;
+}
+
 /// Deliver one `execution/onOutput` chunk to its panel.
 ///
 /// The buffering FR-022 needs happens by construction rather than by logic here. Before a panel is
@@ -165,6 +187,14 @@ export class Terminals {
   /// linear lookup is cheaper than the reactivity wrapper a keyed collection would need.
   panels = $state<TerminalPanel[]>([]);
 
+  /// The task whose terminal the dock is showing, or null for the idle prompt.
+  ///
+  /// One at a time, because the dock has one terminal region. The panels themselves are per task
+  /// and keep buffering whether or not they are the one on screen (FR-026), so switching between
+  /// them loses nothing -- which is what makes a single visible slot a presentation choice rather
+  /// than a limit on how many tasks may run.
+  active = $state<string | null>(null);
+
   /// The panel for `taskId`, created on first ask. Asking twice yields the same panel, which is
   /// the identity FR-026 rests on.
   panel(taskId: string): TerminalPanel {
@@ -173,6 +203,13 @@ export class Terminals {
     const created = new TerminalPanel(taskId);
     this.panels.push(created);
     return created;
+  }
+
+  /// Make `taskId`'s panel the one the dock shows, creating it if this is the first sight of it.
+  show(taskId: string): TerminalPanel {
+    const panel = this.panel(taskId);
+    this.active = taskId;
+    return panel;
   }
 
   has(taskId: string): boolean {
@@ -186,6 +223,11 @@ export class Terminals {
     if (!going) return;
     going.detach();
     this.panels.splice(at, 1);
+    if (this.active === taskId) {
+      // Fall back to whatever is left rather than to the idle prompt, so releasing one of several
+      // running tasks does not look like every task ending.
+      this.active = this.panels[0]?.taskId ?? null;
+    }
   }
 }
 
