@@ -14,7 +14,7 @@
  * command succeeded when it did not.
  */
 
-import { applyChunk, terminals } from './terminals.svelte';
+import { applyChunk, terminals, type ReconnectionSummary } from './terminals.svelte';
 
 /** What the suite sends: a task to show, and base64 bytes to write into it. */
 export interface HarnessChunk {
@@ -24,6 +24,7 @@ export interface HarnessChunk {
 }
 
 export const OUTPUT_EVENT = 'apex:test:task-output';
+export const RECONNECT_EVENT = 'apex:test:reconnected';
 
 function underAutomation(): boolean {
   // `import.meta.env.DEV` covers `npm run dev`; `navigator.webdriver` covers the built app under
@@ -39,6 +40,17 @@ export function installTerminalHarness(): () => void {
     if (!detail?.taskId || typeof detail.data !== 'string') return;
     applyChunk(terminals.show(detail.taskId), detail.data);
   };
+  // The reconnection summary, which has no other way in until the transport exists: the client
+  // never actually loses a connection it never had.
+  const onReconnect = (event: Event) => {
+    const detail = (event as CustomEvent<ReconnectionSummary>).detail;
+    if (!detail?.outcomes) return;
+    terminals.reconnected(detail);
+  };
   window.addEventListener(OUTPUT_EVENT, onOutput);
-  return () => window.removeEventListener(OUTPUT_EVENT, onOutput);
+  window.addEventListener(RECONNECT_EVENT, onReconnect);
+  return () => {
+    window.removeEventListener(OUTPUT_EVENT, onOutput);
+    window.removeEventListener(RECONNECT_EVENT, onReconnect);
+  };
 }

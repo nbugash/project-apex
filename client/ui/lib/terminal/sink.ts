@@ -41,21 +41,37 @@ function reportOnce(method: string, reason: unknown): void {
 
 const overIpc: TaskSink = {
   writeStdin(taskId, data) {
-    void invoke('task_write_stdin', { taskId, data: encodeBase64(data) }).catch((e) =>
+    const encoded = encodeBase64(data);
+    recordForAutomation('writeStdin', taskId, encoded);
+    void invoke('task_write_stdin', { taskId, data: encoded }).catch((e) =>
       reportOnce('execution/writeStdin', e),
     );
   },
   resize(taskId, cols, rows) {
+    recordForAutomation('resize', taskId, `${cols}x${rows}`);
     void invoke('task_resize', { taskId, cols, rows }).catch((e) =>
       reportOnce('execution/resizePty', e),
     );
   },
   terminate(taskId, signal) {
+    recordForAutomation('terminate', taskId, signal);
     void invoke('task_terminate', { taskId, signal }).catch((e) =>
       reportOnce('execution/terminate', e),
     );
   },
 };
+
+/// What the panel sent, for the end-to-end suite to read back.
+///
+/// Recorded only under automation, on the same terms as the mounted terminal: a page that logged
+/// every keystroke somewhere readable would be doing what this product exists to avoid. What a
+/// developer types into a terminal is frequently a credential.
+function recordForAutomation(method: string, taskId: string, detail: string): void {
+  if (!(import.meta.env.DEV || navigator.webdriver === true)) return;
+  const w = window as unknown as { __apexSent?: Array<Record<string, string>> };
+  w.__apexSent = w.__apexSent ?? [];
+  w.__apexSent.push({ method, taskId, detail });
+}
 
 let active: TaskSink = overIpc;
 
