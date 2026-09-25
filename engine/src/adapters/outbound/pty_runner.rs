@@ -15,7 +15,7 @@
 //! path touches nothing but `setsid`, `dup2`, `ioctl`, `setrlimit`, `execvp` and `_exit`.
 
 use std::ffi::CString;
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd, RawFd};
 use std::sync::{Arc, Mutex};
 
 use nix::errno::Errno;
@@ -120,7 +120,7 @@ impl TaskRunner for PtyRunner {
 ///
 /// # Safety
 /// Called only in the child of a `fork`, and calls only async-signal-safe functions.
-unsafe fn become_the_child(plan: &ChildPlan) -> ! {
+unsafe fn become_the_child(plan: &ChildPlan, status: RawFd) -> ! {
     // `setsid` has already run in both callers, before the descriptors were arranged. It belongs
     // there rather than here because the terminal path has to acquire its controlling terminal
     // between the two, and that acquisition only works for a session leader.
@@ -138,15 +138,54 @@ unsafe fn become_the_child(plan: &ChildPlan) -> ! {
     );
 
     if nix::libc::chdir(plan.cwd.as_ptr()) != 0 {
-        nix::libc::_exit(127);
+        report_and_exit(status, *nix::libc::__errno_location());
     }
 
     // `execvpe` and not `execvp`. The latter takes no environment and the child would inherit
     // this process's, silently discarding the set the use case merged -- which is FR-001's
     // environment and SC-025's redaction both quietly not happening.
     let _ = execvpe(&plan.program, &plan.argv, &plan.envp);
-    // `execvp` only returns on failure, and the parent learns which failure from the exit code.
+    // `exec` only returns on failure. The parent learns **which** failure through the status
+    // pipe rather than from the exit code, because an exit code cannot distinguish "there is no
+    // such command" from "the command ran and chose to exit 127" -- and the two lead to opposite
+    // things being said to the developer (SC-015, §4.4's -32011).
+    report_and_exit(status, *nix::libc::__errno_location());
+}
+
+/// Tell the parent why `exec` did not happen, then leave.
+///
+/// # Safety
+/// Called only in the child of a `fork`, after `exec` has failed. `write` and `_exit` are
+/// async-signal-safe; nothing here allocates or takes a lock.
+unsafe fn report_and_exit(status: RawFd, errno: i32) -> ! {
+    let bytes = errno.to_ne_bytes();
+    // One write of four bytes to a pipe is atomic, so the parent either reads the whole errno or
+    // reads nothing. A short write would be indistinguishable from a successful exec.
+    let _ = nix::libc::write(status, bytes.as_ptr() as *const nix::libc::c_void, 4);
     nix::libc::_exit(127);
+}
+
+/// Wait for the child to say whether `exec` happened.
+///
+/// A successful `exec` closes the write end, because it is close-on-exec, and this reads end of
+/// file. A failed one writes an errno first. So "nothing was written" **is** the success signal,
+/// which is why the write end must be closed in the parent first: with it still open here, the
+/// read would block forever waiting for a process that has already gone.
+fn exec_outcome(status: OwnedFd) -> Result<(), SpawnFailure> {
+    let mut buf = [0u8; 4];
+    let mut filled = 0;
+    while filled < buf.len() {
+        match nix::unistd::read(&status, &mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(Errno::EINTR) => continue,
+            Err(e) => return Err(errno_to_spawn(e)),
+        }
+    }
+    if filled == 0 {
+        return Ok(());
+    }
+    Err(errno_to_spawn(Errno::from_raw(i32::from_ne_bytes(buf))))
 }
 
 /// Mark a descriptor close-on-exec.
@@ -208,6 +247,11 @@ fn spawn_with_terminal(
         ws_ypixel: 0,
     };
     let _spawning = spawn_lock();
+    let (status_r, status_w) = pipe().map_err(errno_to_spawn)?;
+    // The write end must be close-on-exec: that is the whole mechanism. A successful `exec`
+    // closes it, the parent reads end of file, and "nothing was written" means the command ran.
+    set_cloexec(&status_w)?;
+    set_cloexec(&status_r)?;
     let pair = openpty(Some(&size), None).map_err(errno_to_spawn)?;
     let (master, slave) = (pair.master, pair.slave);
     // Both ends, before the fork. The child clears the flag on 0, 1 and 2 by dup2-ing onto them.
@@ -242,13 +286,17 @@ fn spawn_with_terminal(
             let _ = dup2_stdin(&slave);
             let _ = dup2_stdout(&slave);
             let _ = dup2_stderr(&slave);
+            let status = status_w.as_raw_fd();
             unsafe {
                 nix::libc::ioctl(0, nix::libc::TIOCSCTTY as nix::libc::c_ulong, 0);
-                become_the_child(plan)
+                become_the_child(plan, status)
             }
         }
         ForkResult::Parent { child } => {
             drop(slave);
+            // Before reading, or the read waits on a descriptor this process is holding open.
+            drop(status_w);
+            exec_outcome(status_r)?;
             // **A descriptor of its own for each half.**
             //
             // The two halves of a task are dropped independently -- the reader ends when the
@@ -282,6 +330,9 @@ fn spawn_with_terminal(
 
 fn spawn_with_pipes(plan: &ChildPlan) -> Result<SpawnedTask, SpawnFailure> {
     let _spawning = spawn_lock();
+    let (status_r, status_w) = pipe().map_err(errno_to_spawn)?;
+    set_cloexec(&status_w)?;
+    set_cloexec(&status_r)?;
     let (stdin_r, stdin_w) = pipe().map_err(errno_to_spawn)?;
     let (stdout_r, stdout_w) = pipe().map_err(errno_to_spawn)?;
     let (stderr_r, stderr_w) = pipe().map_err(errno_to_spawn)?;
@@ -306,12 +357,15 @@ fn spawn_with_pipes(plan: &ChildPlan) -> Result<SpawnedTask, SpawnFailure> {
             let _ = dup2_stdin(&stdin_r);
             let _ = dup2_stdout(&stdout_w);
             let _ = dup2_stderr(&stderr_w);
-            unsafe { become_the_child(plan) }
+            let status = status_w.as_raw_fd();
+            unsafe { become_the_child(plan, status) }
         }
         ForkResult::Parent { child } => {
             drop(stdin_r);
             drop(stdout_w);
             drop(stderr_w);
+            drop(status_w);
+            exec_outcome(status_r)?;
             let write_end = stdin_w.as_raw_fd();
             let shared = Arc::new(Shared::new(child, Some(write_end)));
             // Kept alive by the control half, which owns the writing end.
