@@ -62,6 +62,19 @@ pub struct SessionRegistry {
     /// What did not survive the restart. Empty asserts nothing was lost, rather than that
     /// nothing was checked.
     unpreserved: Vec<String>,
+    /// Whether a client is currently on the other end.
+    ///
+    /// **A flag and nothing more.** A dropped connection sets it false and changes nothing else:
+    /// zero tasks are terminated by it, no identity is released, and no process is signalled.
+    /// A-TASKLIFE is exactly that -- a laptop moving between networks must not kill a build --
+    /// and the way to make it true is for the task set to have no opinion about the transport at
+    /// all.
+    ///
+    /// It is held **here** and not on the `TaskSet`, deliberately. A task set that could see the
+    /// transport could come to depend on it, and then "a disconnection terminates nothing" would
+    /// be true because of a code path somebody could change rather than because there is nothing
+    /// to change. The set is never handed a reference to either.
+    attached: Mutex<bool>,
 }
 
 impl Default for SessionRegistry {
@@ -79,13 +92,29 @@ impl SessionRegistry {
                 restarted: true,
                 // F010's entry: the tasks the old image terminated before replacing itself.
                 unpreserved: unpreserved_from_env(),
+                attached: Mutex::new(true),
             },
             _ => Self {
                 current: Mutex::new(SessionId(uuid::Uuid::new_v4().to_string())),
                 restarted: false,
                 unpreserved: Vec::new(),
+                attached: Mutex::new(true),
             },
         }
+    }
+
+    /// Whether a client is on the other end right now.
+    pub fn attached(&self) -> bool {
+        *self.attached.lock().expect("attached lock")
+    }
+
+    /// Record that the client went away, or came back.
+    ///
+    /// Returns nothing and touches nothing else. Every caller that has wanted to do more here --
+    /// stop the tasks, release the identities, close the workspaces -- has wanted to do the one
+    /// thing A-TASKLIFE forbids.
+    pub fn set_attached(&self, attached: bool) {
+        *self.attached.lock().expect("attached lock") = attached;
     }
 
     pub fn current(&self) -> SessionId {
@@ -123,6 +152,7 @@ mod tests {
             current: Mutex::new(SessionId("s-1".into())),
             restarted: false,
             unpreserved: Vec::new(),
+            attached: Mutex::new(true),
         };
         assert_eq!(r.current(), SessionId("s-1".into()));
         assert!(!r.restarted());
@@ -144,6 +174,7 @@ mod tests {
             current: Mutex::new(SessionId("mine".into())),
             restarted: false,
             unpreserved: Vec::new(),
+            attached: Mutex::new(true),
         };
         assert!(r.resume(&SessionId("mine".into())));
         assert!(!r.resume(&SessionId("someone-elses".into())));
@@ -158,6 +189,7 @@ mod tests {
             current: Mutex::new(SessionId("kept".into())),
             restarted: true,
             unpreserved: vec!["one language server".into()],
+            attached: Mutex::new(true),
         };
         let n = r.restart_notice();
         assert_eq!(n.session_id, SessionId("kept".into()));
@@ -167,6 +199,7 @@ mod tests {
             current: Mutex::new(SessionId("kept".into())),
             restarted: true,
             unpreserved: Vec::new(),
+            attached: Mutex::new(true),
         };
         assert!(quiet.restart_notice().unpreserved.is_empty());
     }
