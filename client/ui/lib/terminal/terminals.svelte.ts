@@ -30,6 +30,22 @@ export const DEFAULT_ROWS = 24;
 /// case this panel exists for. Stated here rather than accepted silently.
 export const SCROLLBACK_LINES = 10_000;
 
+/// Bytes an **unattached** panel keeps before it starts forgetting the oldest.
+///
+/// The scrollback bounds the terminal; it does not bound the queue in front of one. A panel that
+/// is receiving output but has not been mounted -- a second task running while its tab is not the
+/// one on screen -- would otherwise accumulate everything the task ever wrote, which for a long
+/// build is a leak on the developer's own machine and is exactly what FR-029a bounds the other
+/// side of.
+///
+/// Nothing is lost that would have survived. Whatever is queued is written into the library on
+/// attach, and the library immediately evicts everything past SCROLLBACK_LINES -- so bytes beyond
+/// roughly a scrollback's worth are dropped a moment later regardless. This drops them a moment
+/// earlier and holds a bounded amount in the meantime.
+///
+/// Sized from the scrollback: ten thousand lines of a hundred bytes, rounded up to a power of two.
+export const PENDING_BYTES = 2 * 1024 * 1024;
+
 /// One task's terminal.
 export class TerminalPanel {
   readonly taskId: string;
@@ -43,6 +59,10 @@ export class TerminalPanel {
   /// would lose the beginning of every build -- the part that says what is being built. Held as
   /// plain data so that a panel which has never been attached still answers for what it received.
   #pending: Array<string | Uint8Array> = [];
+  /// Tracked rather than recomputed: summing the queue on every write is quadratic in the number
+  /// of chunks, which for a fifty-megabyte burst is eight hundred sums of up to eight hundred
+  /// entries.
+  #pendingBytes = 0;
   #terminal: Terminal | null = null;
   #fit: FitAddon | null = null;
   /// Whether this panel's task was given a terminal, which decides how an interrupt is sent.
@@ -117,8 +137,19 @@ export class TerminalPanel {
   /// panel's own writing -- a reconnection summary, an ending -- which this application authored
   /// and therefore knows the encoding of.
   write(data: string | Uint8Array): void {
-    if (this.#terminal) this.#terminal.write(data);
-    else this.#pending.push(data);
+    if (this.#terminal) {
+      this.#terminal.write(data);
+      return;
+    }
+    this.#pending.push(data);
+    this.#pendingBytes += typeof data === 'string' ? data.length : data.length;
+    // Forget the oldest, never the newest. A person coming to a panel late wants the end of the
+    // build -- the error and what followed it -- and the beginning is what the library would
+    // have evicted anyway.
+    while (this.#pendingBytes > PENDING_BYTES && this.#pending.length > 1) {
+      const dropped = this.#pending.shift();
+      this.#pendingBytes -= dropped === undefined ? 0 : dropped.length;
+    }
   }
 
   /// Mount into `el` and replay whatever arrived first.
@@ -152,6 +183,7 @@ export class TerminalPanel {
     terminal.open(el);
     for (const chunk of this.#pending) terminal.write(chunk);
     this.#pending = [];
+    this.#pendingBytes = 0;
     this.#terminal = terminal;
     this.#fit = fit;
     this.fit();
