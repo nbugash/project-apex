@@ -383,6 +383,39 @@ impl TaskService {
         crate::application::use_cases::task::close_workspace(workspace, now, &mut set)
     }
 
+    /// Answer `execution/attach` for one task.
+    ///
+    /// The retained byte count comes from the entry, and the rest from the domain's record. Both
+    /// are read under their own locks and neither is held while the other is taken: a listing
+    /// that blocked on a reader thread's stream lock would make enumerating tasks wait for one
+    /// of them to finish writing.
+    pub fn attach(
+        &self,
+        workspace: &apex_protocol::wire::WorkspaceId,
+        id: &TaskId,
+    ) -> Result<apex_protocol::wire::AttachResult, crate::application::use_cases::task::AttachRefusal>
+    {
+        let retained = self.retained_bytes(id).unwrap_or(0);
+        let set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
+        crate::application::use_cases::task::attach_task(workspace, id, retained, &set)
+    }
+
+    /// Answer `execution/list`.
+    pub fn list(
+        &self,
+        workspace: Option<&apex_protocol::wire::WorkspaceId>,
+    ) -> Vec<apex_protocol::wire::TaskSummary> {
+        let set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
+        crate::application::use_cases::task::list_tasks(workspace, &set)
+    }
+
+    /// Plan the stop of **every** task, and forget them all (A-TASKEXEC).
+    pub fn drain_all(&self) -> Vec<crate::application::use_cases::task::StopPlan> {
+        let now = self.now();
+        let mut set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
+        crate::application::use_cases::task::drain_all_tasks(now, &mut set)
+    }
+
     /// How many of a task's bytes the engine is holding, right now.
     ///
     /// SC-021's measurement. Since [CONFLICT 9] the retention buffer is the **only** place the

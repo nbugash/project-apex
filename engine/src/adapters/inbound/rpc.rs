@@ -204,6 +204,82 @@ pub fn dispatch(
                 }
             }
         }
+        "execution/attach" => {
+            use crate::application::use_cases::task::AttachRefusal;
+            let Some(service) = tasks else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "this engine has no task service",
+                ));
+            };
+            #[derive(serde::Deserialize)]
+            struct Params {
+                workspace_id: apex_protocol::wire::WorkspaceId,
+                task_id: apex_protocol::wire::TaskId,
+            }
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let p = match serde_json::from_value::<Params>(params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return reply_or_nothing(encode_error(
+                        codec,
+                        id,
+                        INVALID_PARAMS,
+                        &format!("{e}"),
+                    ))
+                }
+            };
+            match service.attach(&p.workspace_id, &p.task_id) {
+                Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
+                // A task the engine holds but another workspace owns is **not** a missing task.
+                // Answering -32006 would send a client looking for a bug it does not have.
+                Err(AttachRefusal::NotThisWorkspace) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::WORKSPACE_NOT_REGISTERED,
+                    "that workspace does not own this task",
+                )),
+                Err(AttachRefusal::NotFound) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "no task with that identity is running",
+                )),
+            }
+        }
+        "execution/list" => {
+            let Some(service) = tasks else {
+                // An engine with no task service holds no tasks, and saying so is an empty list
+                // rather than an error: the client asked what is running, and nothing is.
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::ListResult { tasks: Vec::new() },
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            // An absent `params` is a legal listing of everything, so a parse failure falls back
+            // to "no filter" rather than refusing: `execution/list` is the recovery path for a
+            // client that has lost its state, and refusing it on a malformed filter would deny
+            // recovery to the client that most needs it.
+            let filter = serde_json::from_value::<apex_protocol::wire::ListParams>(params)
+                .ok()
+                .and_then(|p| p.workspace_id);
+            let listed = service.list(filter.as_ref());
+            reply_or_nothing(encode_result(
+                codec,
+                id,
+                &apex_protocol::wire::ListResult { tasks: listed },
+            ))
+        }
         "workspace/close" => {
             let params = parsed
                 .get("params")

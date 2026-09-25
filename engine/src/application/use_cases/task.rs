@@ -9,7 +9,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use apex_protocol::wire::{Pid, RunTaskParams, TaskId, WorkspaceId};
+use apex_protocol::wire::{
+    AttachResult, Pid, RunTaskParams, SignalName, TaskId, TaskSummary, WorkspaceId,
+};
 
 use crate::application::ports::clock::Millis;
 use crate::application::ports::file_system::FileSystem;
@@ -19,7 +21,7 @@ use crate::application::ports::task_runner::{
 };
 use crate::domain::path::{PathRefusal, ResolvedPath};
 use crate::domain::task::{
-    EnvOverrides, Shape, StartRefused, Task, TaskSet, TaskSignal, TaskState,
+    EnvOverrides, ExitStatus, Shape, StartRefused, Task, TaskSet, TaskSignal, TaskState,
 };
 
 /// The terminal size a task gets when the client names neither dimension.
@@ -326,6 +328,117 @@ pub fn close_workspace(workspace: &WorkspaceId, now: Millis, tasks: &mut TaskSet
             // `Term` and not `Kill`: closing a workspace is a developer finishing with it, not an
             // emergency, and a build given no chance to remove its half-written output leaves the
             // next one to discover it.
+            send: TaskSignal::Term,
+            escalate_at: Some(now + ESCALATION_GRACE_MS),
+        })
+        .collect()
+}
+
+/// Why an attach could not be answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachRefusal {
+    /// The workspace does not own this task, or does not exist (`-32001`).
+    ///
+    /// **Not `-32006`.** A task the engine holds but a different workspace owns is not a missing
+    /// task; telling a client it has no such task when another workspace does would send it
+    /// looking for a bug it does not have.
+    NotThisWorkspace,
+    /// No live identity (`-32006`).
+    NotFound,
+}
+
+/// Reach a task this client did not start in this session, or started and lost (A-TASKLIFE).
+///
+/// A **pure read**: it resolves the identity and reports what the engine already knows.
+/// Attaching deliberately has no side effect on the process -- it does not resize it, signal it,
+/// or change what it is doing -- which is attach guarantee 9 and the reason a client has to send
+/// its own size afterwards.
+///
+/// `retained` is a **byte count**, not the bytes. The bytes follow as ordinary `onStdout`
+/// notifications after the response, so a reattaching client's replay arrives on the path it
+/// already handles rather than as a second, larger shape inside a reply.
+pub fn attach_task(
+    workspace: &WorkspaceId,
+    id: &TaskId,
+    retained: usize,
+    tasks: &TaskSet,
+) -> Result<AttachResult, AttachRefusal> {
+    let task = tasks.get(id).ok_or(AttachRefusal::NotFound)?;
+    if &task.workspace != workspace {
+        return Err(AttachRefusal::NotThisWorkspace);
+    }
+    let (running, exit_code, signal) = match task.state {
+        TaskState::Running => (true, None, None),
+        // FR-031b and SC-020: `running: false` alone says only that it is over. A client that
+        // reattaches to a finished build needs to know **how** it finished, and the same one-of-two
+        // shape §9 uses everywhere else says it.
+        TaskState::Ended(ExitStatus::Exited { code }) => (false, Some(code), None),
+        TaskState::Ended(ExitStatus::Signalled { signal }) => {
+            (false, None, Some(SignalName::from_number(signal)))
+        }
+    };
+    Ok(AttachResult {
+        pid: task.pid,
+        running,
+        retained: retained as u64,
+        exit_code,
+        signal,
+    })
+}
+
+/// Every task the engine holds, or every task of one workspace.
+///
+/// A **pure read over `TaskSet` that touches the port zero times**. Asking each task's control
+/// whether it is still running would turn a listing into N syscalls, and the answer would still
+/// be the engine's own record a moment later -- the record is what `onExit` updates, and it is
+/// the same thing a client would be told.
+///
+/// The recovery path for a client that has lost its stored identities entirely: without it those
+/// tasks keep running and are unreachable until the instance idles out (SC-023).
+pub fn list_tasks(workspace: Option<&WorkspaceId>, tasks: &TaskSet) -> Vec<TaskSummary> {
+    tasks
+        .list(workspace)
+        .into_iter()
+        .map(|task| {
+            let (running, exit_code, signal) = match task.state {
+                TaskState::Running => (true, None, None),
+                TaskState::Ended(ExitStatus::Exited { code }) => (false, Some(code), None),
+                TaskState::Ended(ExitStatus::Signalled { signal }) => {
+                    (false, None, Some(SignalName::from_number(signal)))
+                }
+            };
+            TaskSummary {
+                task_id: task.id.clone(),
+                workspace_id: task.workspace.clone(),
+                // `command` and **never** `env`. FR-005a keeps a task's environment out of
+                // anything that can be read back, and a listing is exactly that.
+                command: task.command.clone(),
+                pty: matches!(task.shape, Shape::Pty { .. }),
+                pid: task.pid,
+                running,
+                exit_code,
+                signal,
+            }
+        })
+        .collect()
+}
+
+/// Stop every task the engine holds, whatever workspace owns it.
+///
+/// A-TASKEXEC: re-executing the engine terminates its tasks, because `exec` replaces the process
+/// image and the reader threads go with it -- a task left running would be a process nobody is
+/// reading and nobody can reach. The same `Term`-then-`Kill` escalation as `workspace/close`, and
+/// for the same reason: a build given no chance to remove its half-written output leaves the next
+/// one to discover it.
+///
+/// The ids are what the new image reports as `unpreserved`, which is how a restart is announced
+/// rather than inferred.
+pub fn drain_all_tasks(now: Millis, tasks: &mut TaskSet) -> Vec<StopPlan> {
+    tasks
+        .drain_all()
+        .into_iter()
+        .map(|task| StopPlan {
+            id: task.id,
             send: TaskSignal::Term,
             escalate_at: Some(now + ESCALATION_GRACE_MS),
         })
