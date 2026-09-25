@@ -6,6 +6,7 @@ pub mod json_session_store;
 pub mod local_tasks;
 pub mod local_workspace;
 pub mod openssh;
+pub mod remote_tasks;
 pub mod remote_workspace;
 pub mod sqlite;
 pub mod stub_connection;

@@ -19,4 +19,16 @@ use async_trait::async_trait;
 pub trait RequestSender: Send + Sync {
     /// Exactly one outcome, exactly once. Never panics.
     async fn send(&self, request: Request) -> RequestOutcome;
+
+    /// Send a JSON-RPC **notification**: no id, no reply, no outcome.
+    ///
+    /// A separate method rather than a flag on `Request`, because the difference is not a
+    /// property of the message but of what the caller may do next. §4.2 gives a notification no
+    /// response at all, so putting one through `send` would wait for a reply that is never
+    /// coming -- and the caller would have no way to tell that from a slow engine.
+    ///
+    /// It follows that an unknown task, an exited task and a full buffer are all indistinguishable
+    /// to the sender. That is the contract, not a shortcoming of this signature: there is no
+    /// response to carry a refusal in.
+    async fn notify(&self, request: Request);
 }

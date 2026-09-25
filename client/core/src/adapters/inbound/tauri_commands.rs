@@ -236,6 +236,14 @@ impl From<ProviderError> for WorkspaceFailure {
                 Self::Transport(format!("{total_size} bytes exceeds the inline read limit"))
             }
             ProviderError::Transport(why) => Self::Transport(why),
+            // The three task refusals reach the interface as transport-level prose, because
+            // `WorkspaceFailure` is the *workspace* surface and none of them is about a
+            // workspace. F010's panel takes `ProviderError` directly and branches on the
+            // variants; flattening them here would be the interface losing a distinction the
+            // wire spent three codes preserving, which is why each says which one it was.
+            task @ (ProviderError::TaskNotFound
+            | ProviderError::TaskAlreadyRunning
+            | ProviderError::CommandNotStarted { .. }) => Self::Transport(task.to_string()),
             ProviderError::Unsupported { owner } => Self::Unsupported(owner.to_string()),
         }
     }
