@@ -17,6 +17,7 @@
 pub mod fake_cache;
 pub mod fake_clock;
 pub mod fake_workspace;
+pub mod reconnect;
 
 use apex_shell::application::ports::spawner::{
     ProcessSpawner, SpawnError, SpawnSpec, SpawnedChild,

@@ -6,130 +6,14 @@
 //! the one path where the developer is waiting and the link has just proved unreliable; and
 //! resizing before attaching tells a task a size it will forget when the attach arrives.
 
+mod common;
+
 use apex_protocol::wire::{SignalName, TaskId};
-use apex_shell::application::ports::task_provider::{
-    AttachResult, Pid, StartRequest, TaskProvider, TaskSummary, TerminateSignal,
-};
-use apex_shell::application::ports::workspace_provider::{
-    ProviderError, ProviderResult, WatchOutcome, WorkspaceProvider,
-};
+use apex_shell::application::ports::task_provider::{AttachResult, Pid, TaskSummary};
+use apex_shell::application::ports::workspace_provider::ProviderError;
 use apex_shell::application::use_cases::observe_connection::{reattach, Outcome, Step};
-use apex_shell::domain::workspace::{
-    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, WorkspaceId,
-};
-use async_trait::async_trait;
-use std::sync::Mutex;
-
-/// Records what it was asked to do, and answers however a case needs.
-#[derive(Default)]
-struct Recorder {
-    calls: Mutex<Vec<String>>,
-    listed: Mutex<Vec<TaskSummary>>,
-    attaches: Mutex<std::collections::BTreeMap<String, ProviderResult<AttachResult>>>,
-}
-
-impl Recorder {
-    fn calls(&self) -> Vec<String> {
-        self.calls.lock().expect("calls").clone()
-    }
-    fn answer(&self, task: &str, with: ProviderResult<AttachResult>) {
-        self.attaches
-            .lock()
-            .expect("attaches")
-            .insert(task.to_string(), with);
-    }
-}
-
-fn running(retained: u64) -> ProviderResult<AttachResult> {
-    Ok(AttachResult {
-        pid: Pid(1),
-        running: true,
-        retained,
-        exit_code: None,
-        signal: None,
-    })
-}
-
-fn finished(code: i32) -> ProviderResult<AttachResult> {
-    Ok(AttachResult {
-        pid: Pid(1),
-        running: false,
-        retained: 0,
-        exit_code: Some(code),
-        signal: None,
-    })
-}
-
-#[async_trait]
-impl WorkspaceProvider for Recorder {
-    // The three §6.1 requires. Everything else has a default that refuses, and refusing is the
-    // right answer here: a reattachment reads no files.
-    async fn read_directory(
-        &self,
-        _ws: &WorkspaceId,
-        _path: &RelPath,
-        _page: PageRequest,
-    ) -> ProviderResult<DirPage> {
-        Err(ProviderError::Offline)
-    }
-    async fn stat(&self, _ws: &WorkspaceId, _path: &RelPath) -> ProviderResult<FsMeta> {
-        Err(ProviderError::Offline)
-    }
-    async fn read_file(
-        &self,
-        _ws: &WorkspaceId,
-        _path: &RelPath,
-        _range: Option<ByteRange>,
-    ) -> ProviderResult<FileChunk> {
-        Err(ProviderError::Offline)
-    }
-    async fn watch(&self, _ws: &WorkspaceId, _paths: &[RelPath]) -> ProviderResult<WatchOutcome> {
-        self.calls.lock().expect("calls").push("watch".into());
-        Ok(WatchOutcome {
-            watching: 1,
-            refused: Vec::new(),
-        })
-    }
-}
-
-#[async_trait]
-impl TaskProvider for Recorder {
-    async fn start(&self, _request: &StartRequest) -> ProviderResult<Pid> {
-        Err(ProviderError::Offline)
-    }
-    async fn attach(&self, _ws: &WorkspaceId, task: &TaskId) -> ProviderResult<AttachResult> {
-        self.calls
-            .lock()
-            .expect("calls")
-            .push(format!("attach:{}", task.0));
-        self.attaches
-            .lock()
-            .expect("attaches")
-            .get(&task.0)
-            .cloned()
-            .unwrap_or(Err(ProviderError::TaskNotFound))
-    }
-    async fn list(&self, _ws: Option<&WorkspaceId>) -> ProviderResult<Vec<TaskSummary>> {
-        self.calls.lock().expect("calls").push("list".into());
-        Ok(self.listed.lock().expect("listed").clone())
-    }
-    async fn write_stdin(&self, _task: &TaskId, _data: &[u8]) -> ProviderResult<()> {
-        Ok(())
-    }
-    async fn resize(&self, task: &TaskId, _cols: u16, _rows: u16) -> ProviderResult<()> {
-        self.calls
-            .lock()
-            .expect("calls")
-            .push(format!("resize:{}", task.0));
-        Ok(())
-    }
-    async fn terminate(&self, _task: &TaskId, _signal: TerminateSignal) -> ProviderResult<()> {
-        Ok(())
-    }
-    async fn close_workspace(&self, _ws: &WorkspaceId) -> ProviderResult<()> {
-        Ok(())
-    }
-}
+use apex_shell::domain::workspace::WorkspaceId;
+use common::reconnect::{finished, running, Recorder};
 
 fn ws() -> WorkspaceId {
     WorkspaceId("ws1".into())
