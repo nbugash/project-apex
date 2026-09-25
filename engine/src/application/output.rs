@@ -84,6 +84,7 @@ impl Chunker {
             partial.since = Some(now);
         }
         partial.bytes.extend_from_slice(bytes);
+        let mut split_any = false;
         while partial.bytes.len() >= CHUNK_BYTES {
             let rest = partial.bytes.split_off(CHUNK_BYTES);
             let full = std::mem::replace(&mut partial.bytes, rest);
@@ -91,14 +92,23 @@ impl Chunker {
                 stream,
                 bytes: full,
             });
+            split_any = true;
         }
-        // The remainder starts its own wait. Without this a 4 MiB line's trailing bytes would
-        // carry the deadline of the first byte of the whole line, which has long passed.
-        partial.since = if partial.bytes.is_empty() {
-            None
-        } else {
-            Some(now)
-        };
+        // A remainder left behind by a split starts its own wait: those bytes have only just
+        // arrived, and carrying the deadline of the first byte of a 4 MiB line written long ago
+        // would send them immediately on a bound they never waited for.
+        //
+        // A partial that was **not** split keeps the deadline it already had. Resetting it on
+        // every arrival is a debounce, and under a process writing continuously a debounce never
+        // expires -- a task emitting a little at a time would never reach CHUNK_BYTES and would
+        // never time out either, so its output would never go out at all. That is FR-012 failing
+        // for exactly the task somebody is watching, and it is what `since`'s own documentation
+        // says must not happen.
+        if partial.bytes.is_empty() {
+            partial.since = None;
+        } else if split_any {
+            partial.since = Some(now);
+        }
     }
 
     /// Everything due: whole chunks, plus any partial whose time bound has expired.
@@ -255,6 +265,64 @@ mod tests {
         let block = vec![b'x'; total];
         chunker.accept(stream, &block, now);
         chunker.drain_due(now)
+    }
+
+    #[test]
+    fn a_slow_steady_producer_still_flushes_on_the_time_bound() {
+        // FR-012. A task writing a little at a time, continuously, never reaches CHUNK_BYTES, so
+        // the time bound is the only thing that can deliver its output. The bound must be
+        // measured from when the **first** byte of the partial arrived; measuring it from the
+        // most recent arrival is a debounce, and a debounce under a continuous writer never
+        // expires -- the panel stays empty for exactly the task somebody is watching.
+        //
+        // The size bound hides this. At 64 KiB a fast writer fills a chunk constantly and the
+        // timer is never what fires, which is why this feeds small amounts deliberately.
+        let mut c = Chunker::new();
+        let mut delivered = 0usize;
+        // Ten writes of 100 bytes, one every 5 ms. Nothing reaches the size bound, and the
+        // elapsed time passes CHUNK_INTERVAL_MS twice over.
+        for step in 0..10u64 {
+            let now = step * 5;
+            c.accept(Stream::Stdout, &[b'x'; 100], now);
+            delivered += c
+                .drain_due(now)
+                .iter()
+                .map(|ch| ch.bytes.len())
+                .sum::<usize>();
+        }
+        assert!(
+            delivered > 0,
+            "45 ms of steady output produced nothing; the time bound never fired"
+        );
+    }
+
+    #[test]
+    fn the_tail_of_a_large_line_does_not_inherit_an_expired_deadline() {
+        // The other half, and the reason the reset exists at all. After whole chunks are split
+        // off, the remainder is bytes that have only just arrived -- it must not carry the
+        // deadline of the first byte of a line written long ago, or it goes out immediately on
+        // a bound it never actually waited for.
+        let mut c = Chunker::new();
+        c.accept(Stream::Stdout, &[b'x'; 100], 0);
+        // Long after the first byte's deadline would have passed, a large write arrives.
+        c.accept(Stream::Stdout, &vec![b'y'; CHUNK_BYTES + 50], 1000);
+        let out = c.drain_due(1000);
+        let whole: usize = out.iter().map(|ch| ch.bytes.len()).sum();
+        // One whole chunk, whose first 100 bytes are the stale ones -- they sat at the head of
+        // the partial and were carried into the split. The 150-byte tail is not yet due.
+        assert_eq!(
+            whole, CHUNK_BYTES,
+            "expected exactly one whole chunk, got {whole}"
+        );
+        // The tail waits its own interval rather than leaving on the old deadline.
+        assert!(
+            c.drain_due(1000 + CHUNK_INTERVAL_MS - 1).is_empty(),
+            "the tail left before its own time bound"
+        );
+        assert!(
+            !c.drain_due(1000 + CHUNK_INTERVAL_MS).is_empty(),
+            "the tail never left"
+        );
     }
 
     #[test]
