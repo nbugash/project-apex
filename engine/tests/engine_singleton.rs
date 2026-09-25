@@ -12,7 +12,7 @@
 #![cfg(target_os = "linux")]
 
 use apex_engine::adapters::outbound::engine_socket::{claim, release, Claim};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 
@@ -119,25 +119,51 @@ fn the_socket_and_its_directory_are_private_to_this_user() {
 }
 
 #[test]
-fn a_directory_left_open_by_an_earlier_version_is_tightened() {
-    // `DirBuilder`'s mode does not apply to a directory that already exists, so a directory left
-    // 0755 by an earlier build would stay a control channel anyone on the host could reach. The
-    // mode is set either way, and this is what says so.
+fn an_open_directory_is_refused_rather_than_tightened() {
+    // A directory the engine did not create is not its to change. An earlier version of `claim`
+    // chmod'd the socket's parent unconditionally, which for a socket path of `/tmp/x.sock` is
+    // `chmod 0700 /tmp` -- it fails as an ordinary user and, running as root, breaks every other
+    // program on the host.
+    //
+    // So an existing directory is **checked**, and refusing is the safe half of that: the
+    // directory the engine made for itself is already 0700, so the only thing refused is a
+    // location somebody chose that would expose a full control channel.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = socket_in(&dir);
     let parent = path.parent().expect("a parent");
     std::fs::create_dir_all(parent).expect("mkdir");
     std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 
-    let Claim::Bound(_listener) = claim(&path).expect("claim") else {
-        panic!("expected to bind");
-    };
+    assert!(
+        claim(&path).is_err(),
+        "a world-readable directory was accepted for a full control channel"
+    );
     let mode = std::fs::metadata(parent)
         .expect("metadata")
         .permissions()
         .mode()
         & 0o777;
-    assert_eq!(mode, 0o700, "an existing directory was left world-readable");
+    assert_eq!(
+        mode, 0o755,
+        "the engine changed the mode of a directory it did not create"
+    );
+}
+
+#[test]
+fn a_directory_the_engine_created_is_reused_without_complaint() {
+    // The ordinary second run. The engine's own directory is already 0700, so nothing is refused
+    // and nothing is changed.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = socket_in(&dir);
+    let Claim::Bound(first) = claim(&path).expect("first claim") else {
+        panic!("expected to bind");
+    };
+    drop(first);
+    release(&path);
+
+    let Claim::Bound(_second) = claim(&path).expect("second claim") else {
+        panic!("the engine's own directory was refused on a later run");
+    };
 }
 
 #[test]
@@ -170,7 +196,12 @@ fn an_unrelated_listener_on_the_path_makes_this_a_proxy() {
     // reason not to unlink. This process cannot know it is an engine, only that it is not alone.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = socket_in(&dir);
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    // 0700, as the engine itself would make it: a directory left open is refused, which the case
+    // above covers, and is not what this one is about.
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(path.parent().expect("parent"))
+        .expect("mkdir");
     let _other = UnixListener::bind(&path).expect("bind");
 
     assert!(matches!(claim(&path).expect("claim"), Claim::Proxy(_)));

@@ -63,6 +63,25 @@ impl FrameWriter {
         Self::new(Box::new(io::stdout()))
     }
 
+    /// Point this writer at a different connection.
+    ///
+    /// A reconnecting client is a **new** socket, and the frames a task is still producing have
+    /// to go to it rather than to the descriptor its predecessor closed. Replacing the sink here
+    /// rather than rebuilding the writer is what lets every reader thread keep the `Arc` it was
+    /// given: a task that has been running for twenty minutes does not learn that its client
+    /// changed, which is A-TASKLIFE's whole point.
+    ///
+    /// The old sink is dropped while the lock is held, so nothing can be halfway through writing
+    /// to it. A frame in flight completes against the sink it started on -- the alternative is a
+    /// frame split across two connections, which is a corrupt stream on both.
+    pub fn retarget(&self, sink: Box<dyn Write + Send>) {
+        let mut held = match self.sink.lock() {
+            Ok(s) => s,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *held = sink;
+    }
+
     /// Write one complete frame, then flush, then release.
     ///
     /// A poisoned lock means a writer panicked mid-frame. The stream is already suspect, so

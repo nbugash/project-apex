@@ -44,7 +44,18 @@ pub enum Claim {
 /// `XDG_RUNTIME_DIR` is the right home for a socket -- it is per user, already `0700`, and cleaned
 /// up on logout -- and it is frequently absent on a minimal instance, which is why there is a
 /// fallback rather than a failure.
+/// Overrides the path entirely. One engine per host is the production rule; a test suite is many
+/// engines on one host, each of which must be its own.
+pub const SOCKET_ENV: &str = "APEX_ENGINE_SOCKET";
+
 pub fn default_path() -> PathBuf {
+    // An explicit path wins. Without it every engine a suite spawns proxies to the first, which
+    // is the singleton behaving correctly and the tests measuring something else entirely.
+    if let Some(explicit) = std::env::var_os(SOCKET_ENV) {
+        if !explicit.is_empty() {
+            return PathBuf::from(explicit);
+        }
+    }
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -63,21 +74,7 @@ pub fn default_path() -> PathBuf {
 /// reported than retried.
 pub fn claim(socket: &Path) -> io::Result<Claim> {
     if let Some(dir) = socket.parent() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(DIR_MODE)
-            .create(dir)
-            .or_else(|e| {
-                if e.kind() == io::ErrorKind::AlreadyExists {
-                    Ok(())
-                } else {
-                    Err(e)
-                }
-            })?;
-        // `recursive(true)` does not apply the mode to a directory that already existed, and a
-        // directory left `0755` by an earlier version would be a control channel anyone on the
-        // host could reach. Set it either way.
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE))?;
+        prepare_directory(dir)?;
     }
 
     match bind(socket) {
@@ -91,6 +88,49 @@ pub fn claim(socket: &Path) -> io::Result<Claim> {
                 bind(socket).map(Claim::Bound)
             }
         },
+        Err(e) => Err(e),
+    }
+}
+
+/// Make sure the socket's directory exists and is private, **without changing one we did not
+/// create**.
+///
+/// The distinction is not fussiness. An earlier version of this chmod'd the parent
+/// unconditionally, and a socket path of `/tmp/x.sock` made that `chmod 0700 /tmp` -- which fails
+/// as an ordinary user and, running as root, breaks every other program on the host. A process
+/// does not get to tighten a directory it does not own just because it would like to put
+/// something in it.
+///
+/// So: created here, and this sets the mode. Already there, and this **checks** it and refuses
+/// rather than modifying. Refusing is the safe half of that trade -- the directory the engine
+/// made for itself is already `0700`, so the only thing refused is a location somebody chose that
+/// would expose a full control channel.
+fn prepare_directory(dir: &Path) -> io::Result<()> {
+    match std::fs::DirBuilder::new().mode(DIR_MODE).create(dir) {
+        // We made it, so we set its mode, and `DirBuilder` already did.
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            let mode = std::fs::metadata(dir)?.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "{} is mode {mode:o}; the engine's socket directory must not be readable \
+                         or writable by anyone but its owner",
+                        dir.display()
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        // A missing parent of the parent. Create the chain, then retry so the leaf still gets its
+        // own mode rather than inheriting whatever `recursive` would have used.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            if let Some(above) = dir.parent() {
+                std::fs::create_dir_all(above)?;
+            }
+            std::fs::DirBuilder::new().mode(DIR_MODE).create(dir)
+        }
         Err(e) => Err(e),
     }
 }

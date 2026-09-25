@@ -719,6 +719,9 @@ pub fn artifact(arch: apex_shell::domain::artifact::Architecture) -> EngineArtif
 /// The mock cannot serve this feature's tests: a test asserts no §4.8 method name appears in
 /// its directory, which is what keeps it a framing double rather than a second engine that
 /// would drift. So anything about the handshake has to talk to the real binary.
+/// Distinguishes one spawned engine's socket from the next within a single test binary.
+static SOCKET_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub struct EngineSpawner {
     /// Handed to the child, so a test can drive re-execution by pre-seeding an identity.
     pub session_env: Option<String>,
@@ -846,6 +849,23 @@ impl ProcessSpawner for EngineSpawner {
         } else {
             cmd.env_remove("APEX_SESSION_ID");
         }
+        // Its own socket, so this engine is the only one on it.
+        //
+        // A-ENGINELIFE makes the engine a singleton per host: the second process to start
+        // proxies to the first and keeps state nowhere of its own. That is right in production
+        // and wrong for a suite, where every test wants a fresh engine -- without this they all
+        // talk to whichever one started first, and each measures that engine's history rather
+        // than its own setup.
+        cmd.env(
+            "APEX_ENGINE_SOCKET",
+            std::env::temp_dir()
+                .join(format!(
+                    "apex-test-{}-{}",
+                    std::process::id(),
+                    SOCKET_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                ))
+                .join("engine.sock"),
+        );
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
