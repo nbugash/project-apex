@@ -46,7 +46,7 @@ fn main() {
     if registry.restarted() {
         let notice = registry.restart_notice();
         if let Some(frame) = rpc::encode_notification(&codec, "session/onRestart", &notice) {
-            let _ = writer.write(&frame);
+            let _ = writer.write_interactive(&frame);
         }
     }
 
@@ -69,7 +69,7 @@ fn main() {
                         &frame.0,
                     ) {
                         Action::Reply(reply) => {
-                            let _ = writer.write(&reply);
+                            let _ = writer.write_interactive(&reply);
                         }
                         Action::Nothing => {}
                         Action::Restart(ack) => {

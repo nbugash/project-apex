@@ -27,6 +27,22 @@ pub enum Action {
     Restart(Vec<u8>),
 }
 
+/// Act on a frame that carries no `id`.
+///
+/// A notification has no response (§4.2), so every arm here returns `Action::Nothing` and the
+/// return value says only what the loop should do next -- never what to send. An unknown method
+/// is dropped in silence, because there is no id to answer and nothing else §4.2 permits.
+///
+/// F010's `execution/writeStdin` and `execution/resizePty` are the catalogue's first
+/// client-to-engine notifications, and they land here.
+fn dispatch_notification(_method: &str, _params: Option<&serde_json::Value>) -> Action {
+    // No arms yet: `execution/writeStdin` and `execution/resizePty` land here once T054 wires a
+    // task service through. Until then a known-but-unwired method and an unknown one are the
+    // same silence, which is the correct behaviour for both -- so there is nothing to match on
+    // and a `match` with one arm would only look like there were.
+    Action::Nothing
+}
+
 /// Answer one request, or say what else the loop must do.
 pub fn dispatch(
     registry: &SessionRegistry,
@@ -40,14 +56,18 @@ pub fn dispatch(
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
         return Action::Nothing;
     };
-    let Some(id) = parsed
-        .get("id")
-        .and_then(|i| i.as_str())
-        .map(str::to_string)
-    else {
-        return Action::Nothing;
-    };
     let method = parsed.get("method").and_then(|m| m.as_str()).unwrap_or("");
+
+    // Read as a `Value`, not with `as_str`. Two defects lived in that one call. An **absent**
+    // id is a notification, and returning here meant `execution/writeStdin` and
+    // `execution/resizePty` -- the catalogue's first client-to-engine notifications -- could
+    // not reach a handler at all, because this returned before the method match. And a
+    // **numeric** id, legal under JSON-RPC 2.0, is not a string, so it took the same exit and
+    // was dropped as though it were a notification.
+    let Some(id) = parsed.get("id").cloned() else {
+        return dispatch_notification(method, parsed.get("params"));
+    };
+    let id = &id;
 
     match method {
         "auth/handshake" => {
@@ -60,10 +80,10 @@ pub fn dispatch(
             match serde_json::from_value::<HandshakeRequest>(params) {
                 Ok(request) => {
                     let response = handshake::respond(registry, &request);
-                    reply_or_nothing(encode_result(codec, &id, &response))
+                    reply_or_nothing(encode_result(codec, id, &response))
                 }
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -76,7 +96,7 @@ pub fn dispatch(
         //
         // The reply is written and flushed *before* exec, because after it there is no
         // process left to answer with.
-        "session/restart" => match encode_result(codec, &id, &serde_json::Value::Null) {
+        "session/restart" => match encode_result(codec, id, &serde_json::Value::Null) {
             Some(frame) => Action::Restart(frame),
             None => Action::Nothing,
         },
@@ -87,7 +107,7 @@ pub fn dispatch(
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             let Ok(req) = serde_json::from_value::<apex_protocol::wire::WatchParams>(params) else {
-                return reply_or_nothing(encode_error(codec, &id, -32602, "invalid params"));
+                return reply_or_nothing(encode_error(codec, id, -32602, "invalid params"));
             };
             let root = match roots.resolve(&req.workspace_id.0) {
                 Ok(r) => r,
@@ -95,13 +115,13 @@ pub fn dispatch(
                     let refusal =
                         crate::application::use_cases::workspace::RequestRefusal::Root(why);
                     let (code, message) = refusal.wire();
-                    return reply_or_nothing(encode_error(codec, &id, code, &message));
+                    return reply_or_nothing(encode_error(codec, id, code, &message));
                 }
             };
             let Some(exclusions) = roots.exclusions(&req.workspace_id.0) else {
                 return reply_or_nothing(encode_error(
                     codec,
-                    &id,
+                    id,
                     apex_protocol::wire::codes::WORKSPACE_NOT_REGISTERED,
                     "workspace is not registered with this engine",
                 ));
@@ -112,27 +132,27 @@ pub fn dispatch(
             let Some(watchers) = watchers else {
                 return reply_or_nothing(encode_error(
                     codec,
-                    &id,
+                    id,
                     -32601,
                     "this engine build cannot watch the filesystem",
                 ));
             };
             if method == "workspace/watch" {
                 match watchers.watch(&req.workspace_id, &root, exclusions, req.paths) {
-                    Some(result) => reply_or_nothing(encode_result(codec, &id, &result)),
+                    Some(result) => reply_or_nothing(encode_result(codec, id, &result)),
                     None => {
-                        reply_or_nothing(encode_error(codec, &id, -32603, "the watcher stopped"))
+                        reply_or_nothing(encode_error(codec, id, -32603, "the watcher stopped"))
                     }
                 }
             } else {
                 match watchers.unwatch(&req.workspace_id, &root, exclusions, req.paths) {
                     Some(watching) => reply_or_nothing(encode_result(
                         codec,
-                        &id,
+                        id,
                         &apex_protocol::wire::UnwatchResult { watching },
                     )),
                     None => {
-                        reply_or_nothing(encode_error(codec, &id, -32603, "the watcher stopped"))
+                        reply_or_nothing(encode_error(codec, id, -32603, "the watcher stopped"))
                     }
                 }
             }
@@ -155,17 +175,17 @@ pub fn dispatch(
                             name,
                             canonical_path: canonical,
                         };
-                        reply_or_nothing(encode_result(codec, &id, &result))
+                        reply_or_nothing(encode_result(codec, id, &result))
                     }
                     Err(e) => {
                         let (code, message) =
                             crate::application::use_cases::workspace::RequestRefusal::Root(e)
                                 .wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -186,12 +206,12 @@ pub fn dispatch(
                         {
                             Ok((items, next_cursor)) => reply_or_nothing(encode_result(
                                 codec,
-                                &id,
+                                id,
                                 &apex_protocol::wire::ReadDirectoryResult { items, next_cursor },
                             )),
                             Err(e) => reply_or_nothing(encode_error(
                                 codec,
-                                &id,
+                                id,
                                 apex_protocol::wire::codes::NOT_FOUND,
                                 &e.to_string(),
                             )),
@@ -199,11 +219,11 @@ pub fn dispatch(
                     }
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -220,21 +240,21 @@ pub fn dispatch(
                     &req.relative_path,
                 ) {
                     Ok(path) => match workspace::stat(fs, &path) {
-                        Ok(result) => reply_or_nothing(encode_result(codec, &id, &result)),
+                        Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
                         Err(e) => reply_or_nothing(encode_error(
                             codec,
-                            &id,
+                            id,
                             apex_protocol::wire::codes::NOT_FOUND,
                             &e.to_string(),
                         )),
                     },
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -251,13 +271,13 @@ pub fn dispatch(
                     &req.relative_path,
                 ) {
                     Ok(path) => match workspace::read_file(fs, &path, req.offset, req.length) {
-                        Ok(Ok(result)) => reply_or_nothing(encode_result(codec, &id, &result)),
+                        Ok(Ok(result)) => reply_or_nothing(encode_result(codec, id, &result)),
                         // Refused rather than truncated: a silent truncation is a corrupt file
                         // the caller cannot see. The client routes to the bulk path instead.
                         Ok(Err(workspace::ReadRefusal::TooLarge { total_size })) => {
                             reply_or_nothing(encode_error(
                                 codec,
-                                &id,
+                                id,
                                 INVALID_PARAMS,
                                 &format!(
                                     "{total_size} bytes exceeds the inline read limit; use the \
@@ -267,23 +287,23 @@ pub fn dispatch(
                         }
                         Err(e) => reply_or_nothing(encode_error(
                             codec,
-                            &id,
+                            id,
                             apex_protocol::wire::codes::NOT_FOUND,
                             &e.to_string(),
                         )),
                     },
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
         "session/shutdown" => {
-            if let Some(frame) = encode_result(codec, &id, &serde_json::Value::Null) {
+            if let Some(frame) = encode_result(codec, id, &serde_json::Value::Null) {
                 let mut out = std::io::stdout();
                 let _ = out.write_all(&frame);
                 let _ = out.flush();
@@ -292,7 +312,7 @@ pub fn dispatch(
         }
         _ => reply_or_nothing(encode_error(
             codec,
-            &id,
+            id,
             METHOD_NOT_FOUND,
             &format!("this engine does not implement {method}"),
         )),
@@ -327,7 +347,9 @@ pub fn drain_and_exec(
 
     while let Ok(Some(frame)) = codec.decode(buf) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&frame.0) {
-            if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
+            // A notification buffered here has nothing to answer, so an absent id is skipped
+            // rather than answered -- but a numeric one is answered, like any other request.
+            if let Some(id) = v.get("id") {
                 if let Some(f) = encode_error(
                     codec,
                     id,
@@ -362,16 +384,26 @@ fn exec_self(session_id: &str) -> std::io::Error {
         .exec()
 }
 
+/// `id` is the caller's own JSON value, echoed back unchanged.
+///
+/// A `&str` until F010, which quoted a **numeric** id on the way out. JSON-RPC 2.0 allows a
+/// number and requires the response to carry the same id it was sent, so `{"id": 7}` answered
+/// with `{"id": "7"}` is a response the client cannot match to its request.
 pub fn encode_result<T: serde::Serialize>(
     codec: &FrameCodec,
-    id: &str,
+    id: &serde_json::Value,
     result: &T,
 ) -> Option<Vec<u8>> {
     let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
     codec.encode(&body.to_string()).ok()
 }
 
-pub fn encode_error(codec: &FrameCodec, id: &str, code: i32, message: &str) -> Option<Vec<u8>> {
+pub fn encode_error(
+    codec: &FrameCodec,
+    id: &serde_json::Value,
+    code: i32,
+    message: &str,
+) -> Option<Vec<u8>> {
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": id,
         "error": {"code": code, "message": message}

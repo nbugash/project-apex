@@ -42,7 +42,7 @@ fn concurrent_writers_never_interleave_a_frame() {
         let w = Arc::clone(&writer);
         handles.push(std::thread::spawn(move || {
             for _ in 0..rounds {
-                w.write(&frame(tag, 64)).expect("write");
+                w.write_interactive(&frame(tag, 64)).expect("write");
             }
         }));
     }
@@ -78,7 +78,7 @@ fn a_frame_is_written_exactly_once() {
     let recorder = Recorder::default();
     let seen = Arc::clone(&recorder.0);
     let writer = FrameWriter::new(Box::new(recorder));
-    writer.write(&frame('x', 3)).expect("write");
+    writer.write_interactive(&frame('x', 3)).expect("write");
     assert_eq!(
         String::from_utf8(seen.lock().expect("recorder").clone()).expect("utf-8"),
         "Content-Length: 3\r\n\r\nxxx"

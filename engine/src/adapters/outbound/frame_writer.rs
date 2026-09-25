@@ -86,10 +86,15 @@ impl FrameWriter {
 
     /// Write a frame that must not wait: a command reply, a file event, an LSP response.
     ///
+    /// Named rather than left as a plain `write`, so that **every call site chooses**. A
+    /// default would be taken by whoever adds the next producer without thinking about which
+    /// class it belongs to -- which is how the design this replaced came to classify a task's
+    /// exit as interactive and let it overtake the task's own output.
+    ///
     /// Takes `&self` so it can be shared behind an `Arc` without any caller needing mutable
     /// access -- which is what lets the stdio loop and the watcher thread both hold one without
     /// either owning it.
-    pub fn write(&self, frame: &[u8]) -> io::Result<()> {
+    pub fn write_interactive(&self, frame: &[u8]) -> io::Result<()> {
         // Raised *before* the sink is taken, so a bulk writer that checks between these two
         // steps still sees a writer it should yield to.
         *self.lock_waiting() += 1;

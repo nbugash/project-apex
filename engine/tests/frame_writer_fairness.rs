@@ -95,7 +95,7 @@ fn a_bulk_writer_parked_at_the_gate_is_overtaken_by_a_later_interactive_one() {
             let (w, started) = (Arc::clone(&w), Arc::clone(&started));
             std::thread::spawn(move || {
                 started.store(true, Ordering::SeqCst);
-                w.write(b"I0").expect("i0");
+                w.write_interactive(b"I0").expect("i0");
             })
         };
         // I0 is now inside the sink holding the write mutex, with the waiting count raised.
@@ -114,7 +114,7 @@ fn a_bulk_writer_parked_at_the_gate_is_overtaken_by_a_later_interactive_one() {
         // I1 arrives *after* B called, and must still reach the sink before it.
         let i1 = {
             let w = Arc::clone(&w);
-            std::thread::spawn(move || w.write(b"I1").expect("i1"))
+            std::thread::spawn(move || w.write_interactive(b"I1").expect("i1"))
         };
         std::thread::sleep(Duration::from_millis(5));
 
@@ -149,7 +149,8 @@ fn the_anti_starvation_bound_releases_a_yielding_writer() {
         std::thread::spawn(move || {
             let mut n = 0u32;
             while !stop.load(Ordering::SeqCst) {
-                w.write(format!("I{n}").as_bytes()).expect("interactive");
+                w.write_interactive(format!("I{n}").as_bytes())
+                    .expect("interactive");
                 n += 1;
                 std::thread::sleep(Duration::from_micros(200));
             }
@@ -191,7 +192,7 @@ fn two_producers_never_interleave_one_frame() {
         let w = Arc::clone(&w);
         std::thread::spawn(move || {
             for _ in 0..200 {
-                w.write(b"AAAAAAAAAAAAAAAA").expect("a");
+                w.write_interactive(b"AAAAAAAAAAAAAAAA").expect("a");
             }
         })
     };

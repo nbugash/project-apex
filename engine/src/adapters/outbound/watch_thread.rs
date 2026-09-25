@@ -130,7 +130,7 @@ impl WatchService {
                         if let Some(frame) =
                             encode_notification(&codec, "workspace/onFileEvent", &params)
                         {
-                            let _ = writer.write(&frame);
+                            let _ = writer.write_interactive(&frame);
                         }
                     }
                     Emission::InvalidateAll => {
@@ -140,7 +140,7 @@ impl WatchService {
                         if let Some(frame) =
                             encode_notification(&codec, "workspace/invalidateAll", &params)
                         {
-                            let _ = writer.write(&frame);
+                            let _ = writer.write_interactive(&frame);
                         }
                     }
                 }
