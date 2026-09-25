@@ -10,6 +10,7 @@ use apex_engine::adapters::inbound::rpc::{dispatch, Action};
 use apex_engine::adapters::outbound::frame_writer::FrameWriter;
 use apex_engine::adapters::outbound::task_threads::TaskService;
 use apex_engine::application::ports::roots::WorkspaceRoots;
+use apex_engine::application::ports::task_runner::Exit;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
 use apex_engine::domain::task::Stream;
 use apex_engine::session::SessionRegistry;
@@ -182,4 +183,115 @@ fn an_engine_without_a_task_service_refuses_rather_than_appearing_to_succeed() {
     // F004's degradation shape: the loss is stated rather than silent (FR-027, A-WATCHLOCAL).
     assert!(text.contains("-32011"), "{text}");
     assert!(text.contains("no task service"), "{text}");
+}
+
+/// The `execution/onExit` frame's params, as raw JSON.
+///
+/// Raw, because the question is which **key is present**, and any typed struct answers that with
+/// `None` for both "absent" and "null". A client reading `exitCode` from a signalled death gets
+/// `null` or `0` depending on the serialiser, and both read as success -- which is the confusion
+/// §9 spends a second field preventing.
+fn exit_params(h: &Harness) -> serde_json::Value {
+    let text = wire(h);
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find("\r\n\r\n") {
+        let header = &rest[..at];
+        let len: usize = header
+            .rsplit(' ')
+            .next()
+            .and_then(|n| n.trim().parse().ok())
+            .unwrap_or(0);
+        let start = at + 4;
+        if start + len > rest.len() {
+            break;
+        }
+        let body = &rest[start..start + len];
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+            if v["method"] == "execution/onExit" {
+                return v["params"].clone();
+            }
+        }
+        rest = &rest[start + len..];
+    }
+    panic!("no execution/onExit frame reached the wire: {text}");
+}
+
+/// Start a task and let it end, advancing the fake clock so the chunker's bound expires.
+fn run_to_exit(h: &Harness) {
+    let _ = run(h, &body("1", "build", "."));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        h.clock.advance(100);
+        if wire(h).contains("execution/onExit") {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("the task never ended: {}", wire(h));
+}
+
+#[test]
+fn a_task_that_exits_seven_reports_seven_and_carries_no_signal() {
+    // SC-010. Seven, not "non-zero": a build tool's exit code is information, and collapsing it
+    // to a boolean throws away what the developer actually needs to see.
+    let h = harness(Script::of(vec![]).exiting_with(Exit::Code(7)));
+    run_to_exit(&h);
+    let params = exit_params(&h);
+
+    assert_eq!(params["exit_code"], 7, "{params}");
+    assert!(
+        params.get("signal").is_none(),
+        "an ordinary exit carried a signal key: {params}"
+    );
+}
+
+#[test]
+fn a_signalled_task_reports_a_name_and_carries_no_exit_code() {
+    // §9's other half. The name, never the number: the wire spends a field keeping the
+    // distinction that 128 + n throws away, and 143 is otherwise ambiguous between a stop the
+    // developer asked for and a program that chose to exit 143.
+    let h = harness(Script::of(vec![]).exiting_with(Exit::Signal(9)));
+    run_to_exit(&h);
+    let params = exit_params(&h);
+
+    assert_eq!(params["signal"], "SIGKILL", "{params}");
+    assert!(
+        params.get("exit_code").is_none(),
+        "a signalled death carried an exit code: {params}"
+    );
+}
+
+#[test]
+fn a_zero_exit_is_still_a_code_and_not_an_absence() {
+    // The case an `Option` serialiser gets wrong for free: skipping a field when it is zero
+    // makes success indistinguishable from a signalled death at the client.
+    let h = harness(Script::of(vec![]).exiting_with(Exit::Code(0)));
+    run_to_exit(&h);
+    let params = exit_params(&h);
+
+    assert_eq!(params["exit_code"], 0, "{params}");
+    assert!(params.get("signal").is_none(), "{params}");
+}
+
+#[test]
+fn every_ending_carries_exactly_one_of_the_two_fields() {
+    // Stated as a property rather than three examples, because the failure it guards against is
+    // a fourth case somebody adds later: an ending with both keys, or neither, is a protocol
+    // error and there is no sensible way for a client to read one.
+    for exit in [
+        Exit::Code(0),
+        Exit::Code(7),
+        Exit::Signal(9),
+        Exit::Signal(15),
+    ] {
+        let h = harness(Script::of(vec![]).exiting_with(exit));
+        run_to_exit(&h);
+        let params = exit_params(&h);
+        let present = usize::from(params.get("exit_code").is_some())
+            + usize::from(params.get("signal").is_some());
+        assert_eq!(
+            present, 1,
+            "an ending for {exit:?} carried {present} of the two fields: {params}"
+        );
+    }
 }
