@@ -14,7 +14,11 @@
 /// only through a driven interface.
 
 import type { ITheme, Terminal } from '@xterm/xterm';
+import { decodeBase64 } from './wire';
 import type { FitAddon } from '@xterm/addon-fit';
+
+/// Used only to render the panel's own text into the buffered form. Output is never decoded.
+const ENCODER = new TextEncoder();
 
 /// §4.8's defaults, used until a mounted panel measures itself.
 export const DEFAULT_COLS = 80;
@@ -38,7 +42,7 @@ export class TerminalPanel {
   /// A task's output does not wait for its dock tab to be visible, and dropping what arrives first
   /// would lose the beginning of every build -- the part that says what is being built. Held as
   /// plain data so that a panel which has never been attached still answers for what it received.
-  #pending: string[] = [];
+  #pending: Array<string | Uint8Array> = [];
   #terminal: Terminal | null = null;
   #fit: FitAddon | null = null;
 
@@ -46,10 +50,21 @@ export class TerminalPanel {
     this.taskId = taskId;
   }
 
-  /// Everything received while unattached, as one string. The attached panel's own buffer is the
-  /// source once `attach` has run, and this is empty.
-  buffered(): string {
-    return this.#pending.join('');
+  /// Everything received while unattached, in arrival order. The attached panel's own buffer is
+  /// the source once `attach` has run, and this is empty.
+  ///
+  /// Returns bytes rather than text, because output is bytes: a caller wanting a string has to ask
+  /// for one, at which point the decode is its decision and not a silent one made here.
+  buffered(): Uint8Array {
+    const parts = this.#pending.map((p) => (typeof p === 'string' ? ENCODER.encode(p) : p));
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    const out = new Uint8Array(total);
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.length;
+    }
+    return out;
   }
 
   get attached(): boolean {
@@ -57,7 +72,11 @@ export class TerminalPanel {
   }
 
   /// Accept output, whether or not anything is on screen to show it.
-  write(data: string): void {
+  ///
+  /// Takes bytes or text. Output arrives as bytes and stays bytes; the string form is for the
+  /// panel's own writing -- a reconnection summary, an ending -- which this application authored
+  /// and therefore knows the encoding of.
+  write(data: string | Uint8Array): void {
     if (this.#terminal) this.#terminal.write(data);
     else this.#pending.push(data);
   }
@@ -127,6 +146,17 @@ export class TerminalPanel {
     this.#terminal = null;
     this.#fit = null;
   }
+}
+
+/// Deliver one `execution/onOutput` chunk to its panel.
+///
+/// The buffering FR-022 needs happens by construction rather than by logic here. Before a panel is
+/// attached the chunks queue in arrival order; after it is attached the terminal library's own
+/// parser holds a partial escape sequence or a partial multi-byte character until the rest of it
+/// arrives. A chunk boundary is where the engine ended a frame and means nothing, so neither layer
+/// is allowed to treat one as a delimiter.
+export function applyChunk(panel: TerminalPanel, encoded: string): void {
+  panel.write(decodeBase64(encoded));
 }
 
 /// The set of panels, keyed by task id.

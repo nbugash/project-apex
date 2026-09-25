@@ -12,6 +12,10 @@ import {
   DEFAULT_ROWS,
 } from '../../client/ui/lib/terminal/terminals.svelte';
 
+/// `buffered` returns bytes, because output is bytes. These cases write ASCII, so decoding for
+/// the comparison is safe here and is the test's own decision rather than the panel's.
+const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
 describe('terminal panels are one per task (FR-026)', () => {
   it('yields two instances for two task ids, and the same instance twice for one', () => {
     const terminals = new Terminals();
@@ -32,9 +36,9 @@ describe('terminal panels are one per task (FR-026)', () => {
     const b = terminals.panel('task-b');
     a.write('compiling apex-engine\r\n');
     a.write('Finished in 11.07s\r\n');
-    expect(a.buffered()).toBe('compiling apex-engine\r\nFinished in 11.07s\r\n');
-    expect(b.buffered()).toBe('');
-    expect(b.buffered()).not.toContain('apex-engine');
+    expect(text(a.buffered())).toBe('compiling apex-engine\r\nFinished in 11.07s\r\n');
+    expect(b.buffered().length).toBe(0);
+    expect(text(b.buffered())).not.toContain('apex-engine');
   });
 
   it('resizes one panel and leaves the other at its own dimensions', () => {
@@ -69,10 +73,10 @@ describe('terminal panels are one per task (FR-026)', () => {
     expect(terminals.has('task-a')).toBe(false);
     expect(terminals.has('task-b')).toBe(true);
     expect(terminals.panels.length).toBe(1);
-    expect(b.buffered()).toBe('still here\r\n');
+    expect(text(b.buffered())).toBe('still here\r\n');
     // Asking again after a release is a new panel, not the released one resurrected.
     expect(terminals.panel('task-a')).not.toBe(a);
-    expect(terminals.panel('task-a').buffered()).toBe('');
+    expect(terminals.panel('task-a').buffered().length).toBe(0);
   });
 
   it('releasing an unknown id changes nothing', () => {
@@ -80,6 +84,6 @@ describe('terminal panels are one per task (FR-026)', () => {
     terminals.panel('task-a').write('untouched\r\n');
     terminals.release('never-existed');
     expect(terminals.panels.length).toBe(1);
-    expect(terminals.panel('task-a').buffered()).toBe('untouched\r\n');
+    expect(text(terminals.panel('task-a').buffered())).toBe('untouched\r\n');
   });
 });
