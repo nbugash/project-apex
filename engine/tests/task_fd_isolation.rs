@@ -197,3 +197,84 @@ fn a_terminal_task_holds_only_its_own_three_descriptors() {
 fn a_pipe_task_holds_only_its_own_three_descriptors() {
     assert_only_standard_descriptors(Shape::Pipes);
 }
+
+/// A task's two halves must not close the same descriptor.
+///
+/// **Concurrency is required to see this, and that is the point.** Dropping a task closes its
+/// input descriptor; if both halves hold the same number, it is closed twice. On a single thread
+/// that is harmless -- nothing allocates between the two closes, so the second merely fails --
+/// which is exactly why it survived every sequential test. The other thread here allocates
+/// continuously and *holds* what it opens, so a number freed by the first close is handed to it
+/// before the second close arrives and shuts it down.
+///
+/// It first appeared as `closedir: Bad file descriptor` in an unrelated test under
+/// `--test-threads=2`. In the engine the descriptors in that pool are the client's stdin and
+/// stdout, the watcher's inotify handle, and every other task's terminal.
+#[test]
+fn spawning_tasks_does_not_close_another_threads_descriptors() {
+    use std::os::fd::AsRawFd;
+
+    let fs = StdFileSystem;
+    let root = ResolvedPath::canonical_root(std::path::Path::new("/tmp"), &fs).expect("root");
+    let cwd = ResolvedPath::resolve(&root, ".", &fs).expect("cwd");
+    let command = vec![fixture("fixture_report_env")];
+    let env: Vec<(String, String)> =
+        vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())];
+
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let failure: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // Open and hold, checking everything held is still open. Holding is what matters:
+            // a descriptor the victim opened and let go of cannot be stolen from it.
+            let mut held: Vec<std::fs::File> = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                match std::fs::File::open("/dev/null") {
+                    Ok(f) => held.push(f),
+                    Err(e) => {
+                        *failure.lock().expect("failure") = Some(format!("open failed: {e}"));
+                        return;
+                    }
+                }
+                for f in &held {
+                    // `F_GETFD` on a descriptor we still own must succeed. EBADF means somebody
+                    // else closed it.
+                    // libc rather than nix:  allows nix in exactly one
+                    // file, and a test is not it.
+                    if unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETFD) } < 0 {
+                        *failure.lock().expect("failure") =
+                            Some(format!("fd {} was closed by another thread", f.as_raw_fd()));
+                        return;
+                    }
+                }
+                if held.len() > 48 {
+                    held.drain(..24);
+                }
+            }
+        });
+
+        let runner = PtyRunner::new();
+        for _ in 0..400 {
+            let task = runner
+                .spawn(&SpawnRequest {
+                    command: &command,
+                    cwd: &cwd,
+                    env: &env,
+                    shape: Shape::Pty { cols: 80, rows: 24 },
+                    limits: ResourceLimits::FIXED,
+                })
+                .expect("spawn");
+            drop(task.output);
+            drop(task.control);
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let failed = failure.lock().expect("failure").clone();
+    assert!(
+        failed.is_none(),
+        "a descriptor belonging to another thread was closed: {}",
+        failed.unwrap_or_default()
+    );
+}

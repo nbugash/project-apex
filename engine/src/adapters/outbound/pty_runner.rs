@@ -165,6 +165,31 @@ unsafe fn become_the_child(plan: &ChildPlan) -> ! {
 /// `dup2` clears the flag on the descriptor it creates, which is why the child's 0, 1 and 2
 /// survive `exec` while everything they were copied from does not. That is the whole mechanism:
 /// mark everything, dup what the child needs, let `exec` discard the rest.
+/// Serialises the whole of creating a task's descriptors and forking.
+///
+/// Marking a descriptor close-on-exec **after** creating it cannot close a race that exists
+/// before the mark. Between `openpty` and `set_cloexec` the descriptor is inheritable, and a fork
+/// on another thread in that window produces a child that keeps it across `exec` -- for its whole
+/// life. That is not theoretical: it was observed as a task holding `/dev/ptmx`, another task's
+/// terminal master, with everything correctly marked.
+///
+/// The remedy is to make the sequence indivisible rather than to make each step safer. Creating
+/// descriptors and forking is rare -- once per task -- so serialising costs nothing measurable,
+/// and it removes the whole class at once rather than one descriptor at a time. `O_CLOEXEC` at
+/// creation would fix the pipes, and `openpty` offers no way to ask for it.
+///
+/// Held across the fork, which is safe because the child touches nothing but async-signal-safe
+/// calls and then `exec`s: it never takes this lock, so there is no lock to be left held in a
+/// child that will not release it.
+static SPAWNING: Mutex<()> = Mutex::new(());
+
+/// Take the spawn lock, ignoring poisoning: a panic during a previous spawn says nothing about
+/// whether descriptors can be created now, and refusing every later task would turn one failure
+/// into a permanent one.
+fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
+    SPAWNING.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 fn set_cloexec<F: AsFd>(fd: &F) -> Result<(), SpawnFailure> {
     fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))
         .map(|_| ())
@@ -182,6 +207,7 @@ fn spawn_with_terminal(
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+    let _spawning = spawn_lock();
     let pair = openpty(Some(&size), None).map_err(errno_to_spawn)?;
     let (master, slave) = (pair.master, pair.slave);
     // Both ends, before the fork. The child clears the flag on 0, 1 and 2 by dup2-ing onto them.
@@ -223,7 +249,24 @@ fn spawn_with_terminal(
         }
         ForkResult::Parent { child } => {
             drop(slave);
-            let shared = Arc::new(Shared::new(child, Some(master.as_raw_fd())));
+            // **A descriptor of its own for each half.**
+            //
+            // The two halves of a task are dropped independently -- the reader ends when the
+            // task does, the control lives as long as anything might still write to it -- and
+            // both close what they hold. Handing them the same descriptor number, one as an
+            // `OwnedFd` and one as a raw copy, closes it twice.
+            //
+            // A double close is not a leak, which is what makes it dangerous. The number is
+            // returned to the process after the first close, another thread's `open` takes it,
+            // and the second close then shuts *that* down. The engine's own descriptors are in
+            // that pool: the client's stdin and stdout, the watcher's inotify handle, every
+            // other task's terminal. It surfaced here as `closedir: Bad file descriptor` in an
+            // unrelated test, which is what this class of bug looks like from the outside.
+            //
+            // `F_DUPFD_CLOEXEC` rather than `dup`, because `dup` does not copy the close-on-exec
+            // flag and the copy would be inherited by every task started afterwards.
+            let input = fcntl(&master, FcntlArg::F_DUPFD_CLOEXEC(0)).map_err(errno_to_spawn)?;
+            let shared = Arc::new(Shared::new(child, Some(input)));
             Ok(SpawnedTask {
                 pid: Pid(child.as_raw()),
                 output: Box::new(PtyOutput {
@@ -238,6 +281,7 @@ fn spawn_with_terminal(
 }
 
 fn spawn_with_pipes(plan: &ChildPlan) -> Result<SpawnedTask, SpawnFailure> {
+    let _spawning = spawn_lock();
     let (stdin_r, stdin_w) = pipe().map_err(errno_to_spawn)?;
     let (stdout_r, stdout_w) = pipe().map_err(errno_to_spawn)?;
     let (stderr_r, stderr_w) = pipe().map_err(errno_to_spawn)?;
@@ -482,7 +526,13 @@ impl TaskControl for PtyControl {
 impl Drop for PtyControl {
     fn drop(&mut self) {
         if let Some(fd) = self.shared.input.lock().expect("input lock").take() {
-            // SAFETY: taken from the slot, so nothing else will close it.
+            // SAFETY: this slot is the sole owner of the descriptor in it, and `take` leaves
+            // nothing behind for a second drop to close. Sole ownership is established at the
+            // two call sites: the pipe path hands over the writing end with `mem::forget`, and
+            // the terminal path stores a `F_DUPFD_CLOEXEC` copy rather than the master itself,
+            // which the output half owns. Storing the master's own number here as well would
+            // close it twice -- see the comment at that call site for why that is worse than a
+            // leak.
             let _ = close(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) });
         }
     }
