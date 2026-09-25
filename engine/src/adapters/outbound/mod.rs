@@ -1,3 +1,4 @@
+pub mod engine_socket;
 pub mod frame_writer;
 #[cfg(target_os = "linux")]
 pub mod inotify_watcher;

@@ -3224,6 +3224,67 @@ and the pressure this record relies on has failed. The remedy then is not to tig
 to ask why so much of that feature is unobservable through its own interface, which is usually a
 statement about the interface rather than about the tests.
 
+## A-ENGINELIFE — The engine outlives the channel, and is reached again through a socket (2026-09-25)
+
+**Decision.** An engine that loses its client does **not** exit. It marks itself detached and keeps
+serving, and a later invocation on the same host reaches it through a **unix domain socket** rather
+than becoming a second engine. Three rules make that bounded rather than open-ended:
+
+1. **First one wins.** On startup the engine tries to bind the socket. Binding succeeds: it is the
+   engine, and it serves both its own stdio and anything that connects. Binding fails against a
+   socket something is listening on: it is a **proxy**, and it shuttles bytes between its stdio and
+   that socket for as long as its own stdin lasts. Binding fails against a socket nothing answers:
+   the previous engine died, the socket is stale, it is removed and binding is retried once.
+2. **The newest client wins.** A connection arriving while another is attached displaces it. A
+   developer whose laptop changed networks has a half-dead channel the far end cannot distinguish
+   from a live one, and refusing the new connection would make reconnecting impossible for exactly
+   the case this record exists for.
+3. **It outlives the channel only while it has something to preserve.** Detached with **zero**
+   tasks, the engine exits. There is nothing to reattach to, and an engine that lingered anyway
+   would leave one process per session on the instance forever.
+
+**Rationale.** §15.2 says the engine keeps task identities and pid mappings in memory so a client
+that disconnects and returns reattaches to work that kept running, and says plainly that a crash is
+not survivable because the map dies with the process. The implementation made a disconnection
+produce exactly the outcome the section reserves for a crash: `main.rs` returned on stdin EOF, the
+process exited, and the children it had started survived as orphans "reachable by pid and by
+nothing the protocol exposes".
+
+`ControlMaster` and `ControlPersist=1h` do not close that gap. They keep the SSH **master** alive so
+a later invocation need not re-authenticate; the invocation still runs `ide-engine` afresh and gets
+a new process with an empty map. What survives a brief drop today is the *channel*, and only while
+`ServerAliveCountMax` has not yet given up on it — about forty-five seconds. A drop longer than
+that loses the build, which is the thing A-TASKLIFE exists to prevent.
+
+So the engine has to outlive its channel, and something on the host has to route a returning client
+to it. A unix socket is the smallest thing that does: it is local to the instance, needs no port
+(§1.2 allows only 22), and is already how `ControlPath` works for ssh itself.
+
+**Alternatives rejected.** *Narrowing §15.2 to channel-survivable drops* was honest and cheap, and
+was rejected because it leaves the product failing the case it was designed around: a laptop moving
+between networks is not a forty-five-second event. *Persisting the map to disk so a new process can
+adopt it* solves more -- it would survive a crash too -- and was rejected as the larger change: the
+map holds live pids and open descriptors, and a process that adopted identities whose descriptors
+it does not hold could list a task it cannot read, write to or stop. *A port* is unavailable by
+§1.2. *Deferring the whole reattachment story to its own feature* was the reviewer's other option
+and was not taken.
+
+**Security.** The socket is a full control channel: anything that can connect to it can run commands
+as the user. It is created inside a directory owned by the user with mode `0700`, and the socket
+itself `0600`, so the filesystem is what enforces the boundary. A-EC2's single tenancy means there
+is no second user to defend against on the instance, which bounds the exposure but does not make
+the permissions optional -- a future multi-tenant instance would find them already correct rather
+than needing them added.
+
+**What it does not do.** It does not make the map survive a **crash**, and §15.2's statement about
+that is unchanged. The process outliving the channel is a different property from the map outliving
+the process, and only the first is decided here.
+
+**Reversal conditions.** If the engine ever gains durable state -- a map written to disk that a new
+process can adopt safely, descriptors and all -- the socket becomes an optimisation rather than the
+mechanism, because a fresh process could then reconstruct what it needs. Until then the socket is
+the only thing that makes §15.2 true as written.
+
 # Appendix B — Open Items
 
 **All items resolved 2026-09-23.** Nothing here blocks a feature. The table is kept as a record
