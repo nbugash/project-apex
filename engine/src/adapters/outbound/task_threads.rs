@@ -356,6 +356,22 @@ impl TaskService {
         self.inner.entry(id).map(|e| e.pid)
     }
 
+    /// The shape a task was started with, which is what decides whether a resize means anything.
+    ///
+    /// Read from the domain's `TaskSet` rather than from the entry, because the set is the single
+    /// source for what a task *is* and the entry is the machinery for reaching it.
+    pub fn shape(&self, id: &TaskId) -> Option<crate::domain::task::Shape> {
+        let set = self.set.lock().unwrap_or_else(|p| p.into_inner());
+        set.get(id).map(|task| task.shape)
+    }
+
+    /// Now, by the clock this service was built with. The stop path needs it to date a deadline,
+    /// and reading it here keeps the dispatch layer from acquiring a clock of its own -- which
+    /// would be a second source of time, and a fake one in tests would no longer govern.
+    pub fn now(&self) -> Millis {
+        self.inner.clock.now()
+    }
+
     pub fn escalations(&self) -> &Escalations {
         &self.inner.escalations
     }

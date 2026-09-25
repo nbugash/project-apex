@@ -5,6 +5,7 @@
 //! (Principle VIII). Behaviour is F002's, unchanged by the move.
 
 use crate::application::use_cases::workspace;
+use crate::domain::task::TaskSignal;
 use crate::handshake;
 use crate::session::{self, SessionRegistry};
 use apex_protocol::framing::FrameCodec;
@@ -84,12 +85,54 @@ fn refusal_to_wire(
 ///
 /// F010's `execution/writeStdin` and `execution/resizePty` are the catalogue's first
 /// client-to-engine notifications, and they land here.
-fn dispatch_notification(_method: &str, _params: Option<&serde_json::Value>) -> Action {
-    // No arms yet: `execution/writeStdin` and `execution/resizePty` land here once T054 wires a
-    // task service through. Until then a known-but-unwired method and an unknown one are the
-    // same silence, which is the correct behaviour for both -- so there is nothing to match on
-    // and a `match` with one arm would only look like there were.
-    Action::Nothing
+/// The client-to-engine notifications: input and resize.
+///
+/// **Everything here returns `Action::Nothing`, and that is the contract rather than an
+/// oversight.** §4.2 gives a notification no response, so an unknown `taskId`, a task that has
+/// already exited, a payload that does not parse, `data` that is not base64, and a `cols` or
+/// `rows` that is absent, zero or not an integer are all dropped in the same silence. There is no
+/// response to carry a refusal in, and inventing an error frame for a request that had no id
+/// would be an unsolicited reply the client cannot match to anything.
+fn dispatch_notification(
+    method: &str,
+    params: Option<&serde_json::Value>,
+    tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
+) -> Action {
+    use crate::application::use_cases::task::{resize_task, write_input};
+
+    let (Some(service), Some(params)) = (tasks, params) else {
+        return Action::Nothing;
+    };
+    match method {
+        "execution/writeStdin" => {
+            let Ok(p) =
+                serde_json::from_value::<apex_protocol::wire::WriteStdinParams>(params.clone())
+            else {
+                return Action::Nothing;
+            };
+            // Decoded exactly once, here, at the boundary. Everything inward takes bytes.
+            let Ok(bytes) = apex_protocol::base64::decode(&p.data) else {
+                return Action::Nothing;
+            };
+            let _ = write_input(&bytes, service.control(&p.task_id));
+            Action::Nothing
+        }
+        "execution/resizePty" => {
+            let Ok(p) =
+                serde_json::from_value::<apex_protocol::wire::ResizePtyParams>(params.clone())
+            else {
+                return Action::Nothing;
+            };
+            let _ = resize_task(
+                service.shape(&p.task_id),
+                p.cols,
+                p.rows,
+                service.control(&p.task_id),
+            );
+            Action::Nothing
+        }
+        _ => Action::Nothing,
+    }
 }
 
 /// Answer one request, or say what else the loop must do.
@@ -123,7 +166,7 @@ pub fn dispatch(
     // **numeric** id, legal under JSON-RPC 2.0, is not a string, so it took the same exit and
     // was dropped as though it were a notification.
     let Some(id) = parsed.get("id").cloned() else {
-        return dispatch_notification(method, parsed.get("params"));
+        return dispatch_notification(method, parsed.get("params"), tasks);
     };
     let id = &id;
 
@@ -159,6 +202,73 @@ pub fn dispatch(
                 Err(e) => {
                     reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
+            }
+        }
+        "execution/terminate" => {
+            use crate::application::use_cases::task::stop_task;
+            let Some(service) = tasks else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "this engine has no task service",
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            // A signal outside the closed three is refused **before anything reaches a
+            // syscall**, by the type: `TerminateSignal` has three variants and serde rejects the
+            // rest, so an arbitrary string from the wire never becomes a number this process
+            // passes to `kill`. That is `ResolvedPath`'s reasoning applied to a second kind of
+            // untrusted input -- the refusal is structural rather than a check somebody has to
+            // remember to write.
+            let p = match serde_json::from_value::<apex_protocol::wire::TerminateParams>(params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return reply_or_nothing(encode_error(
+                        codec,
+                        id,
+                        INVALID_PARAMS,
+                        &format!("{e}"),
+                    ))
+                }
+            };
+            // No live identity is `-32006`. FR-019's already-exited task is **not** this: its
+            // identity is still live until its `onExit` has been delivered, so it is found here
+            // and the signal goes to a process that is already gone, which the kernel ignores.
+            let Some(control) = service.control(&p.task_id) else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "no task with that identity is running",
+                ));
+            };
+            let signal = match p.signal {
+                apex_protocol::wire::TerminateSignal::Int => TaskSignal::Int,
+                apex_protocol::wire::TerminateSignal::Term => TaskSignal::Term,
+                apex_protocol::wire::TerminateSignal::Kill => TaskSignal::Kill,
+            };
+            match stop_task(&p.task_id, signal, service.now()) {
+                Ok(plan) => {
+                    let _ = control.signal(plan.send);
+                    if let (Some(at), Some(pid)) = (plan.escalate_at, service.pid(&p.task_id)) {
+                        // Keyed on the pair, so a deadline cannot outlive the process it was
+                        // made for and reach a task that reused the identity.
+                        service
+                            .escalations()
+                            .register(p.task_id.clone(), pid, &control, at);
+                    }
+                    reply_or_nothing(encode_result(codec, id, &serde_json::Value::Null))
+                }
+                Err(_) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "no task with that identity is running",
+                )),
             }
         }
         "auth/handshake" => {
