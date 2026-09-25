@@ -15,8 +15,8 @@ use std::sync::{Condvar, Mutex};
 #[derive(Default)]
 pub struct FakeClock {
     now: Mutex<Millis>,
-    /// Woken on every change. A thread parked in `sleep_until` is released by this and by
-    /// nothing else, so a test that never advances the clock never releases it.
+    /// Woken on every change, so a waiter blocked on a time passing can be released by
+    /// advancing rather than by waiting.
     changed: Condvar,
 }
 
@@ -46,13 +46,5 @@ impl FakeClock {
 impl Clock for FakeClock {
     fn now(&self) -> Millis {
         *self.now.lock().expect("fake clock poisoned")
-    }
-
-    fn sleep_until(&self, deadline: Millis) {
-        let mut now = self.now.lock().expect("fake clock poisoned");
-        // `>=`, matching the port. A deadline of 5 000 is reached at 5 000.
-        while *now < deadline {
-            now = self.changed.wait(now).expect("fake clock poisoned");
-        }
     }
 }

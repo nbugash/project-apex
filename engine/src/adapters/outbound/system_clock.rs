@@ -29,17 +29,4 @@ impl Clock for SystemClock {
     fn now(&self) -> Millis {
         base().elapsed().as_millis() as Millis
     }
-
-    fn sleep_until(&self, deadline: Millis) {
-        // Re-checked in a loop: `sleep` may return early on a signal, and a caller that woke
-        // before its deadline and acted on it would send a `SIGKILL` before the grace period
-        // the developer was promised.
-        loop {
-            let now = self.now();
-            if now >= deadline {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(deadline - now));
-        }
-    }
 }

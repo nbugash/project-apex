@@ -17,15 +17,16 @@ pub type Millis = u64;
 /// would defeat every test that advances one clock and asserts about work on another.
 pub trait Clock: Send + Sync {
     fn now(&self) -> Millis;
-
-    /// Block until `now() >= deadline`.
-    ///
-    /// The boundary is `>=` everywhere, which is what makes a deadline of 5 000 a kill at
-    /// exactly 5 000 rather than at 5 001.
-    ///
-    /// A port method rather than `std::thread::sleep`, for the reason `now` is a port method:
-    /// the escalation from `SIGTERM` to `SIGKILL` has to be testable without waiting five real
-    /// seconds, and a test that sleeps is a test that gets marked flaky and then ignored. The
-    /// fake implements this against a condvar its `advance` notifies.
-    fn sleep_until(&self, deadline: Millis);
 }
+
+// There is deliberately no `sleep_until` here, and there was briefly.
+//
+// It was added so the escalation thread could wait five seconds for a `SIGKILL`. Implementing
+// the thread showed the shape to be wrong: a sleep cannot be interrupted, so a thread parked in
+// one cannot be told to shut down, and under a settable clock it parks until a test advances
+// time -- which turns every test that builds a task service and drops it into a hang rather
+// than a failure.
+//
+// The thread waits on its own deadline set instead, which `close` can notify, and asks `now()`
+// whether a deadline has passed. The clock stays the authority on time and stops being the
+// thing that blocks. A port method nothing needs is one somebody will eventually use.
