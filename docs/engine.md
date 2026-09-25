@@ -242,7 +242,18 @@ rather than handing its output to something else.
 
 **What the gate measures at today's volumes: nothing.** `engine/tests/task_budget.rs` prints
 21.41 ms gated against 21.33 ms ungated at three concurrent producers — inside the noise, against
-a 500 ms budget. The mechanism is correct and the measurement says it is not yet load-bearing;
-both are recorded here so that whoever next reads this file can decide against evidence rather
-than re-deriving it. The case it is built for is F007's sustained interactive producer, which
-does not exist yet.
+a 500 ms budget. The case it is built for is F007's sustained interactive producer, which does
+not exist yet.
+
+That measurement is not an argument for deleting it, and the distinction is worth keeping.
+`engine/tests/frame_writer_fairness.rs` asserts the property directly rather than through a
+timing budget: disable the yield loop and
+`a_bulk_writer_parked_at_the_gate_is_overtaken_by_a_later_interactive_one` fails. So the gate
+implements a stated requirement, that requirement has a discriminating test, and the timing
+number says only that nothing stresses it yet — which is a fact about the current workload, not
+about the mechanism. Recorded here so the next reader weighs both rather than re-deriving one of
+them.
+
+Note that the sibling test `the_anti_starvation_bound_releases_a_yielding_writer` **passes**
+against that same mutation, and should: with the gate disabled a bulk writer never parks, so it
+is trivially released. It guards the bound, not the gate. Two tests, two properties.

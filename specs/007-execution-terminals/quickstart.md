@@ -557,12 +557,21 @@ Where a check could not be made on this host it is recorded as a **skip**, never
 
 | Check | Result |
 |---|---|
-| `make test` | **PASS** — 815 Rust, 103 webview, 103 end-to-end assertions across 31 spec files |
-| `make gate` | **PASS** — clippy `-D warnings`, `fmt --check`, `lint:ds`, build, all suites |
+| `make test` | **PASS** — 815 Rust assertions across 113 test binaries, plus the webview unit suite |
+| `make gate` | **PASS** — clippy `-D warnings`, `fmt --check`, `lint`, `lint:ds`, build, every suite, 105 end-to-end assertions across 32 spec files with all 32 green and a screenshot filed per test, and `gate:fidelity` reporting three surfaces within 2 px of the prototype at 0.107% of pixels differing |
 | `make no-network` (SC-017) | **SKIP** — unprivileged user namespaces are unavailable here, so the `unshare -rn` mode did not run. The source-scan fallback reported no network literal, which is recorded as a skip and not a pass: it greps for addresses, F010 adds none, and it would report success whatever the code did |
 | The eight printed measurements (§8) | **PASS** — all eight below, each p99 over ≥100 samples, printed |
 | The nine negative checks (§9) | **PASS** — each fixture condition confirmed present, two of them added during the audit; see below |
 | The eight mutations (§10) | **7 confirmed, 1 unfalsifiable on this host** — see the table below |
+
+**One defect in the gate itself was found while running it.** `make gate` set
+`DISPLAY=${DISPLAY:-:77}` and nothing ever started an X server on `:77`, so on a headless host
+the end-to-end suite failed at session creation with `WebDriverError: Request timed out` after
+three minutes of retries — naming neither the display nor the cause, and reading as thirty-two
+broken specs rather than one missing dependency. `make shot` had it right all along with
+`xvfb-run -a`. The target now uses Xvfb when there is no display and leaves a desktop run
+untouched. Worth recording because of the shape of it: a gate that cannot run in the environment
+it is meant to guard fails loudly and says nothing true.
 
 ### The eight measurements
 
