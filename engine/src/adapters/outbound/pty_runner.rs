@@ -15,10 +15,11 @@
 //! path touches nothing but `setsid`, `dup2`, `ioctl`, `setrlimit`, `execvp` and `_exit`.
 
 use std::ffi::CString;
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 
 use nix::errno::Errno;
+use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::poll::{PollFd, PollFlags, PollTimeout};
 use nix::pty::{openpty, Winsize};
 use nix::sys::resource::{setrlimit, Resource};
@@ -120,10 +121,9 @@ impl TaskRunner for PtyRunner {
 /// # Safety
 /// Called only in the child of a `fork`, and calls only async-signal-safe functions.
 unsafe fn become_the_child(plan: &ChildPlan) -> ! {
-    // Its own process group, so a signal reaches the task and everything it spawns. This is how
-    // FR-018 is met without a cgroup, and it must happen before `exec` or the child inherits the
-    // engine's group and a stop would signal the engine.
-    let _ = setsid();
+    // `setsid` has already run in both callers, before the descriptors were arranged. It belongs
+    // there rather than here because the terminal path has to acquire its controlling terminal
+    // between the two, and that acquisition only works for a session leader.
 
     // Both the soft and the hard limit. A child may raise its own soft limit up to its hard one,
     // so a soft-only ceiling is one the bounded process can simply remove.
@@ -149,6 +149,28 @@ unsafe fn become_the_child(plan: &ChildPlan) -> ! {
     nix::libc::_exit(127);
 }
 
+/// Mark a descriptor close-on-exec.
+///
+/// **Every descriptor this adapter creates gets this, and the reason is not tidiness.** `fork`
+/// copies the whole descriptor table and `exec` keeps everything not marked close-on-exec, so a
+/// task starting while another task is running inherits the other's pty and pipes -- and holds
+/// them open for its entire life.
+///
+/// The consequence is not a leak of a number. The other task's master never reaches end of file,
+/// because a descriptor for the far side is still open in a process that has nothing to do with
+/// it, so that task's reader never reports `Ended`, its `execution/onExit` is never sent, and its
+/// identity is never released (FR-023, SC-014). A build would finish and the panel would sit
+/// there waiting for it.
+///
+/// `dup2` clears the flag on the descriptor it creates, which is why the child's 0, 1 and 2
+/// survive `exec` while everything they were copied from does not. That is the whole mechanism:
+/// mark everything, dup what the child needs, let `exec` discard the rest.
+fn set_cloexec<F: AsFd>(fd: &F) -> Result<(), SpawnFailure> {
+    fcntl(fd, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC))
+        .map(|_| ())
+        .map_err(errno_to_spawn)
+}
+
 fn spawn_with_terminal(
     plan: &ChildPlan,
     cols: u16,
@@ -162,10 +184,33 @@ fn spawn_with_terminal(
     };
     let pair = openpty(Some(&size), None).map_err(errno_to_spawn)?;
     let (master, slave) = (pair.master, pair.slave);
+    // Both ends, before the fork. The child clears the flag on 0, 1 and 2 by dup2-ing onto them.
+    set_cloexec(&master)?;
+    set_cloexec(&slave)?;
 
     // SAFETY: the child path below calls only async-signal-safe functions and never allocates.
     match unsafe { fork() }.map_err(errno_to_spawn)? {
         ForkResult::Child => {
+            // `setsid`, then the descriptors, then `TIOCSCTTY`. **The order is the whole of it**,
+            // and it is the sequence `login_tty` performs.
+            //
+            // `TIOCSCTTY` succeeds only for a session leader that has no controlling terminal
+            // yet. Called before `setsid` it fails with EPERM -- the child is still in the
+            // engine's session -- and the failure is invisible, because the ioctl's result is
+            // discarded and everything afterwards still works: the process runs, output flows,
+            // and `isatty` answers true, since that asks whether a descriptor is *a* terminal
+            // and not whether it is *this process's* terminal.
+            //
+            // What silently does not exist is job control. The line discipline generates SIGINT
+            // for the **foreground process group of the terminal**, and a terminal nobody
+            // claimed has no such group, so a `0x03` is echoed as `^C` and interrupts nothing.
+            // That is US2.2 and SC-008 failing while every other assertion about a terminal
+            // passes, which is how this survived until a test wrote the byte and waited for the
+            // signal.
+            //
+            // Its own session also gives the task its own process group, so a stop reaches
+            // everything it spawned and never reaches the engine (FR-018, FR-006a).
+            let _ = setsid();
             // One device: the terminal is stdin, stdout and stderr at once, which is why a
             // `pty: true` task's streams arrive merged (A-TASKSTREAM).
             let _ = dup2_stdin(&slave);
@@ -196,10 +241,24 @@ fn spawn_with_pipes(plan: &ChildPlan) -> Result<SpawnedTask, SpawnFailure> {
     let (stdin_r, stdin_w) = pipe().map_err(errno_to_spawn)?;
     let (stdout_r, stdout_w) = pipe().map_err(errno_to_spawn)?;
     let (stderr_r, stderr_w) = pipe().map_err(errno_to_spawn)?;
+    // Six ends, all marked, for the reason `set_cloexec` gives. A concurrently starting task
+    // holding the writing end of this task's stdout is a task whose output never ends.
+    set_cloexec(&stdin_r)?;
+    set_cloexec(&stdin_w)?;
+    set_cloexec(&stdout_r)?;
+    set_cloexec(&stdout_w)?;
+    set_cloexec(&stderr_r)?;
+    set_cloexec(&stderr_w)?;
 
     // SAFETY: as above.
     match unsafe { fork() }.map_err(errno_to_spawn)? {
         ForkResult::Child => {
+            // Its own session, and so its own process group: a stop reaches the task and
+            // everything it spawned, and never reaches the engine (FR-018, FR-006a). No
+            // controlling terminal is acquired, because there is no terminal -- which is also
+            // why a `pty: false` task cannot be interrupted by a keystroke and needs
+            // `execution/terminate` instead.
+            let _ = setsid();
             let _ = dup2_stdin(&stdin_r);
             let _ = dup2_stdout(&stdout_w);
             let _ = dup2_stderr(&stderr_w);
