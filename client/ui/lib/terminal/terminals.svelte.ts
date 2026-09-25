@@ -45,9 +45,41 @@ export class TerminalPanel {
   #pending: Array<string | Uint8Array> = [];
   #terminal: Terminal | null = null;
   #fit: FitAddon | null = null;
+  /// Whether this panel's task was given a terminal, which decides how an interrupt is sent.
+  #terminalShape = true;
+  #disposers: Array<() => void> = [];
 
-  constructor(taskId: string) {
+  constructor(taskId: string, hasTerminal = true) {
     this.taskId = taskId;
+    this.#terminalShape = hasTerminal;
+  }
+
+  /// Whether the task has a terminal (A-TASKSTREAM).
+  ///
+  /// The panel branches on it rather than asking the engine, because it is the shape **this
+  /// client chose** when it started the task, and asking would be a round trip to be told
+  /// something already known.
+  get hasTerminal(): boolean {
+    return this.#terminalShape;
+  }
+
+  /// Every keystroke the terminal reports, as the library gives it: a string, because that is
+  /// what a key event is. It becomes bytes at the boundary, once (see `wire.ts`).
+  onInput(handler: (data: string) => void): void {
+    if (!this.#terminal) return;
+    const sub = this.#terminal.onData(handler);
+    this.#disposers.push(() => sub.dispose());
+  }
+
+  /// Every size the terminal settles on, so the engine can be told.
+  onResize(handler: (cols: number, rows: number) => void): void {
+    if (!this.#terminal) return;
+    const sub = this.#terminal.onResize(({ cols, rows }) => {
+      this.cols = cols;
+      this.rows = rows;
+      handler(cols, rows);
+    });
+    this.#disposers.push(() => sub.dispose());
   }
 
   /// Everything received while unattached, in arrival order. The attached panel's own buffer is
@@ -150,6 +182,7 @@ export class TerminalPanel {
   /// Release the library instance. The panel stays usable: further output buffers again, which is
   /// what makes hiding a dock tab and showing it later lossless.
   detach(): void {
+    for (const dispose of this.#disposers.splice(0)) dispose();
     this.#terminal?.dispose();
     this.#terminal = null;
     this.#fit = null;
@@ -197,17 +230,17 @@ export class Terminals {
 
   /// The panel for `taskId`, created on first ask. Asking twice yields the same panel, which is
   /// the identity FR-026 rests on.
-  panel(taskId: string): TerminalPanel {
+  panel(taskId: string, hasTerminal = true): TerminalPanel {
     const existing = this.panels.find((p) => p.taskId === taskId);
     if (existing) return existing;
-    const created = new TerminalPanel(taskId);
+    const created = new TerminalPanel(taskId, hasTerminal);
     this.panels.push(created);
     return created;
   }
 
   /// Make `taskId`'s panel the one the dock shows, creating it if this is the first sight of it.
-  show(taskId: string): TerminalPanel {
-    const panel = this.panel(taskId);
+  show(taskId: string, hasTerminal = true): TerminalPanel {
+    const panel = this.panel(taskId, hasTerminal);
     this.active = taskId;
     return panel;
   }

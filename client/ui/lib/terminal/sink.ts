@@ -1,0 +1,72 @@
+/**
+ * Where the panel sends what a person does to a task.
+ *
+ * A seam rather than a direct `invoke`, for two reasons. The panel's encoding is testable without
+ * a Tauri host -- which is what SC-007's client half needs, since a keystroke carrying a control
+ * byte has to leave here byte for byte. And the branch T078 rests on, between interrupting a task
+ * with a byte and interrupting it with a signal, is a decision this application makes; it belongs
+ * somewhere a test can watch it being made.
+ */
+
+import { invoke } from '@tauri-apps/api/core';
+import { encodeBase64 } from './wire';
+
+/// The three signals §4.8 admits. Nothing else reaches a syscall (see the engine's dispatch).
+export type TerminateSignal = 'SIGINT' | 'SIGTERM' | 'SIGKILL';
+
+export interface TaskSink {
+  /// Bytes to the task's input, base64 as the wire carries them.
+  writeStdin(taskId: string, data: Uint8Array): void;
+  resize(taskId: string, cols: number, rows: number): void;
+  terminate(taskId: string, signal: TerminateSignal): void;
+}
+
+/// Reported once, not once per keystroke.
+///
+/// `writeStdin` and `resize` are notifications: §4.2 gives them no response, so a failure here is
+/// a transport fault rather than a refusal by the engine, and there is nothing a person could do
+/// about it. A dialog over a dropped keystroke helps nobody, and one per keystroke is worse.
+///
+/// **What it currently reports is that the command does not exist.** The client's remote path is
+/// not composed end to end for any feature: `RemoteWorkspaceProvider` is built, tested and never
+/// constructed either, and no concrete `RequestSender` exists in `client/core`. So this says so
+/// out loud rather than swallowing the rejection, because a silently discarded keystroke and a
+/// working one look identical from here.
+let reported = false;
+function reportOnce(method: string, reason: unknown): void {
+  if (reported) return;
+  reported = true;
+  console.warn(`[apex] ${method} did not reach the engine: ${String(reason)}`);
+}
+
+const overIpc: TaskSink = {
+  writeStdin(taskId, data) {
+    void invoke('task_write_stdin', { taskId, data: encodeBase64(data) }).catch((e) =>
+      reportOnce('execution/writeStdin', e),
+    );
+  },
+  resize(taskId, cols, rows) {
+    void invoke('task_resize', { taskId, cols, rows }).catch((e) =>
+      reportOnce('execution/resizePty', e),
+    );
+  },
+  terminate(taskId, signal) {
+    void invoke('task_terminate', { taskId, signal }).catch((e) =>
+      reportOnce('execution/terminate', e),
+    );
+  },
+};
+
+let active: TaskSink = overIpc;
+
+export function taskSink(): TaskSink {
+  return active;
+}
+
+/// Swap the sink. For tests, which have no Tauri host; returns the previous one so a test can
+/// put it back rather than leaving the next one talking to a recorder.
+export function setTaskSink(sink: TaskSink): TaskSink {
+  const previous = active;
+  active = sink;
+  return previous;
+}

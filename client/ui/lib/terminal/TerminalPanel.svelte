@@ -11,6 +11,8 @@
    */
   import type { WorkspaceReference } from '../ipc';
   import { readPalette, watchPalette } from './palette';
+  import { taskSink } from './sink';
+  import { encodeInput } from './wire';
   import { terminals } from './terminals.svelte';
 
   interface Props {
@@ -46,6 +48,27 @@
     void panel.attach(el, readPalette(el)).then(() => {
       if (cancelled) return;
       stop = watchPalette(el, (theme) => panel.retheme(theme));
+
+      // T079: tell the engine the size **after** attaching. Attaching deliberately has no side
+      // effect on the process (attach guarantee 9), so a client that forgets leaves the task
+      // laying out to whatever width it had when it started -- which for a reattached build is
+      // the width of a window that has since been resized or closed.
+      const fitted = panel.fit();
+      taskSink().resize(id, fitted.cols, fitted.rows);
+
+      panel.onInput((data) => {
+        // T078. With a terminal the line discipline turns 0x03 into SIGINT for the foreground
+        // process group, so an interrupt is just a byte. With pipes there is no line discipline
+        // and the same byte is data the task has to parse, so the interrupt must be a signal
+        // instead. The panel branches on the shape **it** chose (A-TASKSTREAM).
+        if (!panel.hasTerminal && data.includes('\u0003')) {
+          taskSink().terminate(id, 'SIGINT');
+          return;
+        }
+        taskSink().writeStdin(id, encodeInput(data));
+      });
+
+      panel.onResize((cols, rows) => taskSink().resize(id, cols, rows));
     });
     return () => {
       cancelled = true;
