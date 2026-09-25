@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use apex_protocol::wire::{Pid, RunTaskParams, TaskId};
+use apex_protocol::wire::{Pid, RunTaskParams, TaskId, WorkspaceId};
 
 use crate::application::ports::clock::Millis;
 use crate::application::ports::file_system::FileSystem;
@@ -301,6 +301,37 @@ pub enum StopRefusal {
     NotFound,
 }
 
+/// Closing a workspace: what to stop, and when to answer.
+///
+/// **The response is written once every task has been signalled, not once the last has ended**
+/// (A-WSCLOSE, as amended). Ending takes up to the five-second escalation, and this runs on the
+/// single dispatch thread, which is also the only reader of the client's stdin -- waiting there
+/// would mean five seconds in which no keystroke, resize or cancellation is so much as read off
+/// the pipe. SC-013 stays checkable without it: "zero of its tasks are running" is observed
+/// through each task's `onExit`, which is a defined event in a defined order, so a test waits for
+/// N exits rather than for a sleep.
+///
+/// One deadline per task, registered together, so the escalations **overlap**: closing ten
+/// workspaces' worth of tasks costs about five seconds, not fifty.
+pub fn close_workspace(workspace: &WorkspaceId, now: Millis, tasks: &mut TaskSet) -> Vec<StopPlan> {
+    // Drained, not merely listed. Draining twice yields nothing the second time, which is what
+    // lets a second `workspace/close` be answered as `-32001` rather than repeating the first --
+    // a workspace never closes itself, so a second close means the client has lost track of its
+    // own state and telling it so is a service (A-WSCLOSE).
+    tasks
+        .drain_for_workspace(workspace)
+        .into_iter()
+        .map(|task| StopPlan {
+            id: task.id,
+            // `Term` and not `Kill`: closing a workspace is a developer finishing with it, not an
+            // emergency, and a build given no chance to remove its half-written output leaves the
+            // next one to discover it.
+            send: TaskSignal::Term,
+            escalate_at: Some(now + ESCALATION_GRACE_MS),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +355,112 @@ mod tests {
 
     fn value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
         env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    fn task_in(ws: &str, id: &str) -> Task {
+        Task {
+            id: TaskId(id.into()),
+            workspace: WorkspaceId(ws.into()),
+            command: vec!["cargo".into()],
+            shape: Shape::Pipes,
+            pid: Pid(1),
+            env: EnvOverrides::new(BTreeMap::new()),
+            state: TaskState::Running,
+        }
+    }
+
+    #[test]
+    fn closing_a_workspace_stops_its_tasks_and_only_its_tasks() {
+        // The assertion that matters is the **zero**: a close that signalled everything would
+        // satisfy every positive claim about A's tasks stopping, and would end a build in a
+        // window the developer is still working in.
+        let mut tasks = TaskSet::new();
+        for id in ["a1", "a2", "a3"] {
+            tasks.start(task_in("A", id)).expect("start");
+        }
+        tasks.start(task_in("B", "b1")).expect("start");
+
+        let plans = close_workspace(&WorkspaceId("A".into()), 1_000, &mut tasks);
+
+        let mut stopped: Vec<String> = plans.iter().map(|p| p.id.0.clone()).collect();
+        stopped.sort();
+        assert_eq!(stopped, vec!["a1", "a2", "a3"]);
+        assert_eq!(
+            plans.iter().filter(|p| p.id.0 == "b1").count(),
+            0,
+            "closing A produced a plan for a task of B"
+        );
+        assert!(
+            tasks.contains(&TaskId("b1".into())),
+            "closing A released a task of B"
+        );
+    }
+
+    #[test]
+    fn every_task_is_stopped_exactly_once() {
+        // Twice is not harmless: the second signal lands after the first has been acted on, and
+        // between them the pid may have been reused.
+        let mut tasks = TaskSet::new();
+        for id in ["a1", "a2"] {
+            tasks.start(task_in("A", id)).expect("start");
+        }
+        let plans = close_workspace(&WorkspaceId("A".into()), 0, &mut tasks);
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans.iter().filter(|p| p.id.0 == "a1").count(), 1);
+    }
+
+    #[test]
+    fn the_escalations_overlap_rather_than_queue() {
+        // One deadline per task, all at the same instant. Staggering them would make closing ten
+        // tasks cost fifty seconds instead of five, and the developer is waiting.
+        let mut tasks = TaskSet::new();
+        for id in ["a1", "a2", "a3"] {
+            tasks.start(task_in("A", id)).expect("start");
+        }
+        let plans = close_workspace(&WorkspaceId("A".into()), 1_000, &mut tasks);
+        let deadlines: Vec<Option<Millis>> = plans.iter().map(|p| p.escalate_at).collect();
+        assert_eq!(deadlines.len(), 3);
+        assert!(
+            deadlines
+                .iter()
+                .all(|d| *d == Some(1_000 + ESCALATION_GRACE_MS)),
+            "the deadlines were staggered: {deadlines:?}"
+        );
+    }
+
+    #[test]
+    fn a_close_sends_term_rather_than_kill() {
+        // Closing a workspace is a developer finishing with it, not an emergency. A build given
+        // no chance to remove its half-written output leaves the next one to discover it.
+        let mut tasks = TaskSet::new();
+        tasks.start(task_in("A", "a1")).expect("start");
+        let plans = close_workspace(&WorkspaceId("A".into()), 0, &mut tasks);
+        assert_eq!(plans[0].send, TaskSignal::Term);
+    }
+
+    #[test]
+    fn closing_twice_yields_nothing_the_second_time() {
+        // What makes a second `workspace/close` answerable as -32001 rather than a silent repeat.
+        let mut tasks = TaskSet::new();
+        tasks.start(task_in("A", "a1")).expect("start");
+        assert_eq!(
+            close_workspace(&WorkspaceId("A".into()), 0, &mut tasks).len(),
+            1
+        );
+        assert_eq!(
+            close_workspace(&WorkspaceId("A".into()), 0, &mut tasks).len(),
+            0
+        );
+    }
+
+    #[test]
+    fn closing_a_workspace_with_no_tasks_is_not_an_error() {
+        // The ordinary case. A workspace nobody ran anything in still closes.
+        let mut tasks = TaskSet::new();
+        assert_eq!(
+            close_workspace(&WorkspaceId("empty".into()), 0, &mut tasks).len(),
+            0
+        );
     }
 
     #[test]

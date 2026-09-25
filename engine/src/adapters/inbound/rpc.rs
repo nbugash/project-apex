@@ -204,6 +204,69 @@ pub fn dispatch(
                 }
             }
         }
+        "workspace/close" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let p =
+                match serde_json::from_value::<apex_protocol::wire::WorkspaceCloseParams>(params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return reply_or_nothing(encode_error(
+                            codec,
+                            id,
+                            INVALID_PARAMS,
+                            &format!("{e}"),
+                        ))
+                    }
+                };
+
+            // Deregister **first**, and let its refusal be the answer to a second close.
+            //
+            // A workspace never closes itself, so a second close means the client has lost track
+            // of its own state and telling it so is a service (A-WSCLOSE). Deregistering is also
+            // `register`'s counterpart: a close that left the id registered would leave the
+            // engine holding a canonicalised root for a workspace the client has finished with.
+            //
+            // `-32009` is never the answer here. Refusing to stop the tasks of a deleted
+            // directory would strand exactly what FR-025 forbids, so a root that has vanished is
+            // still closed -- the tasks are what matter, not the directory.
+            if roots.deregister(p.workspace_id.0.as_str()).is_err() {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::WORKSPACE_NOT_REGISTERED,
+                    "workspace is not registered with the engine",
+                ));
+            }
+
+            // Its watches go with it. A watch on a workspace nobody has open is an inotify
+            // descriptor held for a directory nobody is looking at.
+            if let Some(w) = watchers {
+                w.forget(&p.workspace_id);
+            }
+
+            if let Some(service) = tasks {
+                // Every task signalled before the response is written, and **not** every task
+                // ended. Ending takes up to the five-second escalation and this is the single
+                // dispatch thread, which is also the only reader of the client's stdin: waiting
+                // would mean five seconds in which no keystroke is so much as read off the pipe.
+                // SC-013 is observed through each task's `onExit` instead (A-WSCLOSE, amended).
+                for plan in service.close_workspace(&p.workspace_id) {
+                    let Some(control) = service.control(&plan.id) else {
+                        continue;
+                    };
+                    let _ = control.signal(plan.send);
+                    if let (Some(at), Some(pid)) = (plan.escalate_at, service.pid(&plan.id)) {
+                        service
+                            .escalations()
+                            .register(plan.id.clone(), pid, &control, at);
+                    }
+                }
+            }
+            reply_or_nothing(encode_result(codec, id, &serde_json::Value::Null))
+        }
         "execution/terminate" => {
             use crate::application::use_cases::task::stop_task;
             let Some(service) = tasks else {

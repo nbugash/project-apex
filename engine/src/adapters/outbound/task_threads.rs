@@ -369,6 +369,20 @@ impl TaskService {
         set.get(id).map(|task| task.shape)
     }
 
+    /// Plan the stop of every task of one workspace, and forget them.
+    ///
+    /// The plans come back rather than the effects being performed here, so the policy -- which
+    /// signal, and when the escalation is due -- stays in the use case where it is testable
+    /// without a process, and this only reaches the map.
+    pub fn close_workspace(
+        &self,
+        workspace: &apex_protocol::wire::WorkspaceId,
+    ) -> Vec<crate::application::use_cases::task::StopPlan> {
+        let now = self.now();
+        let mut set = self.inner.set.lock().unwrap_or_else(|p| p.into_inner());
+        crate::application::use_cases::task::close_workspace(workspace, now, &mut set)
+    }
+
     /// How many identities this service is holding.
     ///
     /// The number SC-014 compares before and after. Counted from the domain's record rather than
