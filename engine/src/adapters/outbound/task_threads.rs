@@ -383,6 +383,18 @@ impl TaskService {
         crate::application::use_cases::task::close_workspace(workspace, now, &mut set)
     }
 
+    /// How many of a task's bytes the engine is holding, right now.
+    ///
+    /// SC-021's measurement. Since [CONFLICT 9] the retention buffer is the **only** place the
+    /// engine holds a task's bytes at all -- the chunker's partial is bytes on their way out
+    /// rather than bytes being kept -- so this number is the whole answer to "how much of a
+    /// task's output is in the engine".
+    pub fn retained_bytes(&self, id: &TaskId) -> Option<usize> {
+        let entry = self.inner.entry(id)?;
+        let streams = entry.streams.lock().unwrap_or_else(|p| p.into_inner());
+        Some(streams.retained.held_bytes())
+    }
+
     /// How many identities this service is holding.
     ///
     /// The number SC-014 compares before and after. Counted from the domain's record rather than
