@@ -96,6 +96,20 @@ export class TerminalPanel {
     if (this.#terminal) this.#terminal.options.theme = theme;
   }
 
+  /// Set the dimensions directly, as the engine's own view of them.
+  ///
+  /// Separate from `fit`, which measures. This is the path a resize takes when the size is
+  /// decided elsewhere -- `cols` and `rows` supplied at `runTask`, or a reattachment agreeing a
+  /// size with a task that outlived the connection. Zero is ignored: some programs read a zero
+  /// dimension as "no terminal", so forwarding one would change a task's behaviour rather than
+  /// its layout.
+  resize(cols: number, rows: number): void {
+    if (cols <= 0 || rows <= 0) return;
+    this.cols = cols;
+    this.rows = rows;
+    this.#terminal?.resize(cols, rows);
+  }
+
   /// Size to the element, and report what that came to so the engine can be told.
   fit(): { cols: number; rows: number } {
     if (this.#fit && this.#terminal) {
