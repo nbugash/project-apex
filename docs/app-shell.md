@@ -35,6 +35,156 @@ capability rather than the technology — `SessionStore`, not `JsonFileStore`. I
 `ConnectionStatusSource`. Swap the binding in `composition.rs`; nothing else changes. That
 one-line swap is the property the port structure exists to buy.
 
+## Components are type-checked
+
+`npm run lint` runs `svelte-check` after ESLint, and `make gate` runs that.
+
+It is worth knowing why this was added rather than assumed. Nothing checked `.svelte` files at
+all: the build compiles components without type-checking them, `tsc` does not read them, and
+ESLint parses them without following types. A deleted `$props()` call therefore reached a running
+window as an empty `<body>` with every gate green. `svelte-check` catches it at lint time --
+`Cannot find name 'taskId'`.
+
+It needs `svelte.config.js`. That file exists only because `svelte-check` reads it; the build
+takes its configuration from `vite.config.ts`, which is why the absence went unnoticed.
+
+**The threshold is `error`, not `warning`**, and that is a deliberate compromise. Seven warnings
+remain, in components this feature did not touch. Four are false positives: `$state(session.layout)`
+seeds local state the component then owns, and Svelte cannot tell that from forgetting to make a
+prop reactive. Three are real accessibility warnings in F000 and F018 -- a `<nav>` carrying
+`role="tablist"`, and a splitter that takes focus and key events without an interactive role.
+Raising the threshold means fixing those first, which belongs to the features that own them.
+
+## The dock, and when a terminal starts
+
+The bottom dock carries the prototype's four tabs — Terminal, Debug, Problems, Resources. Three
+of them belong to features that do not exist and are rendered present-and-unavailable, on the
+same rule the activity rail follows: the strip's proportions are part of the design, and a strip
+with one tab in it is a different picture.
+
+**A terminal starts when its tab is first clicked, and not before.** This is VS Code's and
+IntelliJ's behaviour, and the reason is worth keeping: a login shell runs the developer's whole
+profile, so starting one for somebody who never opened the panel is a side effect nobody asked
+for. Clicking again closes the dock; clicking a third time shows the same shell, because
+`revealTerminal` starts at most one.
+
+No tab is selected on launch. The dock itself defaults to visible (F000's layout), so a tab
+selected up front would mean a shell running at startup. VS Code reaches the same behaviour by
+defaulting its panel closed; here the distinction moves to the tab, and until one is clicked the
+panel shows the prototype's idle prompt.
+
+**Detached is not disposed.** `TerminalPanel.detach()` takes the terminal's element out of the
+document and keeps the instance; `dispose()` ends it. Both halves are load-bearing and each was
+wrong once:
+
+- Disposing on detach discarded the scrollback every time the dock closed, while the method's own
+  comment claimed the opposite. Nothing caught it because until the dock had tabs there was no
+  way to hide a terminal and show it again.
+- Keeping the element in the document stacked one terminal's DOM on the next, because the host
+  element is shared by every panel the dock shows.
+
+Re-showing **re-parents** the element xterm built rather than calling `Terminal.open` a second
+time. `open` builds the terminal's DOM and is not meant to run twice; calling it again leaves the
+rows unrendered — a correct buffer with nothing drawn, which any assertion on `buffer.active`
+passes against.
+
+## What the terminal is drawn in
+
+Two things decide this, and they have to agree.
+
+**xterm measures its own grid.** It sizes cells from its `fontFamily` and `fontSize` options,
+which default to Courier at 15px. Leaving them unset while the stylesheet paints something else
+lays every cell out to one font's metrics and draws it in another's -- and the resulting `cols`
+is what the shell is told, so a prompt that right-aligns anything lands in the wrong place. The
+options are read from the element's computed style, so the stylesheet is the single place the
+terminal's type is decided.
+
+**A terminal's font is not a UI font.** It renders whatever a program emits, and a developer's
+shell prompt is routinely built from Powerline separators and Nerd Font icons in the private use
+area (U+E000-U+F8FF) that no text font carries. The panel's stack therefore starts with
+`--vk-mono-primary` -- the prototype's own family, so everything the design covers is unchanged --
+and then names the patched families developers install.
+
+`--vk-mono-primary` exists because `--vk-mono` is the prototype's whole stack and ends in the
+`monospace` generic. A generic matches every character, so nothing appended after it is ever
+reached; the terminal could not extend the token, only rebuild it, and rebuilding would mean
+restating a value the prototype owns.
+
+**The symbols themselves are shipped**, so this does not depend on what the host happens to have
+installed. `Symbols Nerd Font Mono` (MIT, 1.2 MB as woff2) lives in `lib/terminal/fonts/` and is
+imported beside xterm's own stylesheet, so a window that never opens the dock never fetches it.
+
+Symbols-only by choice: the fully patched Nerd Fonts replace the text face too, which would put a
+font of this application's choosing ahead of the design system's. This one contains no latin, so
+it can only ever supply characters the design system's family does not have. The complete font
+rather than a subset, because restricting to the BMP saves 563 KB and drops 6,896 of its 10,629
+glyphs — and a partial fix reproduces the original report for a different icon.
+
+It is not in `lib/ds`: `ds:sync` owns that directory and overwrites it, and this font is not the
+prototype's.
+
+Still absent: a user-settable terminal font, which both VS Code and IntelliJ provide and which
+needs a settings surface that does not exist yet.
+
+## Reaching the engine
+
+Until F010 the application never sent a request to an engine for any feature. The transport was
+built and used only as a connection-status source; `RemoteWorkspaceProvider` and `RemoteTasks`
+were both written, both tested against doubles, and neither could be constructed, because nothing
+implemented the `RequestSender` port they depend on.
+
+The chain, now closed:
+
+```
+webview  ──invoke──▶  task_commands.rs  ──▶  RemoteTasks  ──▶  TransportSender
+                                                                     │
+                                                              SshTransport
+                                                                     │
+                                                    ssh  ──or──  LocalEngineSpawner
+                                                                     │
+                                                                ide-engine
+engine  ──frame──▶  NotificationSink  ──▶  WebviewNotifications  ──emit──▶  engine.ts  ──▶  panel
+```
+
+**`TransportSender` is concrete in `SshTransport` on purpose.** The generic version does not
+compile: `RequestTransport::send` is a native `async fn` in a trait, so for an unknown `T` the
+compiler cannot prove the returned future is `Send`, and a provider must be `dyn` **and** `Send`.
+Naming the one implementation is what lets it check the future it is checking. `request_sender.rs`
+exists for exactly this reason and is worth reading before generalising it.
+
+**A workspace is registered with the engine when it is opened**, in `workspace_open`, because
+that is the moment the root path is in hand. Nothing did this before, so the engine would have
+refused every task with `-32001`. A task command does **not** accept a `workspaceId` from the
+webview: the core registered the workspace, so the core knows which one, and an interface that
+named it would be choosing where a command runs (Principle VI).
+
+## What the store remembers (A-STATE, A-STATE2)
+
+`PersistedSession` is at **schema version 3**. Each bump added fields, and each added them with
+`#[serde(default)]` — that attribute *is* the migration. A file written by the previous version
+has no such field, parses, and gets the default, which is what keeps an existing user's geometry,
+layout and tabs across the upgrade instead of discarding the session because one key is missing.
+
+Version 3 added **task identities** (A-STATE2, FR-031d): a `task_id` and the `workspace_id` that
+owns it, per task this client started.
+
+**Identities and nothing else, deliberately.** A task outlives the connection that started it, and
+`execution/attach` reaches one only by an identity the caller already knows — so a client that
+restarts needs its identities to have survived the restart, or reattachment works only for a
+client that never closed.
+
+Two things are excluded for reasons worth keeping:
+
+- **No command.** A command line can carry a credential in argv, and FR-005a's accepted boundary
+  does not extend to writing that to disk.
+- **No output.** Retention belongs to the engine, which bounds it. A store that accumulated output
+  would grow without limit for a client that never comes back.
+
+The identity is the smallest thing that restores reachability. A client that has lost even that
+is not stranded — `execution/list` enumerates what the engine still holds — but that is the
+recovery path, and it costs a round trip on the one path where the developer is waiting and the
+link has just proved unreliable. Remembering is what keeps it off the ordinary path.
+
 ## Things that will bite you
 
 **The window is created hidden.** It becomes visible only when the interface calls

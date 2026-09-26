@@ -36,6 +36,8 @@ reports/screenshots/
 # and the numbers behind the verdict. All regenerated on every run. The approved baseline
 # lives in tools/gate-fidelity/reference/ and IS tracked — it is the thing under review.
 reports/fidelity/
+# Ad-hoc captures made to show a change; the durable record is the spec and the tests.
+reports/evidence/
 
 # Conversion intermediates. assets/fonts/ holds the faces actually embedded, and
 # tools/build-fonts.sh regenerates them from the woff2 the prototype vendors.

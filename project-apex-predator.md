@@ -107,7 +107,7 @@ value, not only a verdict. See Appendix A, A-NFR.
 |    |                          lexical, rust-analyzer, zls,       |
 |    |                          clangd                             |
 |    +-- DAP broker ........... delve, lldb-vscode, debugpy        |
-|    +-- Process supervisor ... build/test/run, cgroup-isolated    |
+|    +-- Process supervisor ... build/test/run, per-process limits |
 |    +-- File watcher ......... inotify, scoped                    |
 +------------------------------------------------------------------+
 ```
@@ -374,13 +374,30 @@ found, `-32602` invalid params, `-32603` internal). Application codes occupy `-3
 | -32003 | File or directory not found |
 | -32004 | Write conflict: `baseSha256` does not match current content |
 | -32005 | Language server unavailable for the requested language |
-| -32006 | Task not found or already exited |
+| -32006 | Task not found |
 | -32007 | Payload exceeds the frame limit |
 | -32008 | Request cancelled by the client |
 | -32009 | Workspace root no longer exists — registered, but the directory is gone |
+| -32010 | Task identity is already running — refused rather than starting a second process |
+| -32011 | Command could not be started — not found, not executable, or `cwd` unusable |
 
 Every error carries a human-readable `message`. Errors that a user can act on carry a `data`
 object describing the remedy.
+
+`-32006` means the identity is unknown, and **not** that the task has finished. It formerly read
+"Task not found or already exited", which contradicted two requirements at once: stopping a task
+that has already stopped is a success, since the caller asked for it not to be running and it is
+not running, and a client reattaching to a task that finished while it was disconnected is
+entitled to learn how it finished rather than be told the task never existed. An implementation
+following the old wording literally would have failed both and passed review, because the wording
+was the specification.
+
+`-32010` and `-32011` exist because two refusals a client must tell apart had no way to be told
+apart. `-32010` says the identity is live — the correct response is to attach, not to retry — and
+without it the only candidate was `-32006`, whose meaning is the exact opposite. `-32011` says the
+command itself could not be started, which is the developer's mistake to fix and not the engine's
+failure; routing it through `-32003` would borrow a code reserved for paths inside a workspace to
+describe a program name resolved against `PATH`, which is not a workspace path at all.
 
 `-32009` is deliberately distinct from `-32001`, because the two demand **opposite** responses.
 `-32001` means the engine has never been told about this workspace and the client should register
@@ -408,8 +425,32 @@ interaction budget the architecture exists to protect. Three rules prevent this:
 3. Reads of large files use the ranged form of `workspace/readFile` so the client fetches
    what it displays and streams the remainder as the user scrolls.
 
-Outbound frames are priority-queued: LSP and editor traffic ahead of background work such as
-prefetch and indexing status.
+**Interactive traffic wins the race to the wire, in both directions.** The requirement is that
+ordering, not any particular mechanism for achieving it, and the rule is stated per direction
+because stating it once left half of it unbuilt. Client to engine: editor and LSP requests ahead
+of background work. Engine to client: LSP responses, file events and command replies ahead of
+bulk output such as indexing status and a task's stdout.
+
+The two directions are built differently, and deliberately so. The client queues, because it
+composes frames faster than the link drains them and a queue is what lets it reorder work that
+already exists — `client/core`'s send queue. The engine does **not** queue. Its writer holds one
+lock for the duration of a frame, and a producer blocked on that lock is a producer that has
+stopped producing: the reader thread stops reading the pseudo-terminal, its buffer fills, and the
+task blocks in `write`. That chain is how a task is slowed rather than truncated (§7.3), and it
+exists only because nothing buffers between the producer and the wire.
+
+So the engine grants priority by **making a bulk producer wait its turn**, not by queueing its
+output. A writer with interactive traffic to send registers that fact; a bulk writer yields while
+any such writer is waiting. Interactive frames therefore reach the lock first while bulk output
+stays exactly as blocking as it was, which is what keeps one mechanism from paying for the other.
+
+This was previously specified as a queue on both sides. A queue in the engine removes the
+blocking that the slowing depends on, and separating a task's output from its exit into two
+priority classes lets the exit overtake the output it was meant to follow. Both are properties
+the blocking writer provided for free and neither was written down until something removed them.
+A bulk producer starved by sustained interactive traffic is admitted and bounded: after a stated
+number of consecutive yields one bulk frame goes through, so priority is a strong preference and
+never a monopoly.
 
 ## 4.7 Path safety
 
@@ -470,6 +511,7 @@ discovers that when a resumption is refused.
 | Method | Kind | Params | Result |
 |---|---|---|---|
 | `workspace/register` | request | `workspaceId`, `path` | `{name, canonicalPath}` |
+| `workspace/close` | request | `workspaceId` | — |
 | `workspace/readDirectory` | request | `workspaceId`, `relativePath`, `cursor?`, `limit?` | `items[]` of `{name, type, size, modified}`, `nextCursor?` |
 | `workspace/stat` | request | `workspaceId`, `relativePath` | `{type, size, modified, sha256}` |
 | `workspace/readFile` | request | `workspaceId`, `relativePath`, `offset?`, `length?` | `{content, encoding, sha256, totalSize}` |
@@ -527,6 +569,15 @@ what `workspaceId` exists to prevent. The registry is in memory and dies with th
 client re-registers after a restart — `session/onRestart`'s `unpreserved` list is how it learns it
 must.
 
+`workspace/close` is the counterpart `workspace/register` never had. Closing a workspace must stop
+the tasks belonging to it and release its watches, and until this row existed the catalogue had no
+frame meaning "I am finished with this workspace" — leaving that obligation stated in §7.3 and
+unreachable through the protocol. It is deliberately **not** the same event as a dropped
+connection: under A-TASKLIFE a connection that drops leaves tasks running, because a laptop moving
+between networks must not kill a build, whereas closing the workspace is the developer saying they
+are done with it. Conflating the two would make the protocol unable to express the difference
+between an accident and an intention.
+
 `workspace/readDirectory` is **paged**. `limit` defaults to and is capped at 1000 entries, and
 `nextCursor` is present exactly when more entries follow. Entries are ordered
 `(type DESC, name ASC)` — directories first, then by name, byte-wise on the UTF-8 encoding — and
@@ -575,17 +626,124 @@ exists so the UI can tell "no completions because the server died" from "no comp
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd`, `env`, `pty` | `{pid}` |
+| `execution/runTask` | request | `workspaceId`, `taskId`, `command`, `cwd?`, `env?`, `pty`, `cols?`, `rows?` | `{pid}` |
+| `execution/attach` | request | `workspaceId`, `taskId` | `{pid, running, retained, exitCode?, signal?}` |
+| `execution/list` | request | `workspaceId?` | `{tasks[]}` |
 | `execution/writeStdin` | notification | `taskId`, `data` | — |
 | `execution/resizePty` | notification | `taskId`, `cols`, `rows` | — |
 | `execution/terminate` | request | `taskId`, `signal` | — |
 | `execution/onStdout` | notification | `taskId`, `data` | — |
 | `execution/onStderr` | notification | `taskId`, `data` | — |
-| `execution/onExit` | notification | `taskId`, `exitCode`, `signal?` | — |
+| `execution/onExit` | notification | `taskId`, `exitCode?`, `signal?` | — |
 
 `writeStdin`, `resizePty`, `terminate` and `onExit` did not exist in the original contract,
 which made the integrated terminal write-only and left no way to stop a runaway process or
 learn that a build finished.
+
+`execution/attach` exists because a task outlives the connection that started it (A-TASKLIFE). A
+client that reconnects, or that restarted, needs to reach a task it did not start in this session,
+and `runTask` starts one rather than finding one. Attaching is deliberately a **different call**
+from starting: a client racing its own reconnection must not silently start a second build under
+an identity that already has one, and an idempotent `runTask` would make those two outcomes
+indistinguishable at the call site.
+
+`pty` chooses between two output shapes, and the choice is exclusive because a terminal is one
+device. With `pty: true` the task is given a pseudo-terminal, a process asking whether it is
+attached to a terminal is told yes, and **its output arrives merged on `execution/onStdout`** —
+`onStderr` carries nothing, exactly as a real shell interleaves the two beyond separation. With
+`pty: false` the task gets separate pipes, `onStdout` and `onStderr` are distinguishable, and the
+process is not attached to a terminal. A terminal panel wants the first; a caller parsing a
+build's errors wants the second, at the cost every CI system pays.
+
+`cwd` and `env` are both optional, and their absent cases are the ones a caller most often wants.
+An omitted `cwd` is the workspace root, which is where a build usually runs; an omitted `env` means
+the task inherits the engine's environment unchanged, and a supplied one is merged **over** that
+inheritance rather than replacing it. Replacement would be the more obvious reading of a bare
+parameter and is the wrong default: a task started with a single variable set would lose `PATH`
+and `HOME` and fail for a reason that looks nothing like its cause. The row formerly marked both
+mandatory, which would have refused a caller who wanted exactly the defaults.
+
+`command` is an **argv vector**, not a shell line. The engine does not interpose `sh -c`: §7.3
+scopes this as process execution and not a shell, and a single string would make quoting the
+engine's problem for input it is specifically required not to interpret. A caller that wants a
+shell asks for one as `argv[0]`, which is a decision it has made rather than one made for it.
+
+`data` on `writeStdin`, `onStdout` and `onStderr` is **base64**. A JSON string holds Unicode text
+and a task's bytes are not text: a compiler emitting a byte sequence in the source file's own
+encoding, a binary written to stdout, and a file catted into a terminal are all ordinary and none
+of them survives a lossy decode, which substitutes U+FFFD and destroys the bytes it cannot read.
+`workspace/readFile` reached the same conclusion and carries an explicit `encoding` field; these
+payloads have no alternative encoding to select between, so it is fixed here instead of offered.
+
+A `taskId` is **unique across the engine**, not within a workspace. Six of the nine rows address a
+bare `taskId`, so a per-workspace identity would leave them unable to resolve a task at all. The
+`workspaceId` on `runTask` and `attach` records which workspace owns the task, not which namespace
+its name lives in — two workspaces both choosing `build` have named the same task, and the second
+`runTask` is refused rather than silently starting a second process under a live identity.
+
+`cols` and `rows` are optional on `runTask` and meaningful only when `pty` is true. A process
+reads its terminal width at startup, before any client has had an opportunity to resize it, so
+without them it reads whatever the pseudo-terminal happened to be created with rather than a value
+somebody chose. Omitted, they default to **80 by 24** — the conventional terminal size, and
+specifically not the kernel's own default of zero by zero, which is both a size no display has and
+the one value `resizePty` refuses. `resizePty` against a task started with `pty: false` is **silently ignored**:
+there is no terminal to resize, and a notification has no way to refuse.
+
+`execution/onExit` carries `exitCode` **or** `signal`, exactly one of the two and never both. A
+mandatory `exitCode` would leave a signalled death representable only through the `128 + n`
+convention, which is what a shell does for a human reading a number, not what a protocol should
+require a client to decode. An exit is two distinct states and the wire names which one occurred.
+
+`execution/attach`'s result carries `exitCode?` and `signal?` under the same rule. A client that
+reattaches to a task which finished while it was away learns how it finished from the response;
+`running: false` on its own says only that it is over. `retained` is a **byte count**, not the
+bytes themselves: the retention bound is larger than §4.1's frame cap, chunking is defined for
+notifications rather than results, and an exit delivered inside the result would arrive before the
+output that preceded it. The retained bytes are replayed after the response as ordinary
+`onStdout` and `onStderr` notifications — **each chunk on the notification its own stream would
+have used when live** — in order, so one ordering rule covers live and replayed output alike.
+Replaying everything on `onStdout` would merge the two streams for a `pty: false` task, which is
+the separation that task asked for by not requesting a terminal.
+
+`signal` on `execution/terminate`, and on `onExit` and `attach` where they report one, is the
+signal's **name** — `SIGINT`, `SIGTERM`, `SIGKILL` — not its number. Signal numbers differ between
+platforms and the client is not always on the engine's; a client on macOS or Windows composing a
+stop request should not have to know Linux's numbering, and an unrecognised name can be refused
+whereas an unrecognised number is indistinguishable from a valid one. The engine is the only party
+that needs the number, and it is the only party that has it natively.
+
+The signal a client sends is the **initial** signal, and whether it escalates follows from which
+one it is. `SIGTERM` escalates to `SIGKILL` after a grace period, because a stop that a process
+can decline is not a stop. `SIGINT` does not escalate: it is the developer asking a foreground
+process to stop the way Ctrl-C asks, and a program legitimately handling it — a test runner
+printing a summary, a shell returning to its prompt — must not then be killed for having handled
+it. A client that wants the process gone asks for `SIGTERM`.
+
+Two limitations of this shape, stated rather than left to be discovered. A client cannot ask for a
+`SIGTERM` that does **not** escalate, so a process that legitimately needs longer than the grace
+period to shut down — a database flushing, a container stopping — is killed partway. No
+requirement asks for "ask and wait", so no parameter exists for it; if one is added later it
+belongs on `terminate` as a grace period, not as a second method. And `execution/list` is
+**unpaged**, unlike `workspace/readDirectory`, which caps at a thousand entries and returns a
+cursor. Its result is bounded only by how many tasks one developer has started, and a large enough
+set would exceed §4.1's frame cap and answer `-32007` against the engine's own listing. That is
+accepted because the realistic count is tens, and recorded because the arithmetic does not care.
+
+`execution/list` exists because `attach` takes an identity the caller must already know. A client
+that has lost its identities — a fresh install, a cleared profile, a crash before its store was
+written — has no route back to tasks that are still running, and under A-TASKLIFE those tasks keep
+running. Without enumeration they stay unreachable until A-EC2's idle stop ends the instance,
+which is precisely the abandoned process FR-025 forbids, arrived at by a client doing nothing
+wrong. `workspaceId` is optional: omitted, it lists every task the engine holds. Each entry carries
+`taskId`, `workspaceId`, `command`, `pty`, `pid`, `running`, and `exitCode?`/`signal?` under the
+same exactly-one rule as `onExit`. It deliberately does **not** carry `env`: FR-005a keeps a task's
+environment out of anything that can be read back, and a listing is exactly that.
+
+Attaching with a `workspaceId` that does not own the named task is **refused** with `-32001`, not
+ignored. Because a `taskId` is engine-unique the engine could resolve the task from the id alone
+and treat the mismatched workspace as noise, but a client that believes a task belongs to a
+different workspace than it does is a client whose state has diverged, and silently servicing the
+request would leave it diverged. Principle VI puts the check on both sides of the boundary.
 
 ### Git
 
@@ -870,7 +1028,9 @@ The supervisor handles four transitions per server:
   connection does not leave orphaned servers holding memory.
 
 Child processes run under Linux cgroups so a runaway indexing task cannot destabilise the
-orchestrator.
+orchestrator. **Execution tasks are not yet among them**: F010 bounds them with per-process
+limits and a process group instead, because cgroup delegation depends on provisioning F005 has
+not specified. See A-TASKLIMIT, which records what that does and does not catch.
 
 One server per language per workspace, started lazily on first use of that language, each under
 a cgroup memory limit. A server exceeding its limit is killed and restarted rather than allowed
@@ -1134,7 +1294,9 @@ writable.
 ## 13.2 Behaviour
 
 File operations use native syscalls. Language servers are spawned from the user's own
-installation. Tasks run in a local PTY via `portable-pty` against the user's shell. The SQLite
+installation. Tasks run in a local PTY via `portable-pty` against the user's shell — **built by F015
+`local-mode`, not by F010**, whose scope is the remote engine. Until F015 lands, the client's
+local provider refuses task methods and says so. The SQLite
 cache still serves tree rendering and search, as a performance layer rather than a network
 mask.
 
@@ -1194,20 +1356,31 @@ path. See Appendix B.
 the sole entry point: LSP multiplexer, DAP broker, process supervisor, file watcher and
 filesystem server. It speaks the protocol in §4 over stdio and nothing else.
 
-It runs child processes under cgroups (§7.3) so no single language server or build can
-destabilise it.
+It runs language servers under cgroups (§7.3) so no single server can destabilise it. Execution
+tasks are bounded per process instead, by resource limits and a process group (A-TASKLIMIT); the
+blanket claim that every child runs in a cgroup was true of the design §7.3 described before
+cgroup delegation was found to depend on provisioning F005 owns.
 
 ## 15.2 Availability
 
 Against the 99.9% target (§1.4), the engine tracks active task IDs, PID mappings and language
-server session state, so a transient crash can be recovered rather than requiring the developer
-to rebuild their session by hand.
+server session state in memory, so a client that **disconnects** and returns reattaches to work
+that kept running rather than rebuilding its session by hand (A-TASKLIFE).
+
+This does not extend to a crash. The map is memory and dies with the process, so a crashed engine
+loses every identity it held while the child processes it started keep running — reachable by pid
+and by nothing the protocol exposes. Recovering that needs the map to outlive the process, which
+nothing in the system does today; until it does, the honest statement is that a disconnection is
+survivable and a crash is not.
 
 ## 15.3 Updates
 
 The engine supports in-place binary replacement and re-execution so toolchain updates do not
 require the developer to intervene. This makes client/engine version skew a routine condition
 rather than an exception, which is why §3.8 is blocking rather than cosmetic.
+
+Running tasks are **terminated before the re-execution** and reported in `session/onRestart`'s
+`unpreserved` list. See A-TASKEXEC.
 
 ## 15.4 Cloud burst
 
@@ -1251,8 +1424,13 @@ Three boundaries matter:
 1. **Client to engine.** The engine accepts frames from the client and must not trust them.
    Path containment (§4.7) is enforced engine-side regardless of client-side validation.
 2. **Engine to user code.** Builds and tests run arbitrary code from the repository, as the
-   developer's own user. This is expected — it is what a build is — and is bounded by cgroups
-   and by the instance being developer-owned, not shared.
+   developer's own user. This is expected — it is what a build is. The bound differs by what is
+   running. Language servers run under cgroups (§7.3). **Execution tasks do not**: they are bounded
+   per process by an address-space limit, disabled core dumps and a process group, which stops one
+   runaway and does **not** stop a process tree exhausting the instance collectively (A-TASKLIMIT).
+   The remaining bound is that the instance is developer-owned and not shared (A-EC2). This
+   paragraph previously claimed cgroups bounded everything, which stopped being true when §7.3 was
+   amended and is corrected here rather than left as a security control nothing implements.
 3. **Client to remote content.** The client renders remote-sourced content, including HTML
    previews of remotely served applications.
 
@@ -1633,7 +1811,7 @@ Two, either of which reopens this:
 
 Absent either, this decision is settled and the alternative is not to be re-litigated.
 
-## A-STATE — Interface session state lives outside the workspace cache (2026-09-21)
+## A-STATE — Interface session state lives outside the workspace cache (2026-09-21) — SUPERSEDED by A-STATE2
 
 **Status:** Decided 2026-09-21. Promoted from `specs/001-app-shell/research.md`.
 
@@ -2664,6 +2842,471 @@ port is already the seam, so either is a new adapter rather than a change to any
 
 ---
 
+## A-TASKLIFE — A running task outlives the connection that started it (2026-09-24)
+
+**Decision.** A task keeps running when the client's connection drops. Its output is retained
+while no client is attached, bounded by the same limit that bounds output for an attached one,
+and a reconnecting client reattaches by task identity and receives what it missed.
+
+**Rationale.** §7.3 already stops child processes on disconnect, and this decision departs from
+that precedent deliberately. The precedent is about language servers: infrastructure the
+developer never asked for, which restarts invisibly and costs nothing to lose. A build is
+different in every respect that matters. The developer started it on purpose, it may be twenty
+minutes in, and a dropped link is not a decision to abandon it. Stopping a language server on
+disconnect loses nothing; stopping a build loses the work.
+
+The client already has the identity it needs. §4.8 has the client choose `taskId` on
+`execution/runTask`, so reattachment is a client that remembers what it started rather than a
+discovery protocol. §15.2 anticipates the rest: the engine tracks active task IDs and PID
+mappings so a client that returns reattaches rather than rebuilding its session by hand. That
+section formerly claimed the same of a transient **crash**, and this record originally cited it
+on that basis; the claim was wrong, because the map is memory and dies with the process. §15.2
+has been narrowed accordingly. This decision is about a dropped connection, which the map does
+survive, and it neither needs nor provides crash recovery.
+
+**The consequence worth stating plainly.** This builds part of F020 `detached-engine` inside
+F010. F020 owns surviving a disconnection, and a task that survives one is that, for tasks. The
+alternative was to stop tasks now and let F020 change it later, which is the more conservative
+sequencing — and it was rejected because it ships a known-wrong behaviour to preserve a feature
+boundary, and because a developer losing a build to a wifi blip is a worse thing to ship than an
+overlap two features can reconcile. F020's remaining scope is the engine itself and everything
+that is not a task.
+
+**Second-order consequence, for F005.** A-EC2 stops the instance after thirty minutes without
+interactive traffic. A detached task produces no interactive traffic, so under that rule the
+instance stops and the surviving task dies anyway, thirty minutes after the disconnect this
+decision exists to survive. Whether a running task defers the idle stop is an idle-detection
+policy, which F005 `ec2-lifecycle` owns explicitly. Recorded here rather than decided here,
+because the trade is about billing a machine by the hour and belongs with the decision that set
+the threshold.
+
+**Rejected — stop tasks on disconnect, matching §7.3.** The narrow, reversible choice, and the
+one that leaves F020 its whole job. Rejected because it makes a wifi blip cost a build, for the
+whole interval until F020 ships, in exchange for a boundary that is an artefact of how the work
+was divided rather than of how the product behaves.
+
+**Rejected — hold the task for a grace period, then stop it.** Reads as a middle ground and is
+not: holding a process for an absent client is the same machinery as keeping it, only
+short-lived, so it pre-decides F020 exactly as much while adding a duration no requirement asks
+for.
+
+**Rejected — specify F020 first.** The cleanest sequencing. Rejected on cost: F020 depends only
+on F002 and could have been built at any point, and reordering again would delay the feature
+that makes F004 observable for a second time in one session.
+
+### Reversal conditions
+
+F020 arriving with a different model of survival, in which case this is the thing it reconciles
+rather than a constraint it inherits. Or retained output for absent clients proving expensive
+enough on a per-hour instance that a bounded hold beats an unbounded one — which is a number, not
+a direction, and would narrow this decision rather than reverse it.
+
+---
+
+## A-TASKLIMIT — Tasks are bounded per process, not per tree, until a supervisor exists (2026-09-24)
+
+**Decision.** An execution task runs in its own process group, and is constrained by per-process
+resource limits inherited by its children. It is **not** placed in a cgroup. Full cgroup
+isolation remains owed by whichever feature builds the shared process supervisor.
+
+**Rationale.** The threat A-LSP names is precise: a runaway process exhausts the instance and the
+out-of-memory killer takes the engine, "which is not recoverable" where restarting one server is.
+What bounds that threat depends on the shape of the runaway, and on the size of the instance.
+
+§1 puts the instance at 16 vCPU and 128 GB. At that size the realistic runaway is a **single
+process** — a test with an allocation bug, a development server that leaks, a tool that never
+frees. A per-process limit fits that exactly: the process is **refused further address space at
+its ceiling**, in seconds and without anything else noticing. What it does then is its own — most
+abort, and one that handles the failure may legitimately carry on. The limit denies the
+allocation; it does not kill, and SC-026 measures the denial for that reason. The protection is
+that the runaway cannot take the instance down, not that it dies.
+
+The case a per-process limit cannot catch is a **tree** that collectively exhausts while every
+member stays under its own ceiling — sixty-four compilers at three gigabytes each is a hundred
+and ninety-two, and no single limit was exceeded. That is real, and on this hardware it takes
+deliberate over-parallelisation to reach: `-j$(nproc)` is sixteen, and sixteen times three is
+forty-eight of a hundred and twenty-eight. It is a flag pasted from a larger machine, not an
+ordinary Tuesday.
+
+So this decision buys the common case cheaply and leaves the uncommon one to the mechanism built
+for it.
+
+**Why not cgroups now.** Two reasons, and the second is the one that decided it.
+
+A cgroup v2 subtree must be **delegated** before an unprivileged process can create anything in
+it, which is a property of how the instance is provisioned. Provisioning is F005
+`ec2-lifecycle`, which is unspecified and now sequenced after F010. Building against an
+assumption about a feature that does not exist is how a gap at the edge of a decision becomes a
+failure at the edge of an instance.
+
+And the supervisor is shared. §7.3 describes one thing spawning language servers and tasks alike,
+and F007 `lsp-multiplexing` needs the same isolation. Whichever feature builds it first defines
+it for the other, and a subsystem designed against one caller's needs is one the second caller
+reconciles rather than uses. That is an acceptable trade for a behaviour, as A-TASKLIFE was; it
+is a poor one for a subsystem.
+
+**Rejected — build cgroup v2 support in F010.** Catches every shape of runaway, and is what §7.3
+and §15.4 describe. Rejected on the delegation dependency and on the shape of the overlap, above.
+
+**Rejected — poll `/proc` and kill a tree past a threshold.** Bounds a tree without privileges or
+delegation, which is more than per-process limits manage. Rejected because it reacts at the poll
+interval, so a fast allocator crosses the threshold and keeps going between samples, and because
+it is custom machinery no other system runs — the bugs in it would be entirely ours, bought to
+cover a case that needs deliberate misuse to reach.
+
+**Rejected — nothing beyond the process group.** Leaves the threat A-LSP names unmitigated for
+tasks and relies on the out-of-memory killer choosing the right victim, which it usually does and
+not always.
+
+### Reversal conditions
+
+A tree exhausting the instance in practice rather than in principle — at which point the
+mechanism is cgroups and the question is only who builds it. F005 specifying provisioning in a
+way that guarantees a delegated subtree, which removes the dependency this decision avoided. Or
+F007 building the shared supervisor, which is where the isolation was always owed; this decision
+then narrows to the process group, and the per-process limits become redundant rather than wrong.
+
+---
+
+## A-TASKSTREAM — A terminal merges the streams; separating them costs the terminal (2026-09-24)
+
+**Decision.** `execution/runTask`'s `pty` parameter chooses between two output shapes, and the
+choice is exclusive. With `pty: true` the task has a pseudo-terminal, `isatty` is true, and output
+arrives merged on `execution/onStdout`. With `pty: false` the task has separate pipes, `onStdout`
+and `onStderr` are distinguishable, and `isatty` is false.
+
+**Rationale.** This is not a preference. A pseudo-terminal is **one device**, and a process whose
+standard output and standard error are both attached to it writes both into the same stream —
+which is what a terminal is, and why `2>/dev/null` exists. Two requirements that each look
+reasonable alone cannot both hold for one task: a process must believe it has a terminal, and its
+two streams must be separable.
+
+§4.8 anticipated it without saying so. The catalogue gives `runTask` a `pty` parameter *and*
+defines both `onStdout` and `onStderr`, and the only reading under which all three facts are
+consistent is that the parameter chooses. This record states what the catalogue implied.
+
+The consequence is one a caller chooses rather than suffers. A terminal panel takes the first
+shape and gets a real terminal. A caller that wants to parse a build's diagnostics takes the
+second and gets separation, at the price of the process no longer colouring its output or drawing
+progress — the same price every continuous integration system pays for the same reason.
+
+**Rejected — one pseudo-terminal per stream.** Possible and behaviourally wrong: programs expect
+their two streams to share a terminal, so `isatty` would be true on both while a resize applied
+to one of them.
+
+**Rejected — a terminal for output and a pipe for errors.** Produces a state no real terminal
+produces, where a process sees a terminal on one descriptor and not the other, and no program is
+written against it.
+
+### Reversal conditions
+
+None foreseen. This is a property of the mechanism rather than a choice about it, and the only
+thing that would reverse it is a terminal abstraction that is not one device.
+
+---
+
+## A-TASKEXEC — An engine re-execution terminates tasks and reports them (2026-09-24)
+
+**Decision.** Before the engine replaces its own binary and re-executes (§15.3), it terminates
+every running task using the same escalation `execution/terminate` uses, and names each one in the
+`unpreserved` list of the `session/onRestart` notification that follows. Tasks do **not** survive
+a re-execution.
+
+**Rationale.** A re-execution replaces the process image. The task set is memory and the
+pseudo-terminal descriptors are close-on-exec, so both are gone the moment `exec` succeeds — while
+the child processes are not gone at all. They keep running, still children of the same pid, now
+watched by nothing and reachable through nothing the protocol exposes. That is §7.3's FR-025
+prohibition reached through a supported operation rather than through a failure, and it is the
+worst of the three available outcomes because it is invisible: the developer sees the engine come
+back healthy and never learns that a build is still burning CPU with no way to stop it.
+
+**What this needs that does not exist yet.** The ids are drained by the **old** image and
+`session/onRestart` is emitted by the **new** one, and the only thing crossing the `exec` today is
+`APEX_SESSION_ID`. `SessionRegistry::new()` hardcodes `unpreserved: Vec::new()` in both branches,
+so a straight reading of this decision produces an empty list and reports nothing — it would look
+implemented and deliver none of its value. The terminated ids travel the way the session identity
+already does, as a second environment variable: a channel proven across exactly this boundary,
+needing no new mechanism.
+
+The mechanism this decision uses already existed and was already addressed to this feature.
+`session/onRestart` carries `unpreserved` so the client can tell the developer what a restart
+cost, and `engine/src/session.rs` has carried the comment "F007 and F010 will have something to
+report here" since F002. F010's entry in that list is the task set. The decision is less a choice
+of mechanism than the discovery that the mechanism had been waiting for its second caller.
+
+**The alternative, and why it was rejected.** Descriptors can be carried across an `exec` by
+clearing `FD_CLOEXEC` and passing the identity-to-pid map through the environment, the way
+`APEX_SESSION_ID` already travels. That would let a build survive an engine update, which is
+strictly better for the developer in the moment. It was rejected because it makes every future
+change to the task set a compatibility problem between two versions of the engine — the image
+that opened the descriptors and the image that inherits them — for a benefit available only
+during an update the developer did not ask for and does not observe. A terminated task the
+developer is told about is a smaller harm than a surviving task whose owner and format are
+negotiated across a version boundary.
+
+**Amendment (2026-09-25): the escalation is not the one `execution/terminate` uses.** This record
+said "the same escalation", meaning `SIGTERM` followed by `SIGKILL` after five seconds. That grace
+cannot be honoured here and the implementation sends both signals with no wait between them.
+
+Two reasons, and the first is decisive. The grace is served by the escalation thread, and `exec`
+discards every thread — so the `SIGKILL` that makes "zero survivors" true would be scheduled onto
+something that is about to stop existing. A task that catches `SIGTERM` and keeps running, which
+many deliberately do, would then survive the re-execution and be orphaned: alive, reparented, and
+reachable by pid and by nothing the protocol exposes. That is precisely the outcome this record
+exists to prevent, reached through the mechanism meant to prevent it.
+
+The second is that waiting is worse for the developer than not waiting. Five seconds of silence
+before a restart they asked for buys a cleanup nobody observes: the reader threads are already
+going, so whatever the task writes in its grace period reaches no one.
+
+A task that wanted to tidy up on `SIGTERM` gets the same warning it would get from a machine
+rebooting under it. `SIGKILL` to a group that already left on the `SIGTERM` is harmless — the
+kernel has nobody to deliver it to.
+
+Found by a test rather than by review: `fixture_signals` catches `SIGTERM` and keeps running, and
+two of three tasks survived a drain written to this record's original wording.
+
+**Reversal conditions.** Two, either of which is sufficient. First, if the engine ever holds its
+task map outside its own process image — a supervisor process, or a small on-disk record of
+identity-to-pid — then carrying tasks across a re-execution stops requiring descriptors to survive
+an `exec` and the compatibility objection disappears with it. Second, if updates become frequent
+enough that losing a build to one is a routine cost rather than a rare one, the balance inverts:
+this decision is priced on an update being something a developer does occasionally and does not
+watch.
+
+**What this costs, stated plainly.** A developer whose twenty-minute build is running when the
+engine updates loses it. The mitigation is not in this record: an update is a client-initiated
+operation (§3.8), so a client that declines to update while tasks are running would avoid the
+cost entirely. That is a client policy and belongs with whichever feature owns update scheduling,
+not here.
+
+## A-TERMPALETTE — A terminal needs sixteen colours; the system defines three (2026-09-24)
+
+**Decision.** The three semantic hues the prototype states — `#7fa98f` success, `#d4736a` error,
+`#c9a96a` warning — are extracted into design tokens by `ds-sync` like any other prototype value,
+and the terminal is themed with them. The remaining ANSI colours come from the terminal library's
+own palette, as a **named, recorded exception** rather than a silent one. A full sixteen-colour
+ramp is owed to the design system and is not F010's to invent.
+
+**Rationale.** A terminal renders sixteen ANSI colours plus a default foreground and background.
+The signed-off design system defines two accent ramps, a nine-step neutral ramp and structural
+colours — no red, green, yellow, blue, magenta or cyan. The prototype's terminal uses three hues
+and states them as raw hex in its own markup, which makes those three extractable on exactly the
+grounds every layout token was extracted. Blue, magenta, cyan and the eight bright variants have
+no source anywhere in the signed-off material.
+
+That leaves three routes and one of them is honest. Inventing thirteen colours puts a designer's
+decision in an engineer's commit, which is what Principle I exists to prevent, and would be the
+largest unreviewed addition to the design system to date. Extending the prototype is the correct
+act, but it is a design act and not this feature's. Using the library's palette for what the
+system does not define is smaller than either, reversible in one file once the ramp exists, and —
+the deciding point — it is the only one of the three that leaves a visible marker saying a
+decision is still outstanding.
+
+**Reversal conditions.** One, and it is expected rather than hypothetical: the design system
+gaining a sixteen-colour ANSI ramp. When it does, `palette.ts` maps every slot to a token, SC-016
+widens back to its original wording, and this record is superseded rather than amended. A second,
+weaker condition: if a second surface ever needs ANSI colours — a diff viewer rendering coloured
+output, a log panel — the cost of not having the ramp is paid twice, and the argument for treating
+it as owed rather than urgent weakens accordingly.
+
+**The consequence, stated plainly.** SC-016 was written as "zero raw colour values" and has been
+narrowed: it now measures that the three hues the system defines are taken from tokens, and
+records the library's default palette as the accepted source for the rest. A criterion asserting
+zero raw values while thirteen of sixteen colours have no token to use is unmeetable, and the
+failure mode of an unmeetable criterion is that somebody satisfies it by inventing the tokens —
+which is the outcome this record exists to prevent.
+
+## A-STATE2 — The durable client store also carries task identities (2026-09-24)
+
+**Supersedes A-STATE (2026-09-21)**, which is otherwise unchanged and remains the record of why a
+durable client store exists and what shape it takes.
+
+**Decision.** The client's durable store carries, in addition to A-STATE's window geometry, region
+layout, open document references and focus, the **identities of tasks this client started** and the
+workspace each belongs to. Nothing else about a task is stored: no output, no environment, no
+command.
+
+**Rationale.** A-TASKLIFE makes a task outlive the connection that started it, and `execution/attach`
+reaches one by an identity the client must already know. A client that restarts therefore needs its
+identities to have survived the restart, and A-STATE's enumerated payload does not include them —
+so F010 either extends that payload or reattachment works only for a client that never closed.
+
+Recorded as a new record rather than an edit to A-STATE because Principle III says records are
+dated and superseded, never edited in place, and because the two decisions have different owners:
+A-STATE is F000's, made about a shell's own state, and this is F010's, made about work running
+somewhere else.
+
+**Why not more than the identities.** Storing a task's command would put a credential passed in
+argv on disk, which FR-005a's accepted boundary does not extend to; storing output would make the
+store grow without bound for a client that never returns. The identity is the smallest thing that
+restores reachability, and `execution/list` covers the client that has lost even that.
+
+**Reversal conditions.** If task identities ever become discoverable without client state — which
+`execution/list` already makes true for a client that can enumerate — the stored copy becomes an
+optimisation rather than a requirement, and a client that prefers not to persist anything could
+drop it. It is kept because enumeration costs a round trip at startup and the stored identity does
+not.
+
+## A-WSCLOSE — What closing a workspace means, precisely (2026-09-24)
+
+**Decision.** Three answers to questions §4.8's `workspace/close` row leaves open. The response is
+written once every task of that workspace has been **signalled**, and each end is reported by its
+own `execution/onExit` as usual. Closing **deregisters** the workspace, being
+`workspace/register`'s counterpart. A second close of an already-closed workspace is **`-32001`**,
+not an idempotent success.
+
+**Rationale.** Each closes a genuine alternative, which is why they belong here rather than in a
+contract. Recorded late: they were taken while `contracts/task-methods.md` was written, and stating
+them there left three decisions with rejected alternatives outside Appendix A, which Principle III
+does not allow.
+
+Answering after every task is **signalled** rather than after every task has **ended** is a
+correction to this record's first version, which said the latter. Ending takes up to the
+five-second escalation, and the use case runs on the engine's single dispatch thread — the same
+thread that reads the client's stdin. Waiting there would mean five seconds in which no keystroke,
+resize or cancellation is so much as read off the pipe, which is §1.4 and FR-012 failing through
+the mechanism meant to satisfy FR-024. There is no deferred reply to fall back on: an `Action` is
+a reply, nothing, or a restart.
+
+SC-013 stays checkable without it. "Closing a workspace leaves zero of its tasks running" is
+observed through each task's `onExit`, which is a defined event with a defined order, rather than
+through a response whose timing hid the wait. A test waits for N exits, not for a sleep. The
+escalations still run concurrently across the workspace's tasks, so closing ten costs five seconds,
+not fifty.
+
+Deregistering follows from being `register`'s counterpart: a close that left the id registered
+would leave the engine holding a canonicalised root for a workspace the client has finished with,
+and the client would have no way to say so.
+
+Refusing a second close departs from FR-019, where terminating an already-terminated task succeeds.
+The two look alike and are not. FR-019's race is a client racing an end **the engine decided** — the
+task exited on its own — and reporting that as a failure would make a correct client look broken.
+A workspace never closes itself, so a second close means the client has lost track of its own
+state, and telling it so is a service.
+
+**Reversal conditions.** If a client is ever expected to close a workspace it may not have opened —
+a supervisor tidying up after a crash, say — then refusing the second close becomes the unhelpful
+answer and idempotent success becomes right. Under A-EC2's single tenancy and one client per
+engine, no such caller exists.
+
+## A-E2ESCOPE — Which acceptance scenarios owe an end-to-end test (2026-09-25)
+
+**Decision.** Principle VII's "each one MUST have a corresponding automated test" is read
+**loosely**: the corresponding test must exist at the level where the scenario's substance is
+**observable**, which is end to end for most scenarios and is not end to end for all of them. A
+scenario covered below the end-to-end level carries a **written justification in its own feature's
+specification**, naming the level that covers it and the property that is not observable through a
+driven interface. The justification is per scenario, not per feature and not per level.
+
+**Rationale.** The sentence is genuinely ambiguous and both readings are defensible. It sits under
+the **End to end** bullet, which is the strict reading's whole case; it says "a corresponding
+automated test" rather than "a corresponding end-to-end test", which is the loose reading's. A
+principle that can be satisfied two ways satisfies neither until someone writes down which, and
+Principle III says the writing down happens here.
+
+The strict reading fails on a class of scenario this project has several of, where the property
+under test is an **absence** and the interface cannot show it. F010's FR-005a is the clearest: a
+task's environment must never reach a log or a crash report. A driver can observe a terminal panel
+showing output; it cannot observe a core dump that was not written, because `RLIMIT_CORE = 0` means
+there is no artifact to inspect and the passing state is that nothing exists. An end-to-end test
+written for it would assert something adjacent — that the app still runs, that the panel still
+scrolls — and pass whether or not the property held. That is a test that cannot fail, which
+Principle VII's own rationale rejects in its last sentence, and which this project has already
+produced five of.
+
+Per **scenario** rather than per **level** is the operative part, and it is where this record adds
+something the constitution does not already say. Principle VII's closing paragraph permits omitting
+a level with a one-line justification naming why the feature has **no surface** there. That is an
+all-or-nothing instrument: a feature either has end-to-end surface or it does not. F010 has plenty
+— a build runs, its output appears, a keystroke interrupts it — alongside a handful of scenarios
+that have none. Under the strict reading F010 cannot use the omission clause honestly, because the
+level is not absent, and so it would owe an end-to-end test for every scenario including the ones
+where that test would be theatre.
+
+**Alternatives rejected.** *Strict, with the omission clause used per feature* was rejected above:
+it forces a false statement, since the feature does have end-to-end surface. *Strict, with no
+escape* was rejected because it buys its rigour with tests that pass unconditionally, which is worse
+than the gap it closes — an unconditionally passing test is a claim of coverage that is not true,
+and it is durable, because nothing ever fails to prompt a second look. *Loose with a blanket
+per-feature justification* was rejected because a blanket justification is the thing that decays: it
+is written once, and then every later scenario shelters under it without anyone re-asking whether it
+applies. Requiring the sentence next to the scenario keeps the cost proportional to the number of
+exemptions, which is the only pressure that keeps the number small.
+
+**Consequences.** A feature specification's acceptance scenarios acquire a third state. A scenario
+is either covered end to end, or covered lower with a named level and a named reason, and a scenario
+with neither is an incomplete specification that `/speckit-analyze` should surface. The justification
+names a level that must actually contain the test; "covered by unit tests" without one is the
+blanket form this record rejects.
+
+**Reversal conditions.** If the exemptions stop being a handful — if a feature's justifications
+outnumber its end-to-end tests — the loose reading has become the default rather than the exception
+and the pressure this record relies on has failed. The remedy then is not to tighten the wording but
+to ask why so much of that feature is unobservable through its own interface, which is usually a
+statement about the interface rather than about the tests.
+
+## A-ENGINELIFE — The engine outlives the channel, and is reached again through a socket (2026-09-25)
+
+**Decision.** An engine that loses its client does **not** exit. It marks itself detached and keeps
+serving, and a later invocation on the same host reaches it through a **unix domain socket** rather
+than becoming a second engine. Three rules make that bounded rather than open-ended:
+
+1. **First one wins.** On startup the engine tries to bind the socket. Binding succeeds: it is the
+   engine, and it serves both its own stdio and anything that connects. Binding fails against a
+   socket something is listening on: it is a **proxy**, and it shuttles bytes between its stdio and
+   that socket for as long as its own stdin lasts. Binding fails against a socket nothing answers:
+   the previous engine died, the socket is stale, it is removed and binding is retried once.
+2. **The newest client wins.** A connection arriving while another is attached displaces it. A
+   developer whose laptop changed networks has a half-dead channel the far end cannot distinguish
+   from a live one, and refusing the new connection would make reconnecting impossible for exactly
+   the case this record exists for.
+3. **It outlives the channel only while it has something to preserve.** Detached with **zero**
+   tasks, the engine exits. There is nothing to reattach to, and an engine that lingered anyway
+   would leave one process per session on the instance forever.
+
+**Rationale.** §15.2 says the engine keeps task identities and pid mappings in memory so a client
+that disconnects and returns reattaches to work that kept running, and says plainly that a crash is
+not survivable because the map dies with the process. The implementation made a disconnection
+produce exactly the outcome the section reserves for a crash: `main.rs` returned on stdin EOF, the
+process exited, and the children it had started survived as orphans "reachable by pid and by
+nothing the protocol exposes".
+
+`ControlMaster` and `ControlPersist=1h` do not close that gap. They keep the SSH **master** alive so
+a later invocation need not re-authenticate; the invocation still runs `ide-engine` afresh and gets
+a new process with an empty map. What survives a brief drop today is the *channel*, and only while
+`ServerAliveCountMax` has not yet given up on it — about forty-five seconds. A drop longer than
+that loses the build, which is the thing A-TASKLIFE exists to prevent.
+
+So the engine has to outlive its channel, and something on the host has to route a returning client
+to it. A unix socket is the smallest thing that does: it is local to the instance, needs no port
+(§1.2 allows only 22), and is already how `ControlPath` works for ssh itself.
+
+**Alternatives rejected.** *Narrowing §15.2 to channel-survivable drops* was honest and cheap, and
+was rejected because it leaves the product failing the case it was designed around: a laptop moving
+between networks is not a forty-five-second event. *Persisting the map to disk so a new process can
+adopt it* solves more -- it would survive a crash too -- and was rejected as the larger change: the
+map holds live pids and open descriptors, and a process that adopted identities whose descriptors
+it does not hold could list a task it cannot read, write to or stop. *A port* is unavailable by
+§1.2. *Deferring the whole reattachment story to its own feature* was the reviewer's other option
+and was not taken.
+
+**Security.** The socket is a full control channel: anything that can connect to it can run commands
+as the user. It is created inside a directory owned by the user with mode `0700`, and the socket
+itself `0600`, so the filesystem is what enforces the boundary. A-EC2's single tenancy means there
+is no second user to defend against on the instance, which bounds the exposure but does not make
+the permissions optional -- a future multi-tenant instance would find them already correct rather
+than needing them added.
+
+**What it does not do.** It does not make the map survive a **crash**, and §15.2's statement about
+that is unchanged. The process outliving the channel is a different property from the map outliving
+the process, and only the first is decided here.
+
+**Reversal conditions.** If the engine ever gains durable state -- a map written to disk that a new
+process can adopt safely, descriptors and all -- the socket becomes an optimisation rather than the
+mechanism, because a fresh process could then reconstruct what it needs. Until then the socket is
+the only thing that makes §15.2 true as written.
+
 # Appendix B — Open Items
 
 **All items resolved 2026-09-23.** Nothing here blocks a feature. The table is kept as a record
@@ -2721,3 +3364,102 @@ contracts. All of that has been corrected or removed.
 
 The working assumption for anyone extending this document: named crates, flags and figures are
 claims to verify, not decisions already validated.
+
+---
+
+## A-NOTIFYROUTE — How an engine-initiated frame reaches the interface (2026-09-26)
+
+**The gap this closes.** The transport read every inbound frame, matched the ones carrying an
+`id` to their requests, and dropped the rest. The rest is every byte a task produces, every file
+event, and every exit — the entire server-initiated half of a bidirectional protocol. F004 and
+F010 both built their receiving ends against it and neither could ever have been reached.
+
+It was invisible because nothing on either side was wrong on its own terms: a reply-matching
+function has no business with a frame that is not a reply, and the renderers were correct about
+bytes nobody delivered. Each half's tests passed throughout. **A feature is not joined because
+its ends are written; it is joined when something asserts across the seam.**
+
+**The route.** `NotificationSink` (a client-core port) receives any frame with no `id`. The
+composition root binds `WebviewNotifications`, which forwards it to the interface on one Tauri
+event, `apex:notification`, carrying the method and the frame untouched. The interface routes on
+the method.
+
+**Three decisions inside that, each of which could reasonably have gone the other way.**
+
+1. **The sink is called on the transport's reader thread, and must not block.** This is not an
+   implementation detail, it is the backpressure contract. A sink that blocks stops the reader,
+   which stops draining the engine's stdout, which blocks the engine's frame writer, which stops
+   its task reader, which fills the pseudo-terminal, which blocks the task in `write` — FR-013,
+   end to end, with nothing buffering anywhere along it. Handing frames to an unbounded queue
+   here would sever that chain at the one place it is cheapest to sever and hardest to notice.
+
+2. **One event, not one per method.** An event per method reads better until a method is added,
+   at which point the addition is in three places and omitting the middle one produces silence
+   rather than an error. With one event a new method arrives whether or not anyone remembered,
+   and an unrouted method is visible at the interface as an unhandled case rather than invisible
+   in the core as an absent branch.
+
+3. **The frame crosses uninterpreted.** The interface already parses `data`; a second parser in
+   the core would be a second place that has to agree with the wire. Two parsers obliged to stay
+   in step is how a client and an engine come to disagree about a field name while each remains
+   correct alone.
+
+**What this binds.** F007's diagnostics and F020's reconnection notices arrive by this route; so
+does F004's `workspace/onFileEvent`, whose receiving end has been waiting for it. None of them
+needs to add a transport-level mechanism, and none of them may add a queue between the reader and
+the sink without re-deriving point 1 above.
+
+---
+
+## A-LOCALENGINE — Running the engine as a child process (2026-09-26)
+
+**A spawner, not a transport.** The engine speaks JSON-RPC over stdin and stdout and has no
+notion of what carries them. `ssh` is a pipe with a network in the middle; a child process is the
+same pipe without one. So framing, the correlation registry, timeouts, cancellation, connection
+state and the send queue are all already correct for both, and the only difference is how the
+child starts — which was already a port, `ProcessSpawner`. `LocalEngineSpawner` sits behind it.
+
+A `LocalTransport` was the obvious alternative and would have duplicated every one of those
+behaviours in a copy that F001's suite does not cover.
+
+**It is selected only when no host is named and a binary is present**, which keeps it out of a
+packaged application where neither holds. In a development workspace it is the difference between
+a terminal that works and one that renders correctly and shows nothing.
+
+**It is not F015 `local-mode`.** That feature runs a developer's tasks on their own machine with
+no engine at all, and `LocalTasks` refuses on its behalf. This runs the real engine over the real
+protocol; only the machine differs. A task started through it gets the same pseudo-terminal, the
+same limits and the same lifecycle as one on the instance.
+
+**It is not a deployment path.** A-BOOT owns getting a binary onto a remote host. This one is
+already there.
+
+---
+
+## A-WIRECASE — The wire is snake_case, and that is the design (2026-09-26, corrected)
+
+**There is no divergence. This record exists so the next person does not rediscover one.**
+
+It was first written as a defect: §4.8's tables say `workspaceId`, `taskId` and `exitCode`, the
+wire carries `workspace_id`, `task_id` and `exit_code`, and `protocol/src/wire.rs` has no
+`rename_all = "camelCase"` anywhere. All of that is true, and none of it is a fault — §4.8 says so
+itself, three paragraphs below the tables:
+
+> Field names in the tables above are written camelCase for readability; the wire carries
+> snake_case.
+
+`contracts/task-methods.md` repeats it. F002 established the convention with `clientVersion` as
+`client_version`, and the spec states the mapping rather than leaving it to be inferred precisely
+so that a third party implementing from the tables alone does not send names the engine will
+reject.
+
+**How the mistake was made, since the method is the part worth avoiding:** by counting spellings
+across the document — 38 `workspaceId` against 14 `workspace_id` — and concluding the majority was
+the rule. The minority were SQL columns and Rust fields. Counting occurrences of a name is not
+reading the paragraph that governs it, and a grep across a specification will always find both
+sides of a convention that has to state both sides to be useful.
+
+**What to do if this looks wrong again:** read §4.8's prose, not its tables. Changing it would
+touch 42 structs in `protocol/src/wire.rs` and hand-written frames in sixteen test files across
+four shipped features, all to move away from what the specification asks for.
+

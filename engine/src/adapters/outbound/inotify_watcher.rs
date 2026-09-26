@@ -189,19 +189,8 @@ fn stat(root: &std::path::Path, relative: &str) -> (u64, i64) {
 pub fn factory() -> crate::adapters::outbound::watchers::WatcherFactory {
     Box::new(|root| {
         let watcher = InotifyWatcher::new(root).ok()?;
-        let clock: Box<dyn crate::application::ports::clock::Clock> = Box::new(SystemClock);
+        let clock: std::sync::Arc<dyn crate::application::ports::clock::Clock> =
+            std::sync::Arc::new(crate::adapters::outbound::system_clock::SystemClock);
         Some((Box::new(watcher) as Box<dyn FileWatcher>, clock))
     })
-}
-
-/// The real clock. Beside the only adapter that needs one.
-struct SystemClock;
-
-impl crate::application::ports::clock::Clock for SystemClock {
-    fn now(&self) -> Millis {
-        std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as Millis)
-            .unwrap_or(0)
-    }
 }

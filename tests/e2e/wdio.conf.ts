@@ -9,7 +9,7 @@ import {
   readFileSync,
   readdirSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { assertCaptureIsNotBlank } from './helpers';
 
 /** Fixed, repo-local profile. Not a temp dir: WDIO workers are separate processes, so an
@@ -121,7 +121,10 @@ let preview: ChildProcess | null = null;
 
 export const config: WebdriverIO.Config = {
   runner: 'local',
-  specs: ['./*.spec.ts'],
+  // `terminal-live.spec.ts` is excluded here and run by `npm run e2e:live`, which sets
+  // `APEX_E2E_LIVE`. See onPrepare: an engine in scope changes what the status bar observes.
+  specs: process.env.APEX_E2E_LIVE ? ['./terminal-live.spec.ts'] : ['./*.spec.ts'],
+  exclude: process.env.APEX_E2E_LIVE ? [] : ['./terminal-live.spec.ts'],
   // The app is a singleton desktop process and there is one driver on one port.
   maxInstances: 1,
   // Point at the driver started in onPrepare. Without an explicit hostname and port, WDIO
@@ -156,6 +159,19 @@ export const config: WebdriverIO.Config = {
     spawnSync('cargo', ['build', '--manifest-path', 'client/core/Cargo.toml'], {
       stdio: 'inherit',
     });
+    // The engine, built only when this run is the one that needs it.
+    //
+    // **Not set for the ordinary suite, and that is the point.** With an engine present the
+    // composition root binds the real transport as the connection status source, and
+    // `connection-status.spec.ts` drives the *stub* -- so an engine in scope makes that spec
+    // watch a source nothing is driving, and it fails on FR-011's five-second budget. The two
+    // suites want different applications, so they get different runs rather than a flag one of
+    // them has to remember.
+    if (process.env.APEX_E2E_LIVE) {
+      spawnSync('cargo', ['build', '-p', 'apex-engine', '--bins'], { stdio: 'inherit' });
+      // Absolute, because the application's working directory is tauri-driver's, not this one.
+      process.env.APEX_LOCAL_ENGINE = join(process.cwd(), 'target/debug/ide-engine');
+    }
 
     // Launch time here is dominated by something that is not the application. On a machine
     // with no desktop session, GTK asks the session bus to activate
@@ -296,15 +312,26 @@ export const config: WebdriverIO.Config = {
    */
   afterTest: async (test) => {
     const os = process.platform; // 'linux' | 'darwin'
-    const stub = test.title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 80);
+    const slug = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 60);
+
+    // reports/screenshots/<os>/<feature>/<title>-<description>-<timestamp>.png
+    //
+    // The title comes from the describe block and the description from the test name, so a
+    // directory listing reads as "what was being exercised, then what about it". Falling back
+    // to the spec's filename matters: a test declared at the top level of a file has no parent,
+    // and without the fallback every such capture would be named `-<description>-…` and sort
+    // together under the empty title.
+    const title = slug(test.parent || basename(test.file ?? '', '.spec.ts') || 'e2e');
+    const stub = slug(test.title);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const dir = join(SHOTS, os, FEATURE);
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, `${stub}-${timestamp}.png`);
+    const file = join(dir, `${title}-${stub}-${timestamp}.png`);
 
     const capture = () =>
       os === 'darwin'

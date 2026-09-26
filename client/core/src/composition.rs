@@ -7,12 +7,18 @@
 use crate::adapters::inbound::tauri_commands::{Shell, WorkspaceAccess};
 use crate::adapters::outbound::deploy::SshStreamDeployer;
 use crate::adapters::outbound::json_session_store::JsonFileSessionStore;
+use crate::adapters::outbound::local_engine::LocalEngineSpawner;
 use crate::adapters::outbound::openssh::{OpenSshSpawner, SshTransport};
+use crate::adapters::outbound::remote_tasks::RemoteTasks;
 use crate::adapters::outbound::stub_connection::StubConnectionStatusSource;
 use crate::adapters::outbound::system_clock::SystemClock;
+use crate::adapters::outbound::transport_sender::TransportSender;
 use crate::application::ports::connection::ConnectionStatusSource;
+use crate::application::ports::notification_sink::NotificationSink;
 use crate::application::ports::session_store::SessionStore;
+use crate::application::ports::spawner::ProcessSpawner;
 use crate::application::ports::spawner::SpawnSpec;
+use crate::application::ports::task_provider::TaskProvider;
 use crate::application::ports::workspace_provider::{
     ProviderError, ProviderResult, WorkspaceProvider,
 };
@@ -42,6 +48,51 @@ pub struct Wiring {
     /// Present when a host is configured. F002 gives F001's `HandToBootstrap` a recipient: the
     /// transport can already classify a missing engine, and this is what deploys one.
     pub deployer: Option<Arc<SshStreamDeployer>>,
+    /// The task provider the terminal panel reaches, present only when an engine is.
+    ///
+    /// `Option` rather than a refusing implementation, unlike `DisconnectedWorkspace` below,
+    /// and the asymmetry is deliberate. A workspace command must answer before an engine
+    /// exists, because "offline" is information and a cached tree is still worth showing. A
+    /// task command has nothing to say without an engine: there is no cached output, and a
+    /// terminal with no engine is not a degraded terminal but an absent one.
+    pub tasks: Option<Arc<dyn TaskProvider>>,
+    /// The same connection the provider uses, for `workspace/register`.
+    pub sender: Option<Arc<dyn crate::application::ports::request_sender::RequestSender>>,
+}
+
+/// Which engine to talk to, decided once, here.
+enum Engine {
+    /// A host was named: the engine runs there and `ssh` carries the protocol.
+    Remote(SpawnSpec),
+    /// No host named: run the engine binary as a child and speak its stdio.
+    Local(std::path::PathBuf),
+}
+
+/// **Both forms are opt-in, and the local one deliberately so.**
+///
+/// The first version selected a local engine whenever the binary happened to exist, on the
+/// reasoning that a packaged application would never have one. That was wrong in the way silent
+/// behaviour changes usually are: every developer with a built workspace silently acquired a
+/// live transport, and the connection status bar began reporting a real connection instead of
+/// the stub -- which broke F001's `connection-status` spec, whose whole method is to drive that
+/// stub. It failed on a five-second budget, naming neither the engine nor the cause.
+///
+/// An engine is a large thing to acquire from the presence of a file. `APEX_LOCAL_ENGINE` now
+/// names one explicitly, exactly as `APEX_REMOTE_HOST` names a host.
+fn engine_target() -> Option<Engine> {
+    if let Some(spec) = remote_target() {
+        return Some(Engine::Remote(spec));
+    }
+    let binary = LocalEngineSpawner::named()?;
+    if !binary.exists() {
+        crate::logging::warn(&format!(
+            "{} names {}, which does not exist; running unconnected",
+            crate::adapters::outbound::local_engine::ENGINE_BINARY_VAR,
+            binary.display()
+        ));
+        return None;
+    }
+    Some(Engine::Local(binary))
 }
 
 /// The host to connect to, when one has been named.
@@ -65,7 +116,11 @@ fn remote_target() -> Option<SpawnSpec> {
     })
 }
 
-pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
+pub fn build(
+    data_dir: PathBuf,
+    window: Arc<WindowController>,
+    notifications: Arc<dyn NotificationSink>,
+) -> Wiring {
     let store: Arc<dyn SessionStore> =
         Arc::new(JsonFileSessionStore::new(data_dir.join("session.json")));
 
@@ -90,20 +145,57 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
     // Built alongside the transport, because a deployer without a connection has nothing to
     // deploy over — both are absent together when no host is configured.
     let mut deployer: Option<Arc<SshStreamDeployer>> = None;
-    let source: Arc<dyn ConnectionStatusSource> = match remote_target() {
-        Some(spec) => {
-            crate::logging::info(&format!("connecting to {}@{}", spec.user, spec.host));
-            let transport = Arc::new(SshTransport::new(Arc::new(OpenSshSpawner::default()), spec));
+    let mut tasks: Option<Arc<dyn TaskProvider>> = None;
+    let mut sender: Option<Arc<dyn crate::application::ports::request_sender::RequestSender>> =
+        None;
+    let source: Arc<dyn ConnectionStatusSource> = match engine_target() {
+        Some(target) => {
+            let (spawner, spec): (Arc<dyn ProcessSpawner>, SpawnSpec) = match target {
+                Engine::Remote(spec) => {
+                    crate::logging::info(&format!("connecting to {}@{}", spec.user, spec.host));
+                    (Arc::new(OpenSshSpawner::default()), spec)
+                }
+                Engine::Local(binary) => {
+                    crate::logging::info(&format!("running a local engine: {}", binary.display()));
+                    (
+                        Arc::new(LocalEngineSpawner::new(binary)),
+                        // Required by the spawn contract and meaningless to a child process.
+                        SpawnSpec {
+                            host: "localhost".into(),
+                            user: "local".into(),
+                            assisted: false,
+                        },
+                    )
+                }
+            };
+            let transport = Arc::new(SshTransport::new(spawner, spec));
+            // Before connecting, so the reader thread starts with somewhere to put the first
+            // frame. Set afterwards, a task started immediately would produce output the
+            // transport dropped -- the original defect, reintroduced as a race.
+            transport.set_notification_sink(notifications);
             // FR-005: refused at startup rather than discovered at the first failure, so
             // "ssh is too old" and "the host refused you" are never confused.
             match transport.preflight() {
                 Ok(banner) => {
-                    crate::logging::info(&format!("local ssh client: {banner}"));
+                    crate::logging::info(&format!("engine transport ready: {banner}"));
                     deployer = Some(Arc::new(SshStreamDeployer::default()));
+                    // The connection the whole client has been missing. Until this line
+                    // `RemoteTasks` was written, tested and impossible to construct.
+                    if let Err(e) = transport.connect() {
+                        crate::logging::warn(&format!("the engine did not start: {e}"));
+                    } else {
+                        let to_engine: Arc<
+                            dyn crate::application::ports::request_sender::RequestSender,
+                        > = Arc::new(TransportSender::new(transport.clone()));
+                        tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
+                        sender = Some(to_engine);
+                    }
                     transport
                 }
                 Err(e) => {
-                    crate::logging::warn(&format!("cannot use ssh: {e}; running unconnected"));
+                    crate::logging::warn(&format!(
+                        "cannot reach an engine: {e}; running unconnected"
+                    ));
                     stub.clone()
                 }
             }
@@ -162,6 +254,8 @@ pub fn build(data_dir: PathBuf, window: Arc<WindowController>) -> Wiring {
         workspace,
         stub,
         deployer,
+        tasks,
+        sender,
     }
 }
 

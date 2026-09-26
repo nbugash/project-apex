@@ -37,7 +37,9 @@ shot: ## Photograph the running app to $(SHOT) — works headless
 	xvfb-run -a -s "-screen 0 1400x900x24" node scripts/screenshot.mjs $(SHOT)
 
 test: ## The full gate: rust, frontend, lint, format
-	cargo build -p apex-engine
+	# --examples builds the fixture programs the task tests spawn. Without it a stale or
+	# absent fixture fails those tests for a reason that has nothing to do with terminals.
+	cargo build -p apex-engine --bins --examples
 	cargo test --workspace
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo fmt --all --check
@@ -46,9 +48,29 @@ test: ## The full gate: rust, frontend, lint, format
 	npm run lint:ds
 	python3 scripts/pipeline_test.py
 
+# A display the windowed steps can actually map a window on. `shot` already did this; `gate`
+# defaulted DISPLAY to `:77` and nothing ever started a server there, so a headless run died at
+# session creation with "Request timed out" three minutes in -- a message that names neither the
+# display nor the cause, and reads as thirty-two broken specs rather than one absent dependency.
+#
+# That default was worse than no default. WebdriverIO ships `@wdio/xvfb`, which starts a server
+# itself when none is present -- and it skips when DISPLAY is set, so `:77` suppressed the very
+# fallback that would have rescued the run.
+#
+# Wrapping here rather than deleting the variable and leaving it to `@wdio/xvfb`, for two
+# reasons: `gate:fidelity` is not WebdriverIO and needs a display of its own, so the alternative
+# is two mechanisms instead of one; and a fixed 1400x900 makes the run reproducible, which a
+# suite comparing rendered geometry against the prototype depends on.
+#
+# Empty when a real display exists, so a desktop run is unchanged.
+XVFB = $(if $(DISPLAY),,xvfb-run -a -s "-screen 0 1400x900x24")
+
 gate: test ## Everything in `test`, plus the end-to-end suite and the fidelity gate
-	DISPLAY=$${DISPLAY:-:77} npm run e2e
-	DISPLAY=$${DISPLAY:-:77} npm run gate:fidelity
+	$(XVFB) npm run e2e
+	# A second run, with a real engine in scope. Separate because an engine changes which
+	# adapter the status bar observes, which the stub-driven specs in the first run depend on.
+	$(XVFB) npm run e2e:live
+	$(XVFB) npm run gate:fidelity
 	$(MAKE) no-network
 
 no-network: ## Prove the suite needs no network (FR-028, A-TEST, SC-013)

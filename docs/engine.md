@@ -155,3 +155,105 @@ The `.gitignore` subset it understands is deliberately bounded and documented in
 `application/exclusions.rs`. The `ignore` crate handles all of it and pulls `regex` with it, and
 A-BOOT makes binary size a first-class concern on something transferred on every first connect.
 A stated subset is a boundary; an unstated one is a bug waiting to be found.
+
+## Running tasks (F010)
+
+A task is a process on the instance with a pseudo-terminal in front of it, and everything hard
+about it is on the way back: bytes arrive faster than a link carries them, and the engine has no
+runtime to absorb the difference.
+
+**The port** (`application/ports/task_runner.rs`) is three traits rather than one, because a task
+has three lifetimes that do not coincide. `TaskRunner` starts one. `TaskOutput` is moved into the
+reader thread and is `Send` but not `Sync` — one thread reads a task, and the type says so.
+`TaskControl` is shared, because signalling and resizing come from the request loop while that
+reader is blocked in `read`. A single trait would have forced one lock around all three and made
+a `stop` wait for the next chunk.
+
+**The adapter** (`adapters/outbound/pty_runner.rs`) is the only file that may name `nix`;
+`engine/tests/pty_confinement.rs` fails the build otherwise, on the same rule as the watcher's.
+It owns the `fork`, the `login_tty` sequence and the limits, and knows nothing about chunking,
+retention or frames.
+
+Three things in it are ordering, not configuration, and each was found by a test rather than by
+reading. `setsid` comes **before** the dup2s and `TIOCSCTTY`: a process that is not a session
+leader is refused the controlling terminal with `EPERM`, and the refusal is silent — ctrl-C
+echoes and interrupts nothing, which three of four terminal tests are happy with. Every
+descriptor the parent opens is close-on-exec, and spawning is serialised by a mutex, because
+close-on-exec is a property of a descriptor and another thread's `open` between this fork and
+this exec leaks into the child regardless. And the child reports `execve`'s failure over a
+close-on-exec pipe, which is the only way the parent can tell "the command does not exist" from
+"the command ran and exited" — without it `runTask` succeeds for a command that never existed.
+
+### One reader thread per task
+
+`adapters/outbound/task_threads.rs` owns them. A thread per task rather than a poll loop over all
+of them, because the engine is runtime-free and a blocking `read` is the cheapest correct way to
+wait; the cost is a thread per task, which for a developer's handful of builds is not a cost.
+
+The thread is the only writer of that task's frames, and that is what makes FR-022 structural.
+Output and exit are written by the same thread in the order it produced them, so the exit cannot
+overtake the output. Nothing enforces this at the type level and nothing needs to — there is one
+thread and it runs in order.
+
+### The chunker is pure
+
+`application/output.rs` decides what becomes a frame. Fed bytes and told the time, opening
+nothing and spawning nothing, which is what makes its two bounds testable as arithmetic instead
+of as sleeps.
+
+Two bounds, and they are different kinds of thing. `CHUNK_BYTES` (64 KiB) caps a frame so the
+1 MiB frame limit of §4.1 is never approached once base64 has grown it by a third.
+`CHUNK_INTERVAL_MS` (20 ms) caps how long a byte waits — and it is a **throttle, not a debounce**,
+for exactly the reason the coalescer's window is. The first implementation reset the deadline on
+every `accept`, which meant a process writing steadily — a shell printing a prompt, a compiler
+logging one line per file — emitted nothing at all, while every volume test passed. The deadline
+is set by the first byte of a pending chunk and cleared when the chunk goes out.
+
+### Backpressure is the absence of a mechanism
+
+`RETENTION_BYTES` (4 MiB) is what a detached task may hold. On reaching it the reader **stops
+reading** its pseudo-terminal. Nothing is dropped and nothing is queued: the terminal's own buffer
+fills, and the task blocks in `write` until a client comes back. That is the whole of FR-013, and
+it works because nothing buffers between the producer and the wire.
+
+This is why the retention assertion has to be made **detached**. With a client attached, retention
+is released as each frame goes out and the peak is one chunk — so an assertion made only there is
+satisfied by an engine that never bounds anything, which is what the third mutation in
+[quickstart.md](../specs/007-execution-terminals/quickstart.md) §10 demonstrated by passing.
+
+### The fairness gate
+
+§4.6 requires interactive traffic to win the race to the wire and states that the engine does not
+queue. A mutex is first-come by acquisition, which was enough while every producer was small: a
+task emitting tens of megabytes takes `FrameWriter`'s lock hundreds of times, and a reply arriving
+behind those acquisitions waits for all of them.
+
+So `write_bulk` yields to waiting interactive writers — up to `CONSECUTIVE_YIELDS` (8) times,
+after which it writes anyway. The bound is a safety valve: priority is a strong preference and
+never a monopoly, because F007's language servers stream diagnostics for as long as indexing
+lasts and an unbounded gate would stall a build behind them.
+
+A queue would have been the obvious alternative and would have cost both properties this
+direction depends on. It ends the backpressure — a producer that is buffered is a producer that
+never blocks, so the chain from retention bound to `write` stops existing — and it splits a task's
+output from its exit into two priority classes, letting the exit overtake the output FR-022
+requires it to follow. Nothing in `frame_writer.rs` buffers a byte; a bulk writer waits its turn
+rather than handing its output to something else.
+
+**What the gate measures at today's volumes: nothing.** `engine/tests/task_budget.rs` prints
+21.41 ms gated against 21.33 ms ungated at three concurrent producers — inside the noise, against
+a 500 ms budget. The case it is built for is F007's sustained interactive producer, which does
+not exist yet.
+
+That measurement is not an argument for deleting it, and the distinction is worth keeping.
+`engine/tests/frame_writer_fairness.rs` asserts the property directly rather than through a
+timing budget: disable the yield loop and
+`a_bulk_writer_parked_at_the_gate_is_overtaken_by_a_later_interactive_one` fails. So the gate
+implements a stated requirement, that requirement has a discriminating test, and the timing
+number says only that nothing stresses it yet — which is a fact about the current workload, not
+about the mechanism. Recorded here so the next reader weighs both rather than re-deriving one of
+them.
+
+Note that the sibling test `the_anti_starvation_bound_releases_a_yielding_writer` **passes**
+against that same mutation, and should: with the gate disabled a bulk writer never parks, so it
+is trivially released. It guards the bound, not the gate. Two tests, two properties.

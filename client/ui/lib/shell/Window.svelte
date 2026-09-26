@@ -9,9 +9,39 @@
   import { MIN_TOOL_WINDOW_WIDTH } from '../rail';
   import TabStrip from '../tabs/TabStrip.svelte';
   import StatusBar from '../statusbar/StatusBar.svelte';
+  import TerminalPanel from '../terminal/TerminalPanel.svelte';
+  import { terminals } from '../terminal/terminals.svelte';
+  import { installTerminalHarness } from '../terminal/harness';
+  import { listenToEngine } from '../terminal/engine';
+  import { revealTerminal } from '../terminal/start';
+  import { describeEnding } from '../terminal/ending';
+  import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
   import { shellState } from '../state.svelte';
+
+  // The end-to-end suite's way in to the terminal renderer. Installs nothing outside
+  // automation; `harness.ts` says why that guard is not merely tidiness.
+  $effect(() => installTerminalHarness());
+
+  // The product route for a task's output. Separate from the harness above, which exists only
+  // under automation: this one runs always, and both end at `applyChunk` so the suite drives the
+  // same rendering the engine does.
+  $effect(() => {
+    // The bridge is async, so the effect can be torn down before the listener is registered.
+    // Awaiting the promise before unlistening is what stops a listener outliving this component.
+    const pending = listenToEngine();
+    return () => {
+      void pending.then((unlisten) => unlisten()).catch(() => {});
+    };
+  });
+
+  /// `Terminal — <workspace>` remotely, `Terminal — local` locally, following the prototype.
+  const dockTitle = $derived.by(() => {
+    const ws = shellState.workspace;
+    if (!ws) return 'Terminal';
+    return ws.location_type === 'REMOTE' ? `Terminal \u2014 ${ws.name}` : 'Terminal \u2014 local';
+  });
 
   interface Props {
     session: SessionSnapshot;
@@ -89,10 +119,55 @@
     void persist(() => ipc.layoutSetRegion(region, layout[region].visible, extent));
   }
 
-  function toggleRegion(region: 'output') {
-    const visible = !layout[region].visible;
+  function setRegionVisible(region: 'output', visible: boolean) {
+    if (layout[region].visible === visible) return;
     layout = { ...layout, [region]: { ...layout[region], visible } };
     void persist(() => ipc.layoutSetRegion(region, visible, layout[region].extent));
+  }
+
+  /// How the terminal on screen ended, or null while it is running.
+  ///
+  /// Read from the panel the dock is showing rather than from the task set, because the tab
+  /// describes what is in front of the developer. A second task ending elsewhere is that task's
+  /// news, and overwriting the badge with it would tell them about a terminal they are not
+  /// looking at.
+  const terminalBadge = $derived.by(() => {
+    const id = terminals.active;
+    if (!id || !terminals.has(id)) return null;
+    const ending = terminals.panel(id).ending;
+    return ending ? describeEnding(ending) : null;
+  });
+
+  /// Which dock tab is selected, or `''` for none.
+  ///
+  /// Presentation, like `terminals.active`, so it lives here rather than in the session: the core
+  /// owns what a task *is*, not which of four tabs is on top.
+  ///
+  /// **Empty on launch, and not persisted, which is what makes the click meaningful.** The dock
+  /// itself defaults to visible (F000's layout), so a tab selected up front would mean a login
+  /// shell running before anyone asked -- and a login shell runs the developer's whole profile.
+  /// VS Code reaches the same behaviour by defaulting its panel closed; the dock here is open, so
+  /// the distinction moves to the tab. Until one is clicked the panel shows its idle prompt,
+  /// which is the prototype's own empty state.
+  let dockTab = $state('');
+
+  /// Clicking a dock tab, which is the only way the terminal starts.
+  ///
+  /// VS Code and IntelliJ both behave this way and the reason is worth stating: a login shell
+  /// runs the developer's profile, and running it for somebody who never opened the panel is a
+  /// side effect nobody asked for. Clicking the tab a second time shows the shell already
+  /// running, because `revealTerminal` starts at most one.
+  ///
+  /// Clicking the current tab while the dock is open closes it, which is what both editors do
+  /// and what makes the strip a control rather than a label.
+  function selectDockTab(id: string) {
+    if (dockTab === id && layout.output.visible) {
+      setRegionVisible('output', false);
+      return;
+    }
+    dockTab = id;
+    setRegionVisible('output', true);
+    if (id === 'terminal') void revealTerminal();
   }
 
   async function reload() {
@@ -169,14 +244,23 @@
           onresize={(e) => resizeRegion('output', e)}
         />
         <Region
-          label="Output"
+          label={dockTitle}
+          testid="region-output"
           visible={layout.output.visible}
           extent={layout.output.extent}
           axis="block"
         >
-          <pre class="placeholder">Output</pre>
+          <TerminalPanel taskId={terminals.active} workspace={shellState.workspace} />
         </Region>
       {/if}
+      <!-- Below the dock, and outside the `visible` branch: the strip is how the dock is
+           opened, so it cannot be inside the thing it opens. The prototype puts it here too. -->
+      <DockTabs
+        active={dockTab}
+        open={layout.output.visible}
+        onselect={selectDockTab}
+        {terminalBadge}
+      />
     </main>
   </div>
 
@@ -221,31 +305,5 @@
     padding: var(--space-3);
     color: var(--color-neutral-400);
     font-size: var(--vk-fs);
-  }
-  .placeholder {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3);
-    margin: 0;
-  }
-  .placeholder button {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-1) var(--space-2);
-    background: transparent;
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-sm);
-    color: var(--color-text);
-    font-family: var(--font-body);
-    cursor: pointer;
-  }
-  .placeholder button:hover {
-    background: var(--color-accent-800);
-  }
-  .placeholder button:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
   }
 </style>

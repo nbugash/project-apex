@@ -25,6 +25,8 @@ pub enum Owner {
     F006Editor,
     /// Engine-side content search.
     F013Search,
+    /// Running tasks on the developer's own machine rather than the instance.
+    F015LocalMode,
 }
 
 impl std::fmt::Display for Owner {
@@ -33,6 +35,7 @@ impl std::fmt::Display for Owner {
             Self::F004FileWatch => "F004 file-watch-sync",
             Self::F006Editor => "F006 editor-integration",
             Self::F013Search => "F013 global-search",
+            Self::F015LocalMode => "F015 local-mode",
         };
         write!(f, "{s}")
     }
@@ -58,6 +61,21 @@ pub enum ProviderError {
     TooLarge { total_size: u64 },
     /// The transport failed, or the engine sent something unintelligible.
     Transport(String),
+    /// No live task with that identity (`-32006`).
+    ///
+    /// Means the identity is *released*, never that a task is merely finished: FR-019 makes
+    /// terminating an already-exited task a success while its ending is still undelivered.
+    TaskNotFound,
+    /// That identity is already running (`-32010`).
+    ///
+    /// Distinct from `TaskNotFound`, which means the opposite. A client choosing its own task ids
+    /// needs to tell "you already have one of these" from "you have none".
+    TaskAlreadyRunning,
+    /// The command could not be started (`-32011`), with the reason the engine gave.
+    ///
+    /// Never `NotFound`, which §4.4 reserves for a path inside a workspace: a missing executable
+    /// and a missing file lead to different things being said to the developer.
+    CommandNotStarted { reason: String },
     /// Declared by §6.1, implemented by a later feature (FR-004).
     Unsupported { owner: Owner },
 }
@@ -70,6 +88,11 @@ impl std::fmt::Display for ProviderError {
             Self::UnknownWorkspace => write!(f, "workspace is not registered with the engine"),
             Self::WorkspaceGone => write!(f, "the workspace root no longer exists"),
             Self::Offline => write!(f, "not connected"),
+            Self::TaskNotFound => write!(f, "no task with that identity is running"),
+            Self::TaskAlreadyRunning => write!(f, "a task with that identity is already running"),
+            Self::CommandNotStarted { reason } => {
+                write!(f, "the command could not be started: {reason}")
+            }
             Self::TooLarge { total_size } => {
                 write!(f, "{total_size} bytes exceeds the inline read limit")
             }

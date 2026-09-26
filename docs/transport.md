@@ -52,6 +52,63 @@ not complete until its response arrives, and must never be reported as successfu
 asked for it and background when a prefetch did. Bulk work sent as `Interactive` defeats the
 guarantee for everyone.
 
+### Notifications: no id, no reply, no outcome (F010)
+
+`send` promises exactly one outcome, exactly once. A JSON-RPC notification has none, so it gets
+its own method — `RequestSender::notify` — rather than a flag on `Request`. The difference is not
+a property of the message but of what the caller may do next: §4.2 gives a notification no
+response at all, so putting one through `send` would wait for a reply that is never coming, and
+the caller could not tell that from a slow engine.
+
+Two methods motivated it, and both are keystroke-rate:
+
+| Method | Why it carries no id |
+|---|---|
+| `execution/writeStdin` | A reply per keypress doubles the traffic of typing and tells the typist nothing they will not see in the echo. |
+| `execution/resizePty` | A drag emits a resize per frame; the useful answer is the reflow, not an acknowledgement of the size before last. |
+
+The cost is real and is the contract rather than a shortcoming: an unknown task, an exited task
+and a full buffer are **indistinguishable** to the sender, because there is no response to carry
+a refusal in. Anything that must be refused visibly stays a request — `execution/terminate` and
+`execution/close` have answers for exactly that reason.
+
+On the engine side this is a second dispatch path. A frame with no `id` cannot be answered, so it
+must not be routed through the machinery that builds a reply for every request; an id-less frame
+that took the normal path would emit a response with a null id, which §4.2 forbids and a client
+would have nothing to match against.
+
+### Frames the engine sends unasked
+
+JSON-RPC is bidirectional and the engine uses that: `execution/onStdout`, `execution/onExit` and
+`workspace/onFileEvent` arrive with no id to correlate.
+
+Until F010 the transport **dropped them**. `deliver` matched replies to requests, and a frame
+that is not a reply fell off the end of that function — correctly, in the sense that reply
+matching has nothing to say about it, and catastrophically, in the sense that nothing else was
+looking. Two features had already built their receiving ends against a route that did not exist.
+
+`NotificationSink` is that route. The transport calls it for any id-less frame; the composition
+root decides where it goes, which today is the webview over one Tauri event.
+
+**A sink is called on the reader thread and must not block.** This is the backpressure contract,
+not a performance note. The chain is: sink blocks → reader stops → engine's stdout fills →
+engine's frame writer blocks → its task reader stops → the pseudo-terminal fills → the task
+blocks in `write`. Nothing buffers anywhere along it, which is what makes FR-013 true without a
+flow-control mechanism. A queue between the reader and the sink would sever it at the cheapest
+place to sever and the hardest place to notice.
+
+See A-NOTIFYROUTE for the alternatives weighed.
+
+### Running the engine without a host
+
+`ProcessSpawner` is what `SshTransport` uses to start its child, and it does not care what that
+child is. `LocalEngineSpawner` runs the engine binary directly, so the same transport — framing,
+registry, timeouts, cancellation, connection state — carries the protocol over a plain pipe.
+
+Selected when no host is named and an engine binary is present, so it stays out of a packaged
+application. It is not F015 `local-mode`, which is about having no engine at all; see
+A-LOCALENGINE.
+
 ## Connecting
 
 Two phases, and §3.3 makes them mutually exclusive rather than merely ordered:

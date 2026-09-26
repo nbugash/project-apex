@@ -6,8 +6,13 @@ use super::layout::Layout;
 use super::rail::{RailCatalogue, ToolWindowState};
 use serde::{Deserialize, Serialize};
 
-/// Raised to 2 by the tool window fields F018 added.
-pub const SCHEMA_VERSION: u32 = 2;
+/// Raised to 2 by the tool window fields F018 added, and to 3 by F010's task identities.
+///
+/// A store written at an **older** version still loads: every field added since carries
+/// `serde(default)`, so a version 1 file parses and gets the defaults rather than failing, which
+/// is what keeps an existing user's geometry, layout and tabs through an upgrade. A store written
+/// at a **newer** version is refused, because this image cannot know what it would be discarding.
+pub const SCHEMA_VERSION: u32 = 3;
 const MAX_NAME: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -68,6 +73,30 @@ pub struct PersistedSession {
     /// keeps an existing user's geometry, layout and tabs through the upgrade.
     #[serde(default)]
     pub tool_window: ToolWindowState,
+    /// Added at schema version 3 (A-STATE2, FR-031d). The same migration for the same reason.
+    ///
+    /// **The identities and nothing else.** A task outlives the connection that started it, and
+    /// `execution/attach` reaches one by an identity the client must already know -- so a client
+    /// that restarts needs its identities to have survived the restart, or reattachment works
+    /// only for a client that never closed.
+    ///
+    /// No command, and no output. Storing a command would put a credential passed in argv on
+    /// disk, which FR-005a's accepted boundary does not extend to; storing output would make the
+    /// store grow without bound for a client that never returns. The identity is the smallest
+    /// thing that restores reachability, and `execution/list` covers the client that has lost
+    /// even that.
+    #[serde(default)]
+    pub tasks: Vec<PersistedTask>,
+}
+
+/// One task this client started, as the store remembers it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedTask {
+    pub task_id: String,
+    /// Which workspace owns it. `execution/attach` takes both, and a task whose workspace the
+    /// client has forgotten cannot be attached to -- it would have to enumerate to find it again,
+    /// which is the recovery path rather than the ordinary one.
+    pub workspace_id: String,
 }
 
 impl Default for PersistedSession {
@@ -80,6 +109,7 @@ impl Default for PersistedSession {
             documents: Vec::new(),
             focused_document_id: None,
             tool_window: ToolWindowState::default(),
+            tasks: Vec::new(),
         }
     }
 }
@@ -96,6 +126,9 @@ pub struct SessionSnapshot {
     /// FR-011. Without this the interface could persist tool window state but never read it
     /// back, so a restart would silently reset the panel every time.
     pub tool_window: ToolWindowState,
+    /// The identities a restarted client reattaches to (A-STATE2, FR-031d). Crossing the bridge
+    /// because the panel is what reattaches, and it cannot ask for what it was never told.
+    pub tasks: Vec<PersistedTask>,
 }
 
 impl From<&PersistedSession> for SessionSnapshot {
@@ -107,6 +140,7 @@ impl From<&PersistedSession> for SessionSnapshot {
             documents: p.documents.clone(),
             focused_document_id: p.focused_document_id.clone(),
             tool_window: p.tool_window.clone(),
+            tasks: p.tasks.clone(),
         }
     }
 }

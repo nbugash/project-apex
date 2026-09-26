@@ -47,6 +47,18 @@ pub fn request_body(id: &RequestId, request: &Request) -> String {
     )
 }
 
+/// A frame with no id: §4.2 gives a notification no response at all.
+///
+/// Shares nothing with `request_body` beyond its shape, because the difference is the id and
+/// building both from one function would mean an `Option<&RequestId>` at every call site to
+/// express a distinction the caller always knows statically.
+pub fn notification_body(request: &Request) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","method":"{}","params":{}}}"#,
+        request.method, request.params
+    )
+}
+
 /// The cancellation notification for a request being withdrawn (§4.5).
 pub fn cancellation_body(id: &RequestId) -> String {
     format!(r#"{{"jsonrpc":"2.0","method":"{CANCEL_METHOD}","params":{{"id":"{id}"}}}}"#)

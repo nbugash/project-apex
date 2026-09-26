@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { WorkspaceTree, type FileChange, type Node } from '../../client/ui/lib/workspace/tree.svelte';
+import {
+  WorkspaceTree,
+  type FileChange,
+  type Node,
+} from '../../client/ui/lib/workspace/tree.svelte';
 
 /// Applying an event must correct the tree, not rebuild it.
 ///

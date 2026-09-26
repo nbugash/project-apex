@@ -5,10 +5,11 @@
 //! (Principle VIII). Behaviour is F002's, unchanged by the move.
 
 use crate::application::use_cases::workspace;
+use crate::domain::task::TaskSignal;
 use crate::handshake;
 use crate::session::{self, SessionRegistry};
 use apex_protocol::framing::FrameCodec;
-use apex_protocol::wire::HandshakeRequest;
+use apex_protocol::wire::{codes, HandshakeRequest};
 use bytes::BytesMut;
 use std::io::Write;
 
@@ -27,12 +28,128 @@ pub enum Action {
     Restart(Vec<u8>),
 }
 
+/// Which §4.4 code a start refusal becomes, and what a human is told.
+///
+/// Every `SpawnFailure` becomes `-32011`, because FR-004 and SC-015 admit one outcome for a
+/// command that could not be started and §4.4 gives that outcome one code. The distinction that
+/// matters to a developer is whose fault it is, which is what the message carries -- and no
+/// message may carry the environment (FR-005a, SC-025).
+fn refusal_to_wire(
+    refusal: &crate::application::use_cases::task::StartRefusal,
+) -> (i32, &'static str) {
+    use crate::application::ports::task_runner::SpawnFailure;
+    use crate::application::use_cases::task::StartRefusal as R;
+    match refusal {
+        R::NotRegistered => (
+            codes::WORKSPACE_NOT_REGISTERED,
+            "workspace is not registered",
+        ),
+        R::RootGone => (codes::WORKSPACE_GONE, "the workspace root no longer exists"),
+        R::PathRefused => (
+            codes::PATH_REFUSED,
+            "the working directory escapes the workspace root",
+        ),
+        R::NotFound => (codes::NOT_FOUND, "the working directory does not exist"),
+        R::AlreadyRunning => (
+            codes::TASK_ALREADY_RUNNING,
+            "a task is already running under that identity; attach to it rather than starting it",
+        ),
+        R::CouldNotStart(SpawnFailure::NotExecutable) => (
+            codes::COMMAND_NOT_STARTED,
+            "the command was not found, or is not executable",
+        ),
+        R::CouldNotStart(SpawnFailure::CwdUnusable) => (
+            codes::COMMAND_NOT_STARTED,
+            "the working directory could not be entered",
+        ),
+        R::CouldNotStart(SpawnFailure::NoDevice) => (
+            codes::COMMAND_NOT_STARTED,
+            "the instance could not allocate a terminal or a pipe",
+        ),
+        R::CouldNotStart(SpawnFailure::LimitRefused) => (
+            codes::COMMAND_NOT_STARTED,
+            "the instance refused the task's resource limits",
+        ),
+        R::CouldNotStart(SpawnFailure::Failed(_)) => (
+            codes::COMMAND_NOT_STARTED,
+            "the command could not be started",
+        ),
+    }
+}
+
+/// Act on a frame that carries no `id`.
+///
+/// A notification has no response (§4.2), so every arm here returns `Action::Nothing` and the
+/// return value says only what the loop should do next -- never what to send. An unknown method
+/// is dropped in silence, because there is no id to answer and nothing else §4.2 permits.
+///
+/// F010's `execution/writeStdin` and `execution/resizePty` are the catalogue's first
+/// client-to-engine notifications, and they land here.
+/// The client-to-engine notifications: input and resize.
+///
+/// **Everything here returns `Action::Nothing`, and that is the contract rather than an
+/// oversight.** §4.2 gives a notification no response, so an unknown `taskId`, a task that has
+/// already exited, a payload that does not parse, `data` that is not base64, and a `cols` or
+/// `rows` that is absent, zero or not an integer are all dropped in the same silence. There is no
+/// response to carry a refusal in, and inventing an error frame for a request that had no id
+/// would be an unsolicited reply the client cannot match to anything.
+fn dispatch_notification(
+    method: &str,
+    params: Option<&serde_json::Value>,
+    tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
+) -> Action {
+    use crate::application::use_cases::task::{resize_task, write_input};
+
+    let (Some(service), Some(params)) = (tasks, params) else {
+        return Action::Nothing;
+    };
+    match method {
+        "execution/writeStdin" => {
+            let Ok(p) =
+                serde_json::from_value::<apex_protocol::wire::WriteStdinParams>(params.clone())
+            else {
+                return Action::Nothing;
+            };
+            // Decoded exactly once, here, at the boundary. Everything inward takes bytes.
+            let Ok(bytes) = apex_protocol::base64::decode(&p.data) else {
+                return Action::Nothing;
+            };
+            let _ = write_input(&bytes, service.control(&p.task_id));
+            Action::Nothing
+        }
+        "execution/resizePty" => {
+            let Ok(p) =
+                serde_json::from_value::<apex_protocol::wire::ResizePtyParams>(params.clone())
+            else {
+                return Action::Nothing;
+            };
+            let _ = resize_task(
+                service.shape(&p.task_id),
+                p.cols,
+                p.rows,
+                service.control(&p.task_id),
+            );
+            Action::Nothing
+        }
+        _ => Action::Nothing,
+    }
+}
+
 /// Answer one request, or say what else the loop must do.
+/// Seven parameters, which is one more than is comfortable and **does not extend again**.
+///
+/// F004 threaded `watchers` this way and F010 threads `tasks` the same way, which is the right
+/// call for the second collaborator and the wrong one for the third. The next feature that needs
+/// one introduces a `DispatchContext` carrying these by reference rather than an eighth argument
+/// -- recorded here because the moment to notice is when adding the next one, not when reading
+/// the signature afterwards.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch(
     registry: &SessionRegistry,
     roots: &crate::application::use_cases::workspace::InMemoryRoots,
     fs: &dyn crate::application::ports::file_system::FileSystem,
     watchers: Option<&crate::adapters::outbound::watchers::Watchers>,
+    tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
     codec: &FrameCodec,
     body: &str,
 ) -> Action {
@@ -40,16 +157,259 @@ pub fn dispatch(
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
         return Action::Nothing;
     };
-    let Some(id) = parsed
-        .get("id")
-        .and_then(|i| i.as_str())
-        .map(str::to_string)
-    else {
-        return Action::Nothing;
-    };
     let method = parsed.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
+    // Read as a `Value`, not with `as_str`. Two defects lived in that one call. An **absent**
+    // id is a notification, and returning here meant `execution/writeStdin` and
+    // `execution/resizePty` -- the catalogue's first client-to-engine notifications -- could
+    // not reach a handler at all, because this returned before the method match. And a
+    // **numeric** id, legal under JSON-RPC 2.0, is not a string, so it took the same exit and
+    // was dropped as though it were a notification.
+    let Some(id) = parsed.get("id").cloned() else {
+        return dispatch_notification(method, parsed.get("params"), tasks);
+    };
+    let id = &id;
+
     match method {
+        "execution/runTask" => {
+            let Some(service) = tasks else {
+                // No task service composed: the engine builds and runs without one, and
+                // `runTask` is refused with a reason rather than appearing to succeed --
+                // F004's degradation shape (FR-027, A-WATCHLOCAL).
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::COMMAND_NOT_STARTED,
+                    "this engine has no task service",
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::RunTaskParams>(params) {
+                Ok(p) => match service.run(&p, roots, fs) {
+                    Ok(pid) => reply_or_nothing(encode_result(
+                        codec,
+                        id,
+                        &apex_protocol::wire::RunTaskResult { pid },
+                    )),
+                    Err(refusal) => {
+                        let (code, message) = refusal_to_wire(&refusal);
+                        reply_or_nothing(encode_error(codec, id, code, message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "execution/attach" => {
+            use crate::application::use_cases::task::AttachRefusal;
+            let Some(service) = tasks else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "this engine has no task service",
+                ));
+            };
+            #[derive(serde::Deserialize)]
+            struct Params {
+                workspace_id: apex_protocol::wire::WorkspaceId,
+                task_id: apex_protocol::wire::TaskId,
+            }
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let p = match serde_json::from_value::<Params>(params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return reply_or_nothing(encode_error(
+                        codec,
+                        id,
+                        INVALID_PARAMS,
+                        &format!("{e}"),
+                    ))
+                }
+            };
+            match service.attach(&p.workspace_id, &p.task_id) {
+                Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
+                // A task the engine holds but another workspace owns is **not** a missing task.
+                // Answering -32006 would send a client looking for a bug it does not have.
+                Err(AttachRefusal::NotThisWorkspace) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::WORKSPACE_NOT_REGISTERED,
+                    "that workspace does not own this task",
+                )),
+                Err(AttachRefusal::NotFound) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "no task with that identity is running",
+                )),
+            }
+        }
+        "execution/list" => {
+            let Some(service) = tasks else {
+                // An engine with no task service holds no tasks, and saying so is an empty list
+                // rather than an error: the client asked what is running, and nothing is.
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::ListResult { tasks: Vec::new() },
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            // An absent `params` is a legal listing of everything, so a parse failure falls back
+            // to "no filter" rather than refusing: `execution/list` is the recovery path for a
+            // client that has lost its state, and refusing it on a malformed filter would deny
+            // recovery to the client that most needs it.
+            let filter = serde_json::from_value::<apex_protocol::wire::ListParams>(params)
+                .ok()
+                .and_then(|p| p.workspace_id);
+            let listed = service.list(filter.as_ref());
+            reply_or_nothing(encode_result(
+                codec,
+                id,
+                &apex_protocol::wire::ListResult { tasks: listed },
+            ))
+        }
+        "workspace/close" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let p =
+                match serde_json::from_value::<apex_protocol::wire::WorkspaceCloseParams>(params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return reply_or_nothing(encode_error(
+                            codec,
+                            id,
+                            INVALID_PARAMS,
+                            &format!("{e}"),
+                        ))
+                    }
+                };
+
+            // Deregister **first**, and let its refusal be the answer to a second close.
+            //
+            // A workspace never closes itself, so a second close means the client has lost track
+            // of its own state and telling it so is a service (A-WSCLOSE). Deregistering is also
+            // `register`'s counterpart: a close that left the id registered would leave the
+            // engine holding a canonicalised root for a workspace the client has finished with.
+            //
+            // `-32009` is never the answer here. Refusing to stop the tasks of a deleted
+            // directory would strand exactly what FR-025 forbids, so a root that has vanished is
+            // still closed -- the tasks are what matter, not the directory.
+            if roots.deregister(p.workspace_id.0.as_str()).is_err() {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::WORKSPACE_NOT_REGISTERED,
+                    "workspace is not registered with the engine",
+                ));
+            }
+
+            // Its watches go with it. A watch on a workspace nobody has open is an inotify
+            // descriptor held for a directory nobody is looking at.
+            if let Some(w) = watchers {
+                w.forget(&p.workspace_id);
+            }
+
+            if let Some(service) = tasks {
+                // Every task signalled before the response is written, and **not** every task
+                // ended. Ending takes up to the five-second escalation and this is the single
+                // dispatch thread, which is also the only reader of the client's stdin: waiting
+                // would mean five seconds in which no keystroke is so much as read off the pipe.
+                // SC-013 is observed through each task's `onExit` instead (A-WSCLOSE, amended).
+                for plan in service.close_workspace(&p.workspace_id) {
+                    let Some(control) = service.control(&plan.id) else {
+                        continue;
+                    };
+                    let _ = control.signal(plan.send);
+                    if let (Some(at), Some(pid)) = (plan.escalate_at, service.pid(&plan.id)) {
+                        service
+                            .escalations()
+                            .register(plan.id.clone(), pid, &control, at);
+                    }
+                }
+            }
+            reply_or_nothing(encode_result(codec, id, &serde_json::Value::Null))
+        }
+        "execution/terminate" => {
+            use crate::application::use_cases::task::stop_task;
+            let Some(service) = tasks else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "this engine has no task service",
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            // A signal outside the closed three is refused **before anything reaches a
+            // syscall**, by the type: `TerminateSignal` has three variants and serde rejects the
+            // rest, so an arbitrary string from the wire never becomes a number this process
+            // passes to `kill`. That is `ResolvedPath`'s reasoning applied to a second kind of
+            // untrusted input -- the refusal is structural rather than a check somebody has to
+            // remember to write.
+            let p = match serde_json::from_value::<apex_protocol::wire::TerminateParams>(params) {
+                Ok(p) => p,
+                Err(e) => {
+                    return reply_or_nothing(encode_error(
+                        codec,
+                        id,
+                        INVALID_PARAMS,
+                        &format!("{e}"),
+                    ))
+                }
+            };
+            // No live identity is `-32006`. FR-019's already-exited task is **not** this: its
+            // identity is still live until its `onExit` has been delivered, so it is found here
+            // and the signal goes to a process that is already gone, which the kernel ignores.
+            let Some(control) = service.control(&p.task_id) else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "no task with that identity is running",
+                ));
+            };
+            let signal = match p.signal {
+                apex_protocol::wire::TerminateSignal::Int => TaskSignal::Int,
+                apex_protocol::wire::TerminateSignal::Term => TaskSignal::Term,
+                apex_protocol::wire::TerminateSignal::Kill => TaskSignal::Kill,
+            };
+            match stop_task(&p.task_id, signal, service.now()) {
+                Ok(plan) => {
+                    let _ = control.signal(plan.send);
+                    if let (Some(at), Some(pid)) = (plan.escalate_at, service.pid(&p.task_id)) {
+                        // Keyed on the pair, so a deadline cannot outlive the process it was
+                        // made for and reach a task that reused the identity.
+                        service
+                            .escalations()
+                            .register(p.task_id.clone(), pid, &control, at);
+                    }
+                    reply_or_nothing(encode_result(codec, id, &serde_json::Value::Null))
+                }
+                Err(_) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::TASK_NOT_FOUND,
+                    "no task with that identity is running",
+                )),
+            }
+        }
         "auth/handshake" => {
             let params = parsed
                 .get("params")
@@ -60,10 +420,10 @@ pub fn dispatch(
             match serde_json::from_value::<HandshakeRequest>(params) {
                 Ok(request) => {
                     let response = handshake::respond(registry, &request);
-                    reply_or_nothing(encode_result(codec, &id, &response))
+                    reply_or_nothing(encode_result(codec, id, &response))
                 }
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -76,7 +436,7 @@ pub fn dispatch(
         //
         // The reply is written and flushed *before* exec, because after it there is no
         // process left to answer with.
-        "session/restart" => match encode_result(codec, &id, &serde_json::Value::Null) {
+        "session/restart" => match encode_result(codec, id, &serde_json::Value::Null) {
             Some(frame) => Action::Restart(frame),
             None => Action::Nothing,
         },
@@ -87,7 +447,7 @@ pub fn dispatch(
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             let Ok(req) = serde_json::from_value::<apex_protocol::wire::WatchParams>(params) else {
-                return reply_or_nothing(encode_error(codec, &id, -32602, "invalid params"));
+                return reply_or_nothing(encode_error(codec, id, -32602, "invalid params"));
             };
             let root = match roots.resolve(&req.workspace_id.0) {
                 Ok(r) => r,
@@ -95,13 +455,13 @@ pub fn dispatch(
                     let refusal =
                         crate::application::use_cases::workspace::RequestRefusal::Root(why);
                     let (code, message) = refusal.wire();
-                    return reply_or_nothing(encode_error(codec, &id, code, &message));
+                    return reply_or_nothing(encode_error(codec, id, code, &message));
                 }
             };
             let Some(exclusions) = roots.exclusions(&req.workspace_id.0) else {
                 return reply_or_nothing(encode_error(
                     codec,
-                    &id,
+                    id,
                     apex_protocol::wire::codes::WORKSPACE_NOT_REGISTERED,
                     "workspace is not registered with this engine",
                 ));
@@ -112,27 +472,27 @@ pub fn dispatch(
             let Some(watchers) = watchers else {
                 return reply_or_nothing(encode_error(
                     codec,
-                    &id,
+                    id,
                     -32601,
                     "this engine build cannot watch the filesystem",
                 ));
             };
             if method == "workspace/watch" {
                 match watchers.watch(&req.workspace_id, &root, exclusions, req.paths) {
-                    Some(result) => reply_or_nothing(encode_result(codec, &id, &result)),
+                    Some(result) => reply_or_nothing(encode_result(codec, id, &result)),
                     None => {
-                        reply_or_nothing(encode_error(codec, &id, -32603, "the watcher stopped"))
+                        reply_or_nothing(encode_error(codec, id, -32603, "the watcher stopped"))
                     }
                 }
             } else {
                 match watchers.unwatch(&req.workspace_id, &root, exclusions, req.paths) {
                     Some(watching) => reply_or_nothing(encode_result(
                         codec,
-                        &id,
+                        id,
                         &apex_protocol::wire::UnwatchResult { watching },
                     )),
                     None => {
-                        reply_or_nothing(encode_error(codec, &id, -32603, "the watcher stopped"))
+                        reply_or_nothing(encode_error(codec, id, -32603, "the watcher stopped"))
                     }
                 }
             }
@@ -155,17 +515,17 @@ pub fn dispatch(
                             name,
                             canonical_path: canonical,
                         };
-                        reply_or_nothing(encode_result(codec, &id, &result))
+                        reply_or_nothing(encode_result(codec, id, &result))
                     }
                     Err(e) => {
                         let (code, message) =
                             crate::application::use_cases::workspace::RequestRefusal::Root(e)
                                 .wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -186,12 +546,12 @@ pub fn dispatch(
                         {
                             Ok((items, next_cursor)) => reply_or_nothing(encode_result(
                                 codec,
-                                &id,
+                                id,
                                 &apex_protocol::wire::ReadDirectoryResult { items, next_cursor },
                             )),
                             Err(e) => reply_or_nothing(encode_error(
                                 codec,
-                                &id,
+                                id,
                                 apex_protocol::wire::codes::NOT_FOUND,
                                 &e.to_string(),
                             )),
@@ -199,11 +559,11 @@ pub fn dispatch(
                     }
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -220,21 +580,21 @@ pub fn dispatch(
                     &req.relative_path,
                 ) {
                     Ok(path) => match workspace::stat(fs, &path) {
-                        Ok(result) => reply_or_nothing(encode_result(codec, &id, &result)),
+                        Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
                         Err(e) => reply_or_nothing(encode_error(
                             codec,
-                            &id,
+                            id,
                             apex_protocol::wire::codes::NOT_FOUND,
                             &e.to_string(),
                         )),
                     },
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
@@ -251,13 +611,13 @@ pub fn dispatch(
                     &req.relative_path,
                 ) {
                     Ok(path) => match workspace::read_file(fs, &path, req.offset, req.length) {
-                        Ok(Ok(result)) => reply_or_nothing(encode_result(codec, &id, &result)),
+                        Ok(Ok(result)) => reply_or_nothing(encode_result(codec, id, &result)),
                         // Refused rather than truncated: a silent truncation is a corrupt file
                         // the caller cannot see. The client routes to the bulk path instead.
                         Ok(Err(workspace::ReadRefusal::TooLarge { total_size })) => {
                             reply_or_nothing(encode_error(
                                 codec,
-                                &id,
+                                id,
                                 INVALID_PARAMS,
                                 &format!(
                                     "{total_size} bytes exceeds the inline read limit; use the \
@@ -267,23 +627,23 @@ pub fn dispatch(
                         }
                         Err(e) => reply_or_nothing(encode_error(
                             codec,
-                            &id,
+                            id,
                             apex_protocol::wire::codes::NOT_FOUND,
                             &e.to_string(),
                         )),
                     },
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
-                        reply_or_nothing(encode_error(codec, &id, code, &message))
+                        reply_or_nothing(encode_error(codec, id, code, &message))
                     }
                 },
                 Err(e) => {
-                    reply_or_nothing(encode_error(codec, &id, INVALID_PARAMS, &format!("{e}")))
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
                 }
             }
         }
         "session/shutdown" => {
-            if let Some(frame) = encode_result(codec, &id, &serde_json::Value::Null) {
+            if let Some(frame) = encode_result(codec, id, &serde_json::Value::Null) {
                 let mut out = std::io::stdout();
                 let _ = out.write_all(&frame);
                 let _ = out.flush();
@@ -292,7 +652,7 @@ pub fn dispatch(
         }
         _ => reply_or_nothing(encode_error(
             codec,
-            &id,
+            id,
             METHOD_NOT_FOUND,
             &format!("this engine does not implement {method}"),
         )),
@@ -321,13 +681,54 @@ pub fn drain_and_exec(
     codec: &mut FrameCodec,
     buf: &mut BytesMut,
     ack: &[u8],
+    tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
 ) -> ! {
     let mut out = std::io::stdout();
     let _ = out.write_all(ack);
 
+    // **Stop every task before replacing the image** (A-TASKEXEC). `exec` keeps the descriptors
+    // and discards everything else, including the reader threads -- a task left running would be
+    // a process nobody is reading and nobody can reach, orphaned exactly the way §15.2 describes
+    // a crash orphaning one.
+    //
+    // The same Term-then-Kill escalation as `workspace/close`, and for the same reason: a build
+    // given no chance to remove its half-written output leaves the next one to discover it.
+    let terminated: Vec<String> = match tasks {
+        Some(service) => {
+            let plans = service.drain_all();
+            // **Term, then Kill, with no wait between.**
+            //
+            // A-TASKEXEC requires zero survivors, and a task that catches SIGTERM and keeps
+            // running -- which plenty do, deliberately -- would otherwise survive the `exec` and
+            // be orphaned: alive, reparented, reachable by pid and by nothing the protocol
+            // exposes. That is the outcome §15.2 describes for a crash, produced here by an
+            // update the developer asked for.
+            //
+            // The grace period cannot be honoured. It is served by the escalation thread, and
+            // `exec` is about to discard that thread along with everything else that is not a
+            // descriptor; and holding the client for five seconds before a restart it requested
+            // is worse than the cleanup it buys. A task that wanted to tidy up on SIGTERM gets
+            // the same warning it would get from a machine rebooting under it.
+            //
+            // Kill to a group that already left on the Term is harmless: the kernel has nobody
+            // to deliver it to.
+            for plan in &plans {
+                let Some(control) = service.control(&plan.id) else {
+                    continue;
+                };
+                let _ = control.signal(plan.send);
+                let _ = control.signal(crate::domain::task::TaskSignal::Kill);
+            }
+            plans.into_iter().map(|p| p.id.0).collect()
+        }
+        None => Vec::new(),
+    };
+
     while let Ok(Some(frame)) = codec.decode(buf) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&frame.0) {
-            if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
+            // A notification buffered here has nothing to answer, so an absent id is skipped
+            // rather than answered -- but a numeric one is answered, like any other request.
+            if let Some(id) = v.get("id") {
                 if let Some(f) = encode_error(
                     codec,
                     id,
@@ -341,7 +742,10 @@ pub fn drain_and_exec(
     }
     let _ = out.flush();
 
-    let err = exec_self(&registry.current().0);
+    // The ids travel in the environment, because `session/onRestart` is emitted by the **new**
+    // image and this list is built in the old one. An empty list then asserts that nothing was
+    // lost rather than that nothing was checked.
+    let err = exec_self(&registry.current().0, &terminated);
     // Only reachable if exec failed. The old image is intact, so report and keep serving
     // rather than exiting and taking the session down with us.
     eprintln!("re-execution failed, continuing on the current image: {err}");
@@ -351,7 +755,7 @@ pub fn drain_and_exec(
 /// Replace this process with a fresh copy of the engine binary, carrying the session forward.
 ///
 /// Returns only on failure: on success there is no longer a process to return into.
-fn exec_self(session_id: &str) -> std::io::Error {
+fn exec_self(session_id: &str, unpreserved: &[String]) -> std::io::Error {
     use std::os::unix::process::CommandExt;
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -359,19 +763,33 @@ fn exec_self(session_id: &str) -> std::io::Error {
     };
     std::process::Command::new(exe)
         .env(session::SESSION_ENV, session_id)
+        .env(
+            session::UNPRESERVED_ENV,
+            session::unpreserved_to_env(unpreserved),
+        )
         .exec()
 }
 
+/// `id` is the caller's own JSON value, echoed back unchanged.
+///
+/// A `&str` until F010, which quoted a **numeric** id on the way out. JSON-RPC 2.0 allows a
+/// number and requires the response to carry the same id it was sent, so `{"id": 7}` answered
+/// with `{"id": "7"}` is a response the client cannot match to its request.
 pub fn encode_result<T: serde::Serialize>(
     codec: &FrameCodec,
-    id: &str,
+    id: &serde_json::Value,
     result: &T,
 ) -> Option<Vec<u8>> {
     let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
     codec.encode(&body.to_string()).ok()
 }
 
-pub fn encode_error(codec: &FrameCodec, id: &str, code: i32, message: &str) -> Option<Vec<u8>> {
+pub fn encode_error(
+    codec: &FrameCodec,
+    id: &serde_json::Value,
+    code: i32,
+    message: &str,
+) -> Option<Vec<u8>> {
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": id,
         "error": {"code": code, "message": message}
@@ -420,7 +838,8 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":"3","method":"auth/handshake","params":{"protocol_version":"not a number"}}"#,
             r#"{"jsonrpc":"2.0","id":"4","method":"auth/handshake","params":null}"#,
         ] {
-            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, &codec, body) else {
+            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, None, &codec, body)
+            else {
                 panic!("expected a reply, not a panic or silence: {body}")
             };
             let v = decode(&reply);
@@ -447,6 +866,7 @@ mod tests {
             &roots,
             &fs,
             None,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"1","method":"auth/handshake","params":{}}"#,
         );
@@ -454,6 +874,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"2","method":"auth/handshake","params":{"client_version":"0.1.0","protocol_version":1,"capabilities":[]}}"#,
@@ -475,6 +896,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"9","method":"workspace/writeFile","params":{}}"#,
@@ -503,7 +925,7 @@ mod tests {
         );
         for body in ["this is not json", "", "{}"] {
             assert!(matches!(
-                dispatch(&registry, &roots, &fs, None, &codec, body),
+                dispatch(&registry, &roots, &fs, None, None, &codec, body),
                 Action::Nothing
             ));
         }

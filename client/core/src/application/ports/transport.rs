@@ -64,6 +64,19 @@ pub trait RequestTransport: Send + Sync {
     /// caller races the reply by nature, and losing that race must not be an error.
     fn withdraw(&self, id: &RequestId);
 
+    /// Send a frame with no id and nothing to wait for (§4.2).
+    ///
+    /// Separate from `send` because the difference is not in the message but in what the caller
+    /// may do next: a notification has no response, so putting one through `send` would wait out
+    /// a timeout for a reply that was never coming, and the caller could not tell that from a
+    /// slow engine.
+    ///
+    /// It follows that there is no outcome, and therefore no way to report that the frame was
+    /// refused, oversized, or sent while disconnected. That is the contract rather than a gap in
+    /// this signature -- there is no reply to carry a refusal in -- and it is why anything
+    /// needing a visible refusal stays a request.
+    fn notify(&self, request: Request);
+
     /// Returns immediately; never blocks waiting for a connection.
     fn state(&self) -> ConnectionState;
 }

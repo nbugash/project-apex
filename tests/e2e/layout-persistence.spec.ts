@@ -33,10 +33,10 @@ describe('layout persistence across restart', () => {
   it('restores region visibility', async () => {
     // Driven through the core: the button that used to do this was F000 scaffolding the
     // prototype has no equivalent for, and F018 removed it with the placeholder panel.
-    const extent = Math.round((await $('[aria-label="Output"]').getSize()).height);
+    const extent = Math.round((await $('[data-testid="region-output"]').getSize()).height);
     await setRegion('output', false, extent);
     expect((readSession()!.layout as any).output.visible).toBe(false);
-    expect(await $('[aria-label="Output"]').isExisting()).toBe(false);
+    expect(await $('[data-testid="region-output"]').isExisting()).toBe(false);
   });
 
   it("keeps a hidden region's extent so showing it restores its size", async () => {

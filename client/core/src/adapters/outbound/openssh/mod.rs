@@ -21,6 +21,7 @@ pub use spawner::{control_options, parse_version, OpenSshSpawner, ASKPASS_MIN_VE
 
 use crate::adapters::outbound::askpass::ipc::AskpassChannel;
 use crate::application::ports::connection::{ConnectionStatusSource, StateSink};
+use crate::application::ports::notification_sink::{DiscardNotifications, NotificationSink};
 use crate::application::ports::spawner::{ProcessSpawner, SpawnError, SpawnSpec};
 use crate::application::ports::transport::{Pending, Request, RequestTransport};
 use crate::application::use_cases::connect::ConnectAttempt;
@@ -66,6 +67,10 @@ pub struct SshTransport {
     askpass: Mutex<Option<Arc<AskpassChannel>>>,
     /// False below OpenSSH 8.4 — see `ASKPASS_MIN_VERSION`.
     assisted_available: std::sync::atomic::AtomicBool,
+    /// Where engine-initiated frames go. Read once when the reader thread starts rather than
+    /// per frame: the sink is set at composition and never changes afterwards, so a lock taken
+    /// on every inbound frame would be contention bought for nothing.
+    notifications: Mutex<Arc<dyn NotificationSink>>,
 }
 
 /// How long a freshly spawned child must survive before the attempt counts as established.
@@ -94,12 +99,22 @@ impl SshTransport {
             exit: Arc::new(Mutex::new(None)),
             askpass: Mutex::new(None),
             assisted_available: std::sync::atomic::AtomicBool::new(false),
+            notifications: Mutex::new(Arc::new(DiscardNotifications)),
         }
     }
 
     /// Give the transport somewhere to put a passphrase, and say whether the assisted phase
     /// is usable at all. Both come from the composition root, which is the only place that
     /// knows the local OpenSSH version and where the helper was installed.
+    /// Where to put frames the engine sent unasked.
+    ///
+    /// Set from the composition root, like the askpass channel and for the same reason: an
+    /// adapter that reached for its own collaborator could not be constructed two ways, and
+    /// this one is constructed by a suite that has no sink at all.
+    pub fn set_notification_sink(&self, sink: Arc<dyn NotificationSink>) {
+        *self.notifications.lock().expect("notification sink lock") = sink;
+    }
+
     pub fn with_askpass(&self, channel: Arc<AskpassChannel>, available: bool) {
         *self.askpass.lock().expect("askpass lock") = Some(channel);
         self.assisted_available
@@ -177,6 +192,7 @@ impl SshTransport {
             let state_tx = self.state_tx.clone();
             let queue_for_eof = queue.clone();
             let mut stdout = child.stdout;
+            let notifications = self.notifications.lock().expect("sink lock").clone();
             threads.push(std::thread::spawn(move || {
                 let mut codec = FrameCodec::new();
                 let mut buf = BytesMut::new();
@@ -188,7 +204,7 @@ impl SshTransport {
                     }
                     loop {
                         match codec.decode(&mut buf) {
-                            Ok(Some(frame)) => deliver(&registry, &frame.0),
+                            Ok(Some(frame)) => deliver(&registry, notifications.as_ref(), &frame.0),
                             Ok(None) => break,
                             // A refused frame is refused alone. The codec has already left
                             // the buffer at a boundary, so the next frame still reads.
@@ -384,9 +400,15 @@ impl Drop for SshTransport {
 }
 
 /// Match one reply to its request.
-fn deliver(registry: &Registry, body: &str) {
+fn deliver(registry: &Registry, notifications: &dyn NotificationSink, body: &str) {
     let Some(id) = reply_id(body) else {
-        return; // a notification, not a reply: no id, nothing to correlate
+        // No id, so there is nothing to correlate -- but it is not nothing. An engine-initiated
+        // frame is a task's output, its exit, or a file event, and dropping it here is what
+        // made a terminal that renders correctly and shows nothing.
+        if let Some(method) = extract_string(body, "\"method\"") {
+            notifications.deliver(&method, body);
+        }
+        return;
     };
     let outcome = if let Some(err) = extract_object(body, "\"error\"") {
         RequestOutcome::Failed {
@@ -406,6 +428,31 @@ impl RequestTransport for SshTransport {
     async fn send(&self, request: Request) -> RequestOutcome {
         let (_id, pending) = self.begin(request);
         pending.await
+    }
+
+    fn notify(&self, request: Request) {
+        // No registry entry, because there is nothing to correlate and nothing to time out.
+        // An id registered here would never be resolved and would leak one slot per keystroke.
+        let body = crate::application::use_cases::exchange::notification_body(&request);
+        let frame = match FrameCodec::new().encode(&body) {
+            Ok(f) => f,
+            Err(e) => {
+                // Logged rather than returned: the signature has no outcome, and silence here
+                // is how a dropped keystroke becomes indistinguishable from a delivered one.
+                crate::logging::warn(&format!("could not encode {}: {e:?}", request.method));
+                return;
+            }
+        };
+        let guard = self.live.lock().expect("live lock");
+        match guard.as_ref() {
+            Some(live) => live.queue.push(request.priority, frame),
+            // Deliberately not queued for a connection that may never return. A keystroke
+            // replayed into a task minutes later is worse than one lost: the task has moved on,
+            // and the bytes arrive as input to whatever is running now.
+            None => {
+                crate::logging::warn(&format!("{} was not sent: no connection", request.method))
+            }
+        }
     }
 
     fn begin(&self, request: Request) -> (RequestId, Pending) {

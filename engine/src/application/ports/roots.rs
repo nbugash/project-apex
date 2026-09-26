@@ -27,4 +27,13 @@ pub trait WorkspaceRoots: Send + Sync {
     /// The root, re-checked: a registered root whose directory has since been deleted is `Gone`,
     /// which the caller must not conflate with a missing path inside it.
     fn resolve(&self, id: &str) -> Result<CanonicalRoot, RootError>;
+    /// `register`'s counterpart, and the reason `workspace/close` can close anything at all.
+    ///
+    /// **`NotRegistered` for an id that is not there, rather than a silent success.** That is
+    /// what lets a second `workspace/close` answer `-32001` instead of repeating the first.
+    /// FR-019 makes terminating an already-terminated *task* a success, and the two only look
+    /// alike: that race is a client racing an end the engine decided, whereas a workspace never
+    /// closes itself, so a second close means the client has lost track of its own state and
+    /// telling it so is a service (A-WSCLOSE).
+    fn deregister(&self, id: &str) -> Result<(), RootError>;
 }

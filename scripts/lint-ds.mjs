@@ -63,6 +63,11 @@ for (const root of ROOTS) {
     // or `*` flagged the continuation lines of an ordinary wrapped comment, which teaches
     // the next person to reformat prose until the lint stops complaining.
     let inBlockComment = false;
+    // `@font-face` declares a family; it does not assert one. The font-family rule exists to
+    // stop a component naming a face the design system owns, and inside this block the name is
+    // the definition -- there is no token to use instead, because the token would have to point
+    // at a name that only exists once this block has given it one.
+    let inFontFace = false;
     lines.forEach((line, i) => {
       const opens = line.lastIndexOf('/*');
       const closes = line.lastIndexOf('*/');
@@ -70,6 +75,9 @@ for (const root of ROOTS) {
       if (!inBlockComment && opens !== -1 && closes < opens) inBlockComment = true;
       else if (inBlockComment && closes !== -1) inBlockComment = false;
       if (wasInComment) return;
+      if (/@font-face\s*\{/.test(line)) inFontFace = true;
+      else if (inFontFace && line.includes('}')) inFontFace = false;
+      if (inFontFace) return;
       if (line.trimStart().startsWith('/*') || line.trimStart().startsWith('//')) return;
       if (line.includes('${')) return; // dynamic value, see note above
       for (const { test, message } of CHECKS) {

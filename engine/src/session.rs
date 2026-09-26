@@ -15,6 +15,46 @@ use std::sync::Mutex;
 /// indistinguishable from a fresh session — which is precisely the distinction FR-024c needs.
 pub const SESSION_ENV: &str = "APEX_SESSION_ID";
 
+/// Where the ids of tasks killed by the re-execution are handed across it.
+///
+/// A second variable, for the reason there is a first. `session/onRestart` is emitted by the
+/// **new** image, and the ids are known only to the **old** one: it is the old image that drains
+/// the task set and signals the group (A-TASKEXEC), and the `exec` then discards everything it
+/// knew. Without a channel the new image has nothing to report and `unpreserved` is empty --
+/// which is not "nothing was lost" but "nobody looked", and the two are indistinguishable to a
+/// client.
+///
+/// Comma-separated, and empty when nothing was running. `TaskId` is client-chosen (§4.8) and
+/// nothing constrains its characters, so a comma inside one would split it here; that is
+/// recorded as a known limit rather than hidden, because the alternative -- JSON in an
+/// environment variable -- is a serialiser on the `exec` path for a list that is almost always
+/// empty and never long.
+pub const UNPRESERVED_ENV: &str = "APEX_UNPRESERVED_TASKS";
+
+/// Read the terminated ids the old image left behind.
+///
+/// **Absent and empty are different.** An absent variable is an old image that predates this
+/// mechanism, or a fresh start; an empty one is an image that looked and found nothing running.
+/// Both yield an empty list here, and that is correct -- there is nothing to report either way
+/// -- but the distinction matters at the other end, which is why the old image sets the
+/// variable even when it has nothing to put in it.
+fn unpreserved_from_env() -> Vec<String> {
+    match std::env::var(UNPRESERVED_ENV) {
+        Ok(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Format the ids for the hand-off, for the old image to set before it `exec`s.
+pub fn unpreserved_to_env(ids: &[String]) -> String {
+    ids.join(",")
+}
+
 pub struct SessionRegistry {
     current: Mutex<SessionId>,
     /// True when this process replaced an earlier one, so the first reply can say so.
@@ -22,6 +62,19 @@ pub struct SessionRegistry {
     /// What did not survive the restart. Empty asserts nothing was lost, rather than that
     /// nothing was checked.
     unpreserved: Vec<String>,
+    /// Whether a client is currently on the other end.
+    ///
+    /// **A flag and nothing more.** A dropped connection sets it false and changes nothing else:
+    /// zero tasks are terminated by it, no identity is released, and no process is signalled.
+    /// A-TASKLIFE is exactly that -- a laptop moving between networks must not kill a build --
+    /// and the way to make it true is for the task set to have no opinion about the transport at
+    /// all.
+    ///
+    /// It is held **here** and not on the `TaskSet`, deliberately. A task set that could see the
+    /// transport could come to depend on it, and then "a disconnection terminates nothing" would
+    /// be true because of a code path somebody could change rather than because there is nothing
+    /// to change. The set is never handed a reference to either.
+    attached: Mutex<bool>,
 }
 
 impl Default for SessionRegistry {
@@ -37,15 +90,31 @@ impl SessionRegistry {
             Ok(id) if !id.trim().is_empty() => Self {
                 current: Mutex::new(SessionId(id)),
                 restarted: true,
-                // Nothing is supervised yet; F007 and F010 will have something to report here.
-                unpreserved: Vec::new(),
+                // F010's entry: the tasks the old image terminated before replacing itself.
+                unpreserved: unpreserved_from_env(),
+                attached: Mutex::new(true),
             },
             _ => Self {
                 current: Mutex::new(SessionId(uuid::Uuid::new_v4().to_string())),
                 restarted: false,
                 unpreserved: Vec::new(),
+                attached: Mutex::new(true),
             },
         }
+    }
+
+    /// Whether a client is on the other end right now.
+    pub fn attached(&self) -> bool {
+        *self.attached.lock().expect("attached lock")
+    }
+
+    /// Record that the client went away, or came back.
+    ///
+    /// Returns nothing and touches nothing else. Every caller that has wanted to do more here --
+    /// stop the tasks, release the identities, close the workspaces -- has wanted to do the one
+    /// thing A-TASKLIFE forbids.
+    pub fn set_attached(&self, attached: bool) {
+        *self.attached.lock().expect("attached lock") = attached;
     }
 
     pub fn current(&self) -> SessionId {
@@ -83,6 +152,7 @@ mod tests {
             current: Mutex::new(SessionId("s-1".into())),
             restarted: false,
             unpreserved: Vec::new(),
+            attached: Mutex::new(true),
         };
         assert_eq!(r.current(), SessionId("s-1".into()));
         assert!(!r.restarted());
@@ -104,6 +174,7 @@ mod tests {
             current: Mutex::new(SessionId("mine".into())),
             restarted: false,
             unpreserved: Vec::new(),
+            attached: Mutex::new(true),
         };
         assert!(r.resume(&SessionId("mine".into())));
         assert!(!r.resume(&SessionId("someone-elses".into())));
@@ -118,6 +189,7 @@ mod tests {
             current: Mutex::new(SessionId("kept".into())),
             restarted: true,
             unpreserved: vec!["one language server".into()],
+            attached: Mutex::new(true),
         };
         let n = r.restart_notice();
         assert_eq!(n.session_id, SessionId("kept".into()));
@@ -127,7 +199,86 @@ mod tests {
             current: Mutex::new(SessionId("kept".into())),
             restarted: true,
             unpreserved: Vec::new(),
+            attached: Mutex::new(true),
         };
         assert!(quiet.restart_notice().unpreserved.is_empty());
+    }
+    /// T038. These tests set a process-wide environment variable, so they are serialised
+    /// against each other by a mutex: `cargo test` runs a module's tests on several threads,
+    /// and two of these racing would each see the other's value.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn terminated_ids_cross_the_re_execution() {
+        let _guard = env_guard();
+        std::env::set_var(SESSION_ENV, "session-abc");
+        std::env::set_var(UNPRESERVED_ENV, "build,test-suite");
+
+        let registry = SessionRegistry::new();
+        let notice = registry.restart_notice();
+
+        std::env::remove_var(SESSION_ENV);
+        std::env::remove_var(UNPRESERVED_ENV);
+
+        assert!(registry.restarted());
+        // Without this the list is empty and A-TASKEXEC looks implemented while reporting
+        // nothing: the ids are built by the image that is replaced, and the notice is emitted
+        // by the one that replaces it.
+        assert_eq!(
+            notice.unpreserved,
+            vec!["build".to_string(), "test-suite".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_empty_variable_reports_nothing_lost() {
+        let _guard = env_guard();
+        std::env::set_var(SESSION_ENV, "session-abc");
+        std::env::set_var(UNPRESERVED_ENV, "");
+
+        let registry = SessionRegistry::new();
+        let notice = registry.restart_notice();
+
+        std::env::remove_var(SESSION_ENV);
+        std::env::remove_var(UNPRESERVED_ENV);
+
+        // An empty list is a positive assertion that nothing was running, which is what the
+        // old image sets the variable to say. It is not the same claim as never having looked,
+        // even though both arrive here as an empty vector.
+        assert!(notice.unpreserved.is_empty());
+    }
+
+    #[test]
+    fn an_absent_variable_is_survivable() {
+        let _guard = env_guard();
+        std::env::set_var(SESSION_ENV, "session-abc");
+        std::env::remove_var(UNPRESERVED_ENV);
+
+        let registry = SessionRegistry::new();
+        let notice = registry.restart_notice();
+        std::env::remove_var(SESSION_ENV);
+
+        // An image that predates this mechanism. Nothing to report and nothing to panic about.
+        assert!(notice.unpreserved.is_empty());
+    }
+
+    #[test]
+    fn the_round_trip_survives_formatting() {
+        let ids = vec!["build".to_string(), "watch".to_string()];
+        let encoded = unpreserved_to_env(&ids);
+        assert_eq!(encoded, "build,watch");
+
+        let _guard = env_guard();
+        std::env::set_var(SESSION_ENV, "s");
+        std::env::set_var(UNPRESERVED_ENV, &encoded);
+        let registry = SessionRegistry::new();
+        let notice = registry.restart_notice();
+        std::env::remove_var(SESSION_ENV);
+        std::env::remove_var(UNPRESERVED_ENV);
+
+        assert_eq!(notice.unpreserved, ids);
     }
 }
