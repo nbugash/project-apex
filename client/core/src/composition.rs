@@ -30,7 +30,7 @@ use crate::application::use_cases::restore_session::RestoreSession;
 use crate::composition_workspace::prepare_cache;
 use crate::domain::rail::RailCatalogue;
 use crate::domain::workspace::{
-    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, WorkspaceId,
+    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId,
 };
 use crate::window::controller::WindowController;
 use async_trait::async_trait;
@@ -288,6 +288,21 @@ impl WorkspaceProvider for DisconnectedWorkspace {
         _path: &RelPath,
         _range: Option<ByteRange>,
     ) -> ProviderResult<FileChunk> {
+        Err(ProviderError::Offline)
+    }
+
+    /// Overridden so a save with no engine reads as an outage and not as unfinished work.
+    ///
+    /// The trait's default would answer `Unsupported { F006Editor }`, which was true until F006
+    /// shipped and is a lie afterwards: it would tell a developer whose link had dropped that
+    /// saving is not built yet, and they would stop trying instead of reconnecting.
+    async fn write_file(
+        &self,
+        _ws: &WorkspaceId,
+        _path: &RelPath,
+        _content: &[u8],
+        _base: &Sha256,
+    ) -> ProviderResult<Sha256> {
         Err(ProviderError::Offline)
     }
 }

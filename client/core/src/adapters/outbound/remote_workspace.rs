@@ -48,6 +48,24 @@ impl RemoteWorkspaceProvider {
     ) -> ProviderResult<R> {
         let body = serde_json::to_string(params)
             .map_err(|e| ProviderError::Transport(format!("encoding {method}: {e}")))?;
+        // Refused here rather than discovered at the codec. §4.1's cap is enforced on encode, so
+        // an oversized frame already fails safely -- but it fails as a transport error, and a
+        // transport error tells the developer to try again. Retrying a file that is too large to
+        // frame fails identically forever, so the one failure that must not be described as
+        // temporary is exactly the one that would be.
+        //
+        // The budget is measured against the **encoded** params, never the caller's byte count.
+        // A write carries its content as a JSON string, where a quote costs two bytes and a
+        // control character costs six: any limit predicted from the raw length is wrong for the
+        // files most likely to hit it. The headroom covers the envelope -- jsonrpc, id, method
+        // and the `Content-Length` line -- which the codec adds after this point.
+        const ENVELOPE_HEADROOM: usize = 4 * 1024;
+        let budget = apex_protocol::framing::MAX_FRAME_BYTES - ENVELOPE_HEADROOM;
+        if body.len() > budget {
+            return Err(ProviderError::TooLarge {
+                total_size: body.len() as u64,
+            });
+        }
         match self
             .transport
             .send(Request::interactive(method, body))
@@ -78,6 +96,7 @@ fn map_code(code: i32, message: String) -> ProviderError {
         codes::WORKSPACE_GONE => ProviderError::WorkspaceGone,
         codes::PATH_REFUSED => ProviderError::Refused,
         codes::NOT_FOUND => ProviderError::NotFound,
+        codes::WRITE_CONFLICT => ProviderError::WriteConflict,
         _ => ProviderError::Transport(format!("{code}: {message}")),
     }
 }
@@ -231,6 +250,43 @@ impl WorkspaceProvider for RemoteWorkspaceProvider {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Save, conditional on the base (FR-007, FR-008).
+    ///
+    /// The base is the whole method. Without it a save is an unconditional overwrite, and the
+    /// developer whose colleague edited the file in between loses that colleague's work with no
+    /// signal that anything happened. The engine does the comparing -- this side only has to
+    /// carry the base honestly and keep the refusal legible when it comes back.
+    async fn write_file(
+        &self,
+        ws: &WorkspaceId,
+        path: &RelPath,
+        content: &[u8],
+        base: &Sha256,
+    ) -> ProviderResult<Sha256> {
+        // §4.8 gives `writeFile` a plain `content` string and, unlike `readFile`, no `encoding`
+        // field: the write path carries text and nothing else. Refused rather than converted,
+        // because a lossy conversion replaces each invalid sequence with U+FFFD and saves *that*
+        // -- the developer's file destroyed by the act of saving it. The same reasoning as
+        // FR-006 on the way in, applied on the way out.
+        let text = std::str::from_utf8(content).map_err(|_| {
+            ProviderError::Transport("content is not valid UTF-8, which writeFile cannot carry".into())
+        })?;
+
+        let params = wire::WriteFileParams {
+            workspace_id: ws.clone(),
+            relative_path: path.as_str().to_string(),
+            content: text.to_string(),
+            base_sha256: base.as_str().to_string(),
+        };
+        let r: wire::WriteFileResult = self.call("workspace/writeFile", &params).await?;
+
+        // What the engine sends is untrusted (Principle VI). A malformed digest adopted as the
+        // next base would never match anything, so the *following* save would be refused for a
+        // conflict nobody caused -- reported, weeks later, as "it randomly stops saving".
+        Sha256::parse(&r.sha256)
+            .ok_or_else(|| ProviderError::Transport("malformed digest in writeFile result".into()))
     }
 }
 

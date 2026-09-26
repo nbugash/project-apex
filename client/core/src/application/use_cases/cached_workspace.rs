@@ -17,7 +17,7 @@ use crate::application::ports::workspace_provider::{
 use crate::domain::cache::{Presentation, Validity};
 use crate::domain::connection::ConnectionState;
 use crate::domain::workspace::{
-    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, WorkspaceId,
+    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -189,6 +189,54 @@ impl WorkspaceProvider for CachedWorkspace {
                 Ok(chunk_from(entry.bytes, range, entry.hash))
             }
         }
+    }
+
+    /// Save, then make the projection agree with what was saved (FR-010).
+    ///
+    /// Forwarded rather than inherited. The trait's default refuses with `Unsupported`, and a
+    /// decorator that inherited it would refuse every save while the adapter underneath was
+    /// perfectly able to perform one -- a capability lost in the wrapper, with the tests on
+    /// either side of it passing. That is how four earlier features came to be marked complete
+    /// without a request ever crossing the seam.
+    async fn write_file(
+        &self,
+        ws: &WorkspaceId,
+        path: &RelPath,
+        content: &[u8],
+        base: &Sha256,
+    ) -> ProviderResult<Sha256> {
+        // The cache is touched only **after** the engine confirms, and never before. A refused
+        // write that had already updated the projection would show the developer their own
+        // rejected attempt the next time they opened the file offline, as though it had landed.
+        let written = self.inner.write_file(ws, path, content, base).await?;
+
+        if let Ok(Some(file_id)) = self.cache.file_id(ws, path) {
+            // The engine's digest describes what reached the disk, which is not always what was
+            // sent -- a mount that translates line endings is enough to part them. Storing our
+            // bytes under the engine's digest would make the projection claim content the host
+            // does not have, and the hash comparison guarding every read would agree with it.
+            // So the two are compared: equal, cache; unequal, mark the entry unproven so the
+            // next read fetches instead of trusting.
+            if Sha256::of(content) == written {
+                // Caching is an optimisation here for the same reason it is on the read path: a
+                // full disk changes what is stored, never whether the save succeeded (FR-034).
+                match self
+                    .cache
+                    .put_content(&file_id, content, &written, self.clock.now())
+                {
+                    StoreOutcome::Stored => {}
+                    StoreOutcome::NotEligible { size } => {
+                        tracing_note(&format!("not caching {path}: {size} bytes exceeds the cap"));
+                    }
+                    StoreOutcome::Failed(e) => {
+                        tracing_note(&format!("failed to cache {path}: {e}"));
+                    }
+                }
+            } else {
+                let _ = self.cache.mark_unproven(ws, path);
+            }
+        }
+        Ok(written)
     }
 }
 

@@ -222,6 +222,9 @@ pub enum WorkspaceFailure {
     Offline,
     Unsupported(String),
     Transport(String),
+    /// The file changed on the host since it was read (`-32004`). Its own variant because the
+    /// interface has to tell a colleague's edit from a dropped link (FR-012).
+    Conflict,
 }
 
 impl From<ProviderError> for WorkspaceFailure {
@@ -244,6 +247,7 @@ impl From<ProviderError> for WorkspaceFailure {
             task @ (ProviderError::TaskNotFound
             | ProviderError::TaskAlreadyRunning
             | ProviderError::CommandNotStarted { .. }) => Self::Transport(task.to_string()),
+            ProviderError::WriteConflict => Self::Conflict,
             ProviderError::Unsupported { owner } => Self::Unsupported(owner.to_string()),
         }
     }

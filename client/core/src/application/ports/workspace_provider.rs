@@ -76,6 +76,13 @@ pub enum ProviderError {
     /// Never `NotFound`, which §4.4 reserves for a path inside a workspace: a missing executable
     /// and a missing file lead to different things being said to the developer.
     CommandNotStarted { reason: String },
+    /// The file changed on the host since the base was taken (`-32004`). **Nothing was
+    /// written.**
+    ///
+    /// Its own variant rather than a `Transport` with a code, because this is the one failure a
+    /// developer has to be able to tell from every other: it means a colleague edited the file,
+    /// and the answer is to look at what they did. A dropped link means try again.
+    WriteConflict,
     /// Declared by §6.1, implemented by a later feature (FR-004).
     Unsupported { owner: Owner },
 }
@@ -88,6 +95,7 @@ impl std::fmt::Display for ProviderError {
             Self::UnknownWorkspace => write!(f, "workspace is not registered with the engine"),
             Self::WorkspaceGone => write!(f, "the workspace root no longer exists"),
             Self::Offline => write!(f, "not connected"),
+            Self::WriteConflict => write!(f, "the file changed on the host since it was read"),
             Self::TaskNotFound => write!(f, "no task with that identity is running"),
             Self::TaskAlreadyRunning => write!(f, "a task with that identity is already running"),
             Self::CommandNotStarted { reason } => {

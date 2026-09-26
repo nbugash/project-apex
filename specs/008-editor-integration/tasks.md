@@ -78,8 +78,8 @@ host, save again, observe the refusal and the host's content unchanged.
 
 ### The client
 
-- [ ] T030 [P] [US2] `client/core/tests/write_file.rs`: `RemoteWorkspaceProvider::write_file` maps a success to the new hash, `-32004` to a conflict, and every other code to its own outcome. Against a scripted transport, so each branch is exercised without an engine
-- [ ] T031 [US2] `client/core/src/adapters/outbound/remote_workspace.rs`: implement `write_file`, removing the `Owner::F006Editor` refusal F003 left
+- [X] T030 [P] [US2] `client/core/tests/write_file.rs`: `RemoteWorkspaceProvider::write_file` maps a success to the new hash, `-32004` to a conflict, and every other code to its own outcome. Against a scripted transport, so each branch is exercised without an engine
+- [X] T031 [US2] `client/core/src/adapters/outbound/remote_workspace.rs`: implement `write_file`, removing the `Owner::F006Editor` refusal F003 left
 - [ ] T032 [US2] `client/core/src/application/use_cases/edit_file.rs`: map a provider result to `WriteOutcome`'s four variants. `Conflict` and `Unreachable` are never collapsed — one means a colleague edited the file, the other means the link dropped, and the developer's next action differs completely (FR-012)
 - [ ] T033 [US2] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_write`, validating its arguments in the core because the webview is not a trusted caller (Principle VI)
 - [ ] T034 [US2] In `client/core/src/application/use_cases/edit_file.rs`, update the workspace cache after a successful write so a reopen does not show stale content (FR-010)
