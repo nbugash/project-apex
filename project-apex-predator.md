@@ -1160,7 +1160,8 @@ The exclusion set is the repository's own `.gitignore` files plus a fixed built-
 set is computed per workspace and used by **both** the indexer and the watcher, so disagreement
 is impossible by construction: an indexer that indexes what the watcher ignores returns search
 results for files whose changes are never noticed. No per-workspace user configuration in v1.
-See Appendix A, A-IGNORE.
+See Appendix A, A-IGNORE, and A-GITWATCH for the two paths inside `.git/` that the git subsystem
+watches for status refresh and that reach neither the indexer nor the workspace watcher.
 
 The client sets no OS watches in remote mode. It receives `workspace/onFileEvent` and acts only
 on paths it is currently displaying.
@@ -2364,6 +2365,11 @@ the dominant memory cost on a reference instance.
 resolved set is computed per workspace and used by both the indexer and the file watcher. No
 per-workspace user configuration in v1.
 
+**Amended by A-GITWATCH (2026-09-26).** Two paths inside `.git/` — `HEAD` and `index` — are
+watched by the git subsystem for status refresh. They are indexed by nothing and their events
+never reach the workspace watcher, so the agreement this record exists to guarantee holds; but
+"one set, no exceptions" is no longer the whole truth and the exception is recorded there.
+
 **Rationale.** The item's own note says this "affects indexer and watcher agreement", and
 agreement is the entire point: an indexer that indexes what the watcher ignores produces search
 results for files whose changes are never noticed, which is worse than not indexing them.
@@ -3542,3 +3548,43 @@ property of watching plus writing, not of editing.
 
 **Reversal condition.** A measurement showing the per-event `stat` is material, or a protocol
 change that lets the engine mark the events its own request caused.
+
+---
+
+## A-GITWATCH — Git status is refreshed from two watches inside `.git/`, which the exclusion set otherwise removes (2026-09-26)
+
+**Amends A-IGNORE.**
+
+**Decision.** The engine watches exactly two paths inside `.git/` — `HEAD` and `index` — for the
+purpose of refreshing git status, and nothing else. Their events are consumed by the git
+subsystem and are **never** emitted as `workspace/onFileEvent`. Everything else under `.git/`
+stays excluded, for the indexer and for the workspace watcher alike.
+
+**Rationale.** §12.2 requires the engine to notice when git status changes. The two facts it
+must notice live in those two files: `HEAD` changes on a branch switch, `index` changes on every
+`git add`, `git reset` and `git stash`. Neither is reachable any other way — an index-only
+change alters no working-tree file, so nothing in the workspace watcher ever fires for it.
+
+**What this costs A-IGNORE.** A-IGNORE says one resolved set is used by both the indexer and the
+watcher, "so disagreement is impossible by construction". That sentence is no longer literally
+true, and pretending otherwise would leave the next person to read it believing something false.
+The precise statement is now: one resolved set governs the indexer and the workspace watcher,
+and the git subsystem holds two watches outside it whose events never reach either. The
+invariant A-IGNORE actually protects — that the indexer never indexes what the watcher ignores —
+is untouched, because these two paths are indexed by neither.
+
+**Alternatives rejected.** Polling `git status` on a timer: leaves A-IGNORE untouched and pays
+for it in latency and in running git across a large repository when nothing has changed, which
+is the pointless work §12.1 moved to the engine to avoid, not to relocate. Refreshing from the
+existing workspace file events: free, and silently wrong for every index-only change — staged
+and unstaged colouring would stay stale until some unrelated file happened to change, a defect
+that presents as flakiness and is very hard to attribute.
+
+**Why this binds beyond F011.** Anyone extending the exclusion set, the watcher or the indexer
+(F013's search, and any later feature that adds a watch) needs to know that `.git/` is not
+uniformly unwatched, and that the two exceptions are deliberate and narrow. A second feature
+adding a third watch inside `.git/` should have to justify it against this record rather than
+discover the precedent by accident.
+
+**Reversal condition.** A host where two extra inotify watches per workspace are material, or a
+git version that offers a cheaper change signal than the files themselves.

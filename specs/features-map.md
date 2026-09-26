@@ -101,6 +101,7 @@ an intention to do it.
   - [ ] File tree colouring from cached status
   - [ ] Diff gutter coordinates via git/getFileDiff
   - [ ] Bulk invalidation on branch switch
+  - [ ] Current branch in the status bar
 - [ ] **F012 offline-editing** [P] (depends: F006)
   - Spec: not yet specified
   - [ ] Offline UI state consuming F001's connection state, not re-detecting it
