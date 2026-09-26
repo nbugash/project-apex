@@ -2,6 +2,7 @@ pub mod apply_file_event;
 pub mod bootstrap;
 pub mod cached_workspace;
 pub mod connect;
+pub mod edit_file;
 pub mod exchange;
 pub mod maintain_cache;
 pub mod observe_connection;

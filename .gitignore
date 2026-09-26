@@ -94,3 +94,8 @@ client/ui/lib/ds/
 # looked at from a headless machine. Regenerated on demand, so committing it would only ever
 # show what someone's working tree looked like once.
 reports/app.png
+
+# Scratch tree the editor end-to-end specs read and write. Never the checkout: a test that
+# writes into the repository can destroy work and leaves whatever it forgot to clean up behind.
+.e2e-workspace/
+.e2e-terminal/

@@ -32,7 +32,7 @@ const destinations = (n: number): RailDestination[] =>
   }));
 
 const docs = (n: number): OpenDocumentReference[] =>
-  Array.from({ length: n }, (_, i) => ({ id: `d${i}`, display_name: `doc${i}`, order: i }));
+  Array.from({ length: n }, (_, i) => ({ id: `d${i}`, display_name: `doc${i}`, path: `doc${i}`, order: i }));
 
 describe('interaction budget (SC-004, Constitution Principle V)', () => {
   it('a full drag gesture stays well inside the stall budget', () => {

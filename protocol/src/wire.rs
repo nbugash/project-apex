@@ -80,6 +80,14 @@ pub mod codes {
     pub const PATH_REFUSED: i32 = -32002;
     /// Inside the root, and absent. Information the caller is entitled to.
     pub const NOT_FOUND: i32 = -32003;
+    /// `baseSha256` does not match the file's current content, so the write was refused and
+    /// **nothing was written**. §4.4 specified this from the start and nothing defined it until
+    /// F006, because nothing could write.
+    ///
+    /// It means the base mismatch and only that. A missing file, an unreadable one and a
+    /// permission failure each have their own code, and collapsing any of them into this would
+    /// make a client's "somebody else edited this" message a lie in three other situations.
+    pub const WRITE_CONFLICT: i32 = -32004;
     /// Frame exceeds §4.1's cap.
     pub const PAYLOAD_TOO_LARGE: i32 = -32007;
     /// The engine is re-executing. §4.8's `session/restart` prose assigns this meaning; it had
@@ -150,6 +158,28 @@ pub struct RegisterParams {
 pub struct RegisterResult {
     pub name: String,
     pub canonical_path: String,
+}
+
+// ---- workspace/writeFile ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFileParams {
+    pub workspace_id: WorkspaceId,
+    /// Workspace-relative. Untrusted, like every path off the wire (§4.7).
+    pub relative_path: String,
+    /// The whole file. §4.8 carries content, not a patch, so there is no partial write to
+    /// express and a client holding part of a file has nothing safe to send.
+    pub content: String,
+    /// The hash the client believed current when it began editing. The engine compares this
+    /// with what is on disk and refuses a mismatch rather than overwriting.
+    pub base_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteFileResult {
+    /// The hash of what was written, computed after writing rather than taken from the request.
+    /// A client adopting it as its new base is adopting what is on disk.
+    pub sha256: String,
 }
 
 // ---- workspace/readDirectory ----

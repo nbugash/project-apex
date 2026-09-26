@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// `serde(default)`, so a version 1 file parses and gets the defaults rather than failing, which
 /// is what keeps an existing user's geometry, layout and tabs through an upgrade. A store written
 /// at a **newer** version is refused, because this image cannot know what it would be discarding.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 const MAX_NAME: usize = 255;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -41,6 +41,14 @@ pub enum LocationType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceReference {
+    /// The identity the engine and the cache both key on, added at schema version 4.
+    ///
+    /// Without it the interface could open a workspace and then had no way to name it again:
+    /// the tree, which asks for a listing *by workspace id*, was constructed with a literal
+    /// `"e2e"` and could only ever show what the debug seeding command had put in the cache.
+    /// Restoring one after a restart was impossible for the same reason.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub location_type: LocationType,
 }
@@ -50,6 +58,20 @@ pub struct OpenDocumentReference {
     pub id: DocumentId,
     pub display_name: String,
     pub order: u32,
+    /// Which file the tab is of, added at schema version 4 (FR-021).
+    ///
+    /// Separate from `display_name` because they answer different questions. The name is for a
+    /// person reading a tab strip, where a full path would be unreadable; the path is what an
+    /// editor reads and what a restored tab needs in order to fetch anything at all. A tab that
+    /// remembered only its name could be restored as a label with nothing behind it, which is
+    /// what FR-022 calls presenting an empty buffer.
+    ///
+    /// `serde(default)` leaves a version 3 tab with an empty path. That tab is restored as a
+    /// label whose content cannot be fetched -- which is correct: the previous release never
+    /// recorded which file it was, and inventing one from the display name would open whichever
+    /// file happened to share the name.
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +109,16 @@ pub struct PersistedSession {
     /// even that.
     #[serde(default)]
     pub tasks: Vec<PersistedTask>,
+    /// Added at schema version 4 (FR-007b). The same `serde(default)` migration for the same
+    /// reason A-STATE2 established.
+    ///
+    /// **`false` when unset, and that is not merely a convenient default.** Autosave writes the
+    /// developer's file without them asking, and a profile that has never expressed a preference
+    /// has not agreed to that. `bool::default()` happening to be `false` is the right value for
+    /// the right reason, which is worth saying because the next person to add a field here will
+    /// reach for the default without asking whether it is the safe one.
+    #[serde(default)]
+    pub autosave: bool,
 }
 
 /// One task this client started, as the store remembers it.
@@ -110,6 +142,7 @@ impl Default for PersistedSession {
             focused_document_id: None,
             tool_window: ToolWindowState::default(),
             tasks: Vec::new(),
+            autosave: false,
         }
     }
 }
@@ -129,6 +162,8 @@ pub struct SessionSnapshot {
     /// The identities a restarted client reattaches to (A-STATE2, FR-031d). Crossing the bridge
     /// because the panel is what reattaches, and it cannot ask for what it was never told.
     pub tasks: Vec<PersistedTask>,
+    /// Whether to save without being asked (FR-007b). Off for a profile that never set it.
+    pub autosave: bool,
 }
 
 impl From<&PersistedSession> for SessionSnapshot {
@@ -141,6 +176,7 @@ impl From<&PersistedSession> for SessionSnapshot {
             focused_document_id: p.focused_document_id.clone(),
             tool_window: p.tool_window.clone(),
             tasks: p.tasks.clone(),
+            autosave: p.autosave,
         }
     }
 }
@@ -196,19 +232,46 @@ impl PersistedSession {
         self
     }
 
-    pub fn open_document(&mut self, display_name: &str) -> Result<DocumentId, SessionError> {
+    /// Open a tab for a file.
+    ///
+    /// Both the name and the path, because a tab that knows only what to call itself cannot be
+    /// restored into anything (FR-021). A file already open is focused rather than opened twice:
+    /// two tabs of one file would be two buffers, two bases, and a save through one silently
+    /// reverting the other (FR-023).
+    pub fn open_document(
+        &mut self,
+        display_name: &str,
+        path: &str,
+    ) -> Result<DocumentId, SessionError> {
         let trimmed = display_name.trim();
         if trimmed.is_empty() || display_name.chars().count() > MAX_NAME {
             return Err(SessionError::InvalidDisplayName);
+        }
+        if !path.is_empty() {
+            if let Some(open) = self.documents.iter().find(|d| d.path == path) {
+                let id = open.id.clone();
+                self.focused_document_id = Some(id.clone());
+                return Ok(id);
+            }
         }
         let id = DocumentId::new();
         self.documents.push(OpenDocumentReference {
             id: id.clone(),
             display_name: display_name.to_string(),
             order: self.documents.len() as u32,
+            path: path.to_string(),
         });
         self.focused_document_id = Some(id.clone());
         Ok(id)
+    }
+
+    /// Record which workspace is open, so the interface can name it again after a restart.
+    pub fn set_workspace(&mut self, id: &str, name: &str, location_type: LocationType) {
+        self.workspace = Some(WorkspaceReference {
+            id: id.to_string(),
+            name: name.to_string(),
+            location_type,
+        });
     }
 
     pub fn close_document(&mut self, id: &DocumentId) -> Result<(), SessionError> {
@@ -268,7 +331,10 @@ mod tests {
     fn with_docs(n: usize) -> (PersistedSession, Vec<DocumentId>) {
         let mut s = PersistedSession::default();
         let ids = (0..n)
-            .map(|i| s.open_document(&format!("doc{i}")).unwrap())
+            .map(|i| {
+                s.open_document(&format!("doc{i}"), &format!("/doc{i}"))
+                    .unwrap()
+            })
             .collect();
         (s, ids)
     }
@@ -285,11 +351,11 @@ mod tests {
     fn empty_or_overlong_names_are_rejected() {
         let mut s = PersistedSession::default();
         assert_eq!(
-            s.open_document("   "),
+            s.open_document("   ", "/x"),
             Err(SessionError::InvalidDisplayName)
         );
         assert_eq!(
-            s.open_document(&"x".repeat(256)),
+            s.open_document(&"x".repeat(256), "/x"),
             Err(SessionError::InvalidDisplayName)
         );
     }
@@ -437,7 +503,7 @@ mod tests {
     #[test]
     fn the_current_version_loads_unchanged() {
         let mut s = PersistedSession::default();
-        s.open_document("a.rs").unwrap();
+        s.open_document("a.rs", "/a.rs").unwrap();
         let round_tripped: PersistedSession =
             serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(round_tripped, s);

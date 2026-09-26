@@ -26,8 +26,8 @@ fn round_trips_a_session_through_a_real_file() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(&dir);
     let mut session = PersistedSession::default();
-    session.open_document("main.rs").unwrap();
-    session.open_document("lib.rs").unwrap();
+    session.open_document("main.rs", "/src/main.rs").unwrap();
+    session.open_document("lib.rs", "/src/lib.rs").unwrap();
 
     store.save(&session).unwrap();
     let loaded = store.load().expect("saved session loads");
@@ -69,7 +69,7 @@ fn a_dangling_focus_reference_invalidates_the_whole_file() {
     let dir = tempfile::tempdir().unwrap();
     let store = store_in(&dir);
     let mut session = PersistedSession::default();
-    session.open_document("a.rs").unwrap();
+    session.open_document("a.rs", "/a.rs").unwrap();
     // Valid JSON, valid schema, incoherent: focus names a document that is not present.
     session.documents.clear();
     store.save(&session).unwrap();

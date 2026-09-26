@@ -598,6 +598,30 @@ pub fn dispatch(
                 }
             }
         }
+        "workspace/writeFile" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::WriteFileParams>(params) {
+                Ok(req) => match workspace::write_file(roots, fs, &req) {
+                    Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
+                    // Every refusal carries its own §4.4 code. A conflict is not collapsed with
+                    // a missing file or a refused path: the developer's next action differs for
+                    // each, and one of the three means a colleague edited their file.
+                    Err(refusal) => {
+                        let (code, message) = refusal.wire();
+                        reply_or_nothing(encode_error(codec, id, code, &message))
+                    }
+                },
+                Err(e) => reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    INVALID_PARAMS,
+                    &format!("invalid params: {e}"),
+                )),
+            }
+        }
         "workspace/readFile" => {
             let params = parsed
                 .get("params")
@@ -904,14 +928,11 @@ mod tests {
             panic!("expected a reply")
         };
         let v = decode(&reply);
-        assert_eq!(v["error"]["code"], METHOD_NOT_FOUND);
-        assert!(
-            v["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("workspace/writeFile"),
-            "the refusal must name what was asked for"
-        );
+        // **This assertion was inverted by F006.** It used to require METHOD_NOT_FOUND, which
+        // was the honest answer while nothing could write. Empty params are now a malformed
+        // request rather than an unknown method, and asserting the old answer would mean the
+        // dispatch arm had not been wired at all.
+        assert_eq!(v["error"]["code"], INVALID_PARAMS);
     }
 
     /// Garbage that is not JSON at all yields no reply and no panic — there is no id to answer.

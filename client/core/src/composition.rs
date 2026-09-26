@@ -30,7 +30,7 @@ use crate::application::use_cases::restore_session::RestoreSession;
 use crate::composition_workspace::prepare_cache;
 use crate::domain::rail::RailCatalogue;
 use crate::domain::workspace::{
-    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, WorkspaceId,
+    ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId,
 };
 use crate::window::controller::WindowController;
 use async_trait::async_trait;
@@ -215,11 +215,32 @@ pub fn build(
         crate::logging::warn("the workspace cache was rebuilt; cached content will be refetched");
     }
 
-    // No engine-backed provider until a transport exists. `FakeWorkspace` is a test double and
-    // does not belong here, so the inner provider is one that refuses: the caching layer then
-    // serves what is already cached and reports the rest as offline, which is exactly what it
-    // does during a real outage.
-    let inner: Arc<dyn WorkspaceProvider> = Arc::new(DisconnectedWorkspace);
+    // The engine-backed provider, when there is an engine to back it.
+    //
+    // This was `DisconnectedWorkspace` unconditionally until F006, under a comment reading "no
+    // engine-backed provider until a transport exists" -- written when that was true and left
+    // standing after F010 built one. The consequence was not a crash: every workspace read and
+    // every write answered `Offline` from the caching layer, which is indistinguishable from a
+    // real outage and is what an outage is supposed to look like. `RemoteWorkspaceProvider` was
+    // constructed nowhere in the application. The same shape as the defect that left four
+    // features marked complete without a request ever crossing the seam, and found the same
+    // way: by following what the feature under construction actually needs to reach.
+    //
+    // `None` for the bulk transport, unchanged: nothing implements `BulkTransfer` yet, and the
+    // remote base it would need is a property of a workspace rather than of the process, so it
+    // arrives with the workspace rather than here (A-BULK).
+    let inner: Arc<dyn WorkspaceProvider> = match sender.as_ref() {
+        Some(transport) => Arc::new(
+            crate::adapters::outbound::remote_workspace::RemoteWorkspaceProvider::new(
+                transport.clone(),
+                None,
+                String::new(),
+            ),
+        ),
+        // Still the truth when no host is configured: nothing is reachable, the projection
+        // serves what it holds, and the rest reports offline.
+        None => Arc::new(DisconnectedWorkspace),
+    };
     let workspace = WorkspaceAccess {
         cache: ready.get(),
         register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
@@ -288,6 +309,21 @@ impl WorkspaceProvider for DisconnectedWorkspace {
         _path: &RelPath,
         _range: Option<ByteRange>,
     ) -> ProviderResult<FileChunk> {
+        Err(ProviderError::Offline)
+    }
+
+    /// Overridden so a save with no engine reads as an outage and not as unfinished work.
+    ///
+    /// The trait's default would answer `Unsupported { F006Editor }`, which was true until F006
+    /// shipped and is a lie afterwards: it would tell a developer whose link had dropped that
+    /// saving is not built yet, and they would stop trying instead of reconnecting.
+    async fn write_file(
+        &self,
+        _ws: &WorkspaceId,
+        _path: &RelPath,
+        _content: &[u8],
+        _base: &Sha256,
+    ) -> ProviderResult<Sha256> {
         Err(ProviderError::Offline)
     }
 }

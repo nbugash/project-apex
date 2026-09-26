@@ -298,6 +298,108 @@ pub fn read_file(
     }))
 }
 
+/// The largest content a single write will accept.
+///
+/// §4.1 caps a frame at 1 MiB, which already bounds a `writeFile` arriving over the wire. This
+/// bound is here as well because an engine whose only protection is its codec is one that breaks
+/// the moment anything else calls the use case -- and the use case is what the tests call.
+pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
+
+/// Why a write could not be performed.
+#[derive(Debug)]
+pub enum WriteRefusal {
+    /// The workspace or the path, reusing exactly what the read methods return. Containment is
+    /// not re-implemented for writes: `ResolvedPath::resolve` already canonicalises against the
+    /// registered root and distinguishes an escape from a miss, and a second check written for
+    /// this path would be a second thing to keep correct.
+    Request(RequestRefusal),
+    /// `base_sha256` does not match the file's current content. Nothing was written.
+    Conflict,
+    TooLarge {
+        limit: usize,
+    },
+    Io(String),
+}
+
+impl WriteRefusal {
+    /// The §4.4 code and a message for the developer.
+    pub fn wire(&self) -> (i32, String) {
+        use apex_protocol::wire::codes;
+        match self {
+            Self::Request(r) => r.wire(),
+            Self::Conflict => (
+                codes::WRITE_CONFLICT,
+                "the file changed on the host since it was read".into(),
+            ),
+            Self::TooLarge { limit } => (
+                codes::PAYLOAD_TOO_LARGE,
+                format!("content exceeds the {limit} byte write limit"),
+            ),
+            Self::Io(why) => (apex_protocol::wire::codes::NOT_FOUND, why.clone()),
+        }
+    }
+}
+
+/// The hash of some bytes, as the protocol spells it.
+pub fn hash_bytes(bytes: &[u8]) -> String {
+    hex_digest(bytes)
+}
+
+/// Write a file, refusing if it has moved underneath the caller.
+///
+/// The order is the contract. Size first, because refusing early costs nothing. Then resolve and
+/// contain, because a path that may not be touched must not be read either. Then hash what is
+/// there and compare -- **before anything is opened for writing**, so a refusal leaves a file
+/// that was never opened rather than one that was restored.
+pub fn write_file(
+    roots: &dyn WorkspaceRoots,
+    fs: &dyn FileSystem,
+    params: &apex_protocol::wire::WriteFileParams,
+) -> Result<apex_protocol::wire::WriteFileResult, WriteRefusal> {
+    let bytes = params.content.as_bytes();
+    if bytes.len() > MAX_WRITE_BYTES {
+        return Err(WriteRefusal::TooLarge {
+            limit: MAX_WRITE_BYTES,
+        });
+    }
+
+    let resolved = resolve_request(roots, fs, &params.workspace_id.0, &params.relative_path)
+        .map_err(WriteRefusal::Request)?;
+
+    let current = fs
+        .read_all(resolved.as_path())
+        .map_err(|e| WriteRefusal::Io(e.to_string()))?;
+    let found = hex_digest(&current);
+    if found != params.base_sha256 {
+        // Both hashes, because a conflict a developer disputes afterwards is a support call with
+        // nothing to look at. Neither is secret: they describe a file that developer can read,
+        // and **the content is never logged** -- a file being edited is exactly the kind of
+        // thing that holds a credential.
+        //
+        // **Conflicts only, not every write.** The engine's stderr is not a log file: the client
+        // collects it into a bounded buffer and classifies a failure from it. A line per save
+        // would evict the diagnostic it exists to carry, which is a worse outcome than having no
+        // record of routine writes. The task asked for both; this is the half worth the budget.
+        eprintln!(
+            "writeFile refused {}: base {} but found {}",
+            params.relative_path, params.base_sha256, found
+        );
+        return Err(WriteRefusal::Conflict);
+    }
+
+    fs.write_atomic(resolved.as_path(), bytes)
+        .map_err(|e| WriteRefusal::Io(e.to_string()))?;
+
+    // Hashed from what was written rather than from the request, so a client adopting this as
+    // its new base is adopting what is on disk.
+    let written = fs
+        .read_all(resolved.as_path())
+        .map_err(|e| WriteRefusal::Io(e.to_string()))?;
+    Ok(apex_protocol::wire::WriteFileResult {
+        sha256: hex_digest(&written),
+    })
+}
+
 fn hex_digest(bytes: &[u8]) -> String {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();

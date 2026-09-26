@@ -3463,3 +3463,82 @@ sides of a convention that has to state both sides to be useful.
 touch 42 structs in `protocol/src/wire.rs` and hand-written frames in sixteen test files across
 four shipped features, all to move away from what the specification asks for.
 
+---
+
+## A-EDITPALETTE — The editor's syntax colours are the design system's, mapped to five roles (2026-09-26, corrected during implementation)
+
+**Decision.** The five syntax roles the prototype's `Editor` screen distinguishes map to five
+colour tokens the design system already defines:
+
+| Role | Prototype | Design system token |
+|---|---|---|
+| punctuation, operators | `#9397ab` | `--color-neutral-500` |
+| function and method names | `#e4e7f5` | `--color-neutral-200` |
+| keywords | `#b5abfc` | `--color-accent-400` |
+| types | `#d2cefd` | `--color-accent-300` |
+| comments | `#75798c` | `--color-neutral-600` |
+
+Monaco's theme is built from those tokens. Every other role in its token set falls back to the
+editor's foreground, and **semantic syntax tokens** — a `--color-syntax-keyword` that says what a
+colour is *for* rather than what it *is* — are owed by the design system.
+
+**This record was first written with a wrong premise and is corrected rather than edited away.**
+It said the prototype's editor colours were "raw hex, none of them design-system tokens", on the
+strength of seeing hex literals in the markup. Every one of those literals is a design-system
+value written out longhand. The premise was never checked against the palette; the check takes
+one grep and was not done.
+
+The mistake matters beyond this record, because it is the second of its kind here — A-WIRECASE
+concluded a protocol divergence by counting spellings instead of reading the paragraph that
+governed them. Both were inspections that stopped one step short of the source. The corrected
+decision is strictly better than the wrong one: no new tokens are extracted, the component reads
+the palette directly, and a test can assert each Monaco colour equals its token.
+
+**Rationale.** Under Principle I every colour must come from a design system token. The values
+were always available as tokens; only the mapping from syntax role to token is this feature's,
+and that mapping is what the prototype fixes by using those colours for those roles.
+
+Five is a count, not a target: it is what the prototype distinguishes. Inventing colours for the
+other forty-odd roles Monaco knows would be this feature deciding what the design system looks
+like. Falling back to the foreground leaves them unstyled, which is honest, rather than
+mis-styled, which is not.
+
+**Alternatives rejected.** Extracting the hex into new `--vk-code-*` tokens — which is what this
+record originally required, and which would have created five tokens duplicating five that
+already exist, with no mechanism keeping the copies in step. A built-in Monaco theme — a
+different visual language from the rest of the application. Inventing the missing roles — a
+prettier editor and an unapproved design.
+
+**Reversal condition.** The design system defining semantic syntax tokens. At that point the
+mapping moves into the design system and this feature reads it rather than deciding it.
+
+## A-WRITEECHO — A watched file's writer must not hear its own write as news (2026-09-26)
+
+**Decision.** When a client receives `workspace/onFileEvent` for a file it has open, it
+establishes whether the content actually diverged — by comparing the file's current hash against
+the base it holds — before treating the event as a change made elsewhere. A file event is not by
+itself evidence of divergence.
+
+**Rationale.** The engine's own writes trip its own watcher. The inotify mask includes `MODIFY`
+and `CLOSE_WRITE`, so every successful `workspace/writeFile` produces an event for the file just
+written. A client that took events at face value would tell the developer their file had changed
+underneath them on every single save.
+
+The event cannot answer the question itself: `FileEvent` carries kind, path, and optionally type,
+size and modified time — **no hash** (§4.8). Size is not sufficient, because an edit that changes
+a character changes no size. `workspace/stat` already returns a hash, so the question is asked
+with a method that exists, at a cost bounded by how many files are open and entirely off the
+keystroke path.
+
+**Alternatives rejected.** Suppressing events for a path for a window after writing it — free,
+and it silently discards a colleague's edit that lands inside the window, which is the failure
+the base-hash design exists to prevent. Comparing the size in the event — cheap and blind to any
+edit that preserves length. Having the engine tag events it caused — correct in principle, a
+protocol change, and unnecessary for a question the client can already ask.
+
+**Why this binds beyond F006.** Every future feature that writes a watched file inherits it:
+F011 git operations, F012's offline reconciliation, F017's artifact writes. The rule is a
+property of watching plus writing, not of editing.
+
+**Reversal condition.** A measurement showing the per-event `stat` is material, or a protocol
+change that lets the engine mark the events its own request caused.

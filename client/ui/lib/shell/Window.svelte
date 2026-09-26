@@ -15,6 +15,9 @@
   import { listenToEngine } from '../terminal/engine';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
+  import EditorPanel from '../editor/EditorPanel.svelte';
+  import { onMount } from 'svelte';
+  import { startFileEvents } from '../editor/events';
   import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
@@ -93,12 +96,37 @@
   // One tree for the window. Its workspace id is empty until one is opened, and the store
   // surfaces the resulting refusal rather than rendering an empty panel that looks like an
   // empty repository.
+  // Starts with the seeding identity the end-to-end suite drives, and is rebound to the real
+  // one as soon as a workspace is announced. It was *only* ever `'e2e'` before F006, which is
+  // why the tree could show seeded content and nothing else: it asks for a listing by workspace
+  // id, and no real id ever reached it.
   const workspaceTree = new WorkspaceTree('e2e');
   // Reachable for the end-to-end suite, which seeds the projection through the Rust side and
   // then needs the tree to read it. The seeding command it pairs with is
   // `#[cfg(debug_assertions)]`, so on a release build there is nothing to drive this with.
   (window as unknown as Record<string, unknown>).__APEX_TREE__ = workspaceTree;
+
+  // A file changing on the host concerns whichever buffer holds it (FR-024). Started once for
+  // the window, not per editor: the panel is unmounted whenever its tab is not focused, and a
+  // background tab is exactly the case FR-024 is about.
+  onMount(() => startFileEvents());
+
+  /// Bind the tree to whichever workspace is open, and fetch its root.
+  ///
+  /// One listing, on open, and none afterwards: `open()` asks for the root only, and a folder's
+  /// children are fetched the first time it is expanded (FR-014, SC-001). Guarded on the id
+  /// actually changing, because this effect re-runs whenever anything it reads does, and a
+  /// listing per re-evaluation is the sort of thing SC-002 counts.
+  $effect(() => {
+    const id = shellState.workspace?.id;
+    if (!id || id === workspaceTree.workspaceId) return;
+    workspaceTree.workspaceId = id;
+    void workspaceTree.open();
+  });
   let focusedId = $state(session.focused_document_id);
+  /// The session's autosave preference, held here because the editor is remounted per tab and a
+  /// component that read it itself would re-read it on every tab switch (FR-007b).
+  let autosave = $state(session.autosave);
   let persistenceFailed = $state(false);
 
   async function persist(fn: () => Promise<unknown>) {
@@ -174,6 +202,7 @@
     const s = await ipc.sessionGet();
     documents = s.documents;
     focusedId = s.focused_document_id;
+    autosave = s.autosave;
   }
 
   let activeDocument = $derived(documents.find((d) => d.id === focusedId) ?? null);
@@ -203,7 +232,11 @@
            destination whose panel said it was "not available" contradicted the rail, which
            shows it as open and active. -->
       {#if activeDestination?.id === 'project'}
-        <FileTree tree={workspaceTree} />
+        <FileTree
+          tree={workspaceTree}
+          selected={activeDocument?.path ?? ''}
+          onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
+        />
       {:else}
         <p class="pending">No workspace open.</p>
       {/if}
@@ -229,7 +262,12 @@
       />
       <div class="content">
         {#if activeDocument}
-          <p>{activeDocument.display_name}</p>
+          <!-- Keyed on the document so switching tabs gives Monaco a fresh mount rather than a
+               model swapped underneath it. The buffer behind it is not remounted: it lives in
+               `buffers.svelte.ts` precisely so a tab switch cannot lose it. -->
+          {#key activeDocument.id}
+            <EditorPanel path={activeDocument.path} {autosave} />
+          {/key}
         {:else}
           <p class="empty">No document open</p>
         {/if}
@@ -294,6 +332,13 @@
   }
   .content {
     flex: 1 1 auto;
+    /* A flex column, so a panel inside it can claim the height rather than being sized by its
+       own content. The editor is the first child that needs this: as a plain block container
+       this measured 5px, Monaco's automaticLayout observed that and rendered a single line, and
+       everything below the first line silently stopped existing. */
+    display: flex;
+    flex-direction: column;
+    min-block-size: 0;
     padding: var(--space-4);
     overflow: auto;
   }

@@ -333,3 +333,66 @@ every selector times out with no clue why. The harness and the gate both start
 chrome header and status bar leave. F000 built the status bar from the generic spacing
 scale, which made it 17px against the prototype's 26px, and both gated surfaces came out
 nine pixels too tall. Its metrics are extracted from the prototype now.
+
+# The Editor (F006)
+
+## The buffer model outlives the component
+
+`EditorPanel` is unmounted whenever its tab is not the focused one. Everything true about an
+open file — its text, the base hash a save is conditional on, whether it is dirty, which byte
+ranges are held — lives in `client/ui/lib/editor/buffers.svelte.ts`, at module scope, for that
+reason. A model held in the component would lose unsaved work on a tab switch.
+
+The terminal had exactly this defect and it was found by hand: `detach()` disposed the instance,
+and nobody noticed until the dock grew tabs to hide a panel behind. This is that lesson applied
+before rather than after.
+
+## One buffer per path
+
+Opening a file that is already open returns the existing buffer and **does not re-read it**. Two
+buffers of one file would mean two bases, and a save through one would silently revert the
+other. It also means clicking a tab you already have open cannot discard what you have typed.
+
+## What the palette translates, and what it does not
+
+`palette.ts` maps five syntax roles to design-system tokens, read off the mounted element so the
+stylesheet stays the one place a colour is decided. The mapping is this feature's; every value
+is the prototype's. A role whose token the stylesheet does not define is **omitted** rather than
+defaulted — Monaco then shows its own colour, which is visibly wrong and gets fixed, where a
+silent default is invisibly wrong and stays.
+
+Monaco knows about forty-odd more token types. Inventing colours for them would be this
+application deciding what the design system looks like.
+
+## The partial-buffer interlock
+
+A file past the chunk threshold opens a window at a time, and a partially loaded buffer is
+**not editable**. This is an interlock rather than a nicety: §4.8 carries content, not a patch,
+so a whole-file write of a partial buffer would replace every unloaded region with nothing. The
+editor is read-only, the surface says so, and there is a control that loads the rest.
+
+Regions are tracked in **bytes**, not in string length. `text.length` counts UTF-16 code units,
+so one emoji counts as two and every region recorded after it is wrong — which surfaces much
+later as a range that never fills.
+
+## Things that will bite you
+
+- **A state mutation inside a `$derived` does not fail quietly.** `buffers.ensure()` pushes onto
+  the buffer set; reading it from a derived stopped the whole shell mounting, so `.shell` never
+  appeared and every spec that restarts with a document open timed out. Create in an effect,
+  read in a derived.
+- **Svelte tracks an effect's dependencies per run.** An effect that returns early has
+  subscribed only to what it read *before* returning. The editor's sync effect guarded on
+  `if (!editor) return` while Monaco was still loading, and so never subscribed to the buffer's
+  revision at all: the buffer held the host's content and the editor showed the old text, and
+  neither of them was wrong. Read the reactive values before any guard.
+- **Do not push text into Monaco because the two differ.** That comparison re-runs on every
+  keystroke and, the instant it sees Monaco holding character *n+1* against a buffer holding
+  *n*, deletes what was just typed. The question is which side changed, which is what the
+  revision counter answers.
+- **The document area must be a flex column.** As a block container it measured 5px, Monaco's
+  `automaticLayout` observed that and rendered a single line, and every line after the first
+  silently stopped existing.
+- **`browser.keys(array)` loses characters.** It is one WebDriver action sequence; typing
+  `// offline edit` through it arrives as `/ oflinedit`. One call per character, or SC-009
+  becomes an assertion about the driver.

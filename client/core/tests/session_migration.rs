@@ -300,3 +300,42 @@ fn a_client_that_lost_its_store_entirely_has_nothing_to_reattach_to() {
     // Which is precisely why `execution/list` exists: without it these tasks keep running and
     // are unreachable until the instance idles out (SC-023).
 }
+
+/// Exactly what the previous release wrote: schema version 3, no autosave field.
+const VERSION_THREE_SESSION: &str = r#"{
+  "schema_version": 3,
+  "workspace": { "name": "payments-platform", "location_type": "REMOTE" },
+  "window": { "x": 240, "y": 160, "width": 1100, "height": 760, "maximized": false },
+  "layout": {
+    "navigation": { "visible": true, "extent": 300 },
+    "output": { "visible": false, "extent": 220 },
+    "document_area": { "visible": true, "extent": 0 }
+  },
+  "documents": [{ "id": "doc-a", "display_name": "main.rs", "order": 0 }],
+  "focused_document_id": "doc-a",
+  "tasks": []
+}"#;
+
+#[test]
+fn a_profile_that_never_chose_autosave_does_not_get_it_switched_on() {
+    // The migration A-STATE2 established, applied to a field where the default is not merely
+    // convenient. Autosave writes the developer's file without being asked, and an upgrade is
+    // not consent. `false` is the safe value *and* what `serde(default)` produces, which is the
+    // only reason relying on the default is defensible here.
+    let parsed: PersistedSession =
+        serde_json::from_str(VERSION_THREE_SESSION).expect("a version 3 store must still parse");
+
+    assert!(
+        !parsed.autosave,
+        "an upgrade must not start writing a developer's files for them"
+    );
+    assert_eq!(
+        parsed.documents.len(),
+        1,
+        "the rest of the store must survive the upgrade"
+    );
+    assert_eq!(
+        SCHEMA_VERSION, 4,
+        "this test describes the upgrade into version 4; a later version needs its own"
+    );
+}
