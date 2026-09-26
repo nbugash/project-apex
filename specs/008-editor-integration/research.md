@@ -78,38 +78,29 @@ open rather than by workspace size, and it is off the keystroke path entirely.
 
 ---
 
-## The editor's palette is five colours and a deferral
+## The editor's palette is five roles mapped to tokens that already exist
 
-**Decision.** `ds-sync` extracts the five colours the prototype's editor actually distinguishes —
-punctuation, function name, keyword, type, comment — as `--vk-code-*` tokens. Monaco's theme is
-built from those plus the existing surface tokens. Every other role in Monaco's token set falls
-back to the editor's foreground colour, and a complete syntax theme is logged as **owed to the
-design system**.
+**Decision.** The five syntax roles the prototype distinguishes map to five design-system colour
+tokens: punctuation to `--color-neutral-500`, names to `--color-neutral-200`, keywords to
+`--color-accent-400`, types to `--color-accent-300`, comments to `--color-neutral-600`. Monaco's
+theme reads those tokens. Everything else falls back to the foreground, and **semantic** syntax
+tokens are owed by the design system.
 
-**Rationale.** The prototype's `Editor` screen writes its code colours as raw hex — `#9397ab`
-for punctuation and operators, `#e4e7f5` for names, `#b5abfc` for keywords, `#d2cefd` for types,
-`#75798c` for comments. None is a design-system token. Under Principle I those hexes are the
-specification of appearance, so they bind; and under the same principle a component may not
-write them, so they are extracted rather than transcribed.
+**Rationale.** The prototype writes these colours as hex literals in its editor markup, and the
+first version of this entry concluded from that they were outside the design system. They are
+not: every literal matches a token exactly. Checking took one grep against
+`client/ui/lib/ds/system/styles.css` and was not done until implementation began — see
+A-EDITPALETTE, which records the correction and why this is the second finding of its shape in
+this project.
 
-Five is not a target, it is a count: it is what the prototype distinguishes. Inventing colours
-for the other forty-odd roles Monaco knows about would be this feature deciding what the design
-system looks like, which is the drift Principle I exists to prevent. Falling back to the
-foreground is honest — unstyled, not mis-styled.
+Only the mapping is this feature's. The values are the design system's, and the prototype fixes
+which value belongs to which role by using it there.
 
-This is A-TERMPALETTE's shape, one surface over. That record mapped three hues and deferred
-eleven for the terminal, on the same grounds, and it is the precedent rather than a coincidence.
-
-**Alternatives rejected.**
-
-- *Use one of Monaco's built-in themes.* Immediate, complete, and a different visual language
-  from the rest of the application — the definition of drift.
-- *Invent tokens for the missing roles.* Produces a prettier editor and an unapproved design.
-- *Ship no syntax colour at all until the design system defines one.* Defensible, and worse than
-  the prototype: the prototype does colour code, so plain text would be a regression from a
-  signed-off artifact.
-
----
+**Alternatives rejected.** Extracting the hex into new `--vk-code-*` tokens, which is what this
+entry first required: five new tokens duplicating five that exist, with nothing keeping the
+copies in step. A built-in Monaco theme — a different visual language from the rest of the
+application. Inventing the forty-odd roles the prototype does not show — this feature deciding
+what the design system looks like.
 
 ## Where the base hash lives, and what "valid" means
 

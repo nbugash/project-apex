@@ -62,7 +62,7 @@ chosen during implementation is a number nobody reviewed.
 | Range size for scrolled reads (FR-017) | **256 KiB** | Four ranges per frame's worth, so a stall costs a quarter of the worst case, and well clear of the cap once the response is framed. A larger range risks the cap; a smaller one multiplies round trips across a long file. |
 | Autosave debounce (FR-007c) | **2 s** after typing stops | §1.5's rule 2 debounces completion at 50–100 ms because the developer is waiting for the answer. Nobody waits for a save, and a save is a write with conflict consequences, so it is bound by how long a developer tolerates their work being unwritten rather than by perceived latency. Two seconds is short enough that a crash loses a sentence, long enough that ordinary typing produces one write per pause rather than per word. |
 | Maximum file opened as text | **64 MiB** | Monaco holds the whole model in memory once loaded, and beyond this the editor is not the right surface. Refusing with a reason beats a window that stops responding. |
-| Editor syntax colours extracted | **5** | What the prototype's editor actually distinguishes: punctuation, name, keyword, type, comment. See research.md, *The editor's palette is five colours and a deferral*. |
+| Editor syntax roles mapped | **5** | What the prototype's editor actually distinguishes: punctuation, name, keyword, type, comment. Each maps to a design-system token that already holds the value; no token is created. See research.md. |
 
 ---
 
@@ -72,7 +72,7 @@ Evaluated against `.specify/memory/constitution.md` before Phase 0.
 
 | Principle | Verdict | Basis |
 |---|---|---|
-| **I. Design Fidelity** | **PASS, with work** | The prototype has an `Editor` screen whose code colours are **raw hex** — `#9397ab`, `#e4e7f5`, `#b5abfc`, `#d2cefd`, `#75798c` — none of them design-system tokens, exactly as the terminal's hues were before A-TERMPALETTE. They are extracted by `ds-sync` rather than transcribed, and Monaco is themed from the resulting tokens; a full syntax theme is logged as owed to the design system. `--vk-code` (13.5px) and `--vk-line` (25px) already exist. No deviation is planned, so no designer approval is required. |
+| **I. Design Fidelity** | **PASS** | The prototype's `Editor` screen writes its code colours as hex literals, and each one **is** a design-system value: `#9397ab` is `--color-neutral-500`, `#e4e7f5` is `--color-neutral-200`, `#b5abfc` is `--color-accent-400`, `#d2cefd` is `--color-accent-300`, `#75798c` is `--color-neutral-600`. Monaco is themed from those tokens; only the role-to-token mapping is this feature's. `--vk-code` (13.5px) and `--vk-line` (25px) already exist. No deviation is planned, so no designer approval is required. See A-EDITPALETTE, corrected during implementation. |
 | **II. One Source of Truth** | **PASS** | Every value traces to `project-apex-predator.md`: the method and its fields to §4.8, `-32004` to §4.4, the budget to §1.4, ranged reads to §4.6, the provider signature to §6.1. Where this plan fixes a number the system leaves open, *Fixed Quantities* says so. |
 | **III. Decisions Recorded First** | **PASS, with an obligation** | Two decisions here close genuine alternatives and are recorded in Appendix A before implementation: the editor palette and its deferral, and how a write is told apart from a foreign change. Recorded at this checkpoint, not after. |
 | **IV. Open Items Block** | **PASS** | Zero live `[OPEN:]` markers before Appendix A, verified by injecting one and confirming the detector fires. |

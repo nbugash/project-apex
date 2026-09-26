@@ -17,8 +17,8 @@ glad of.
 ## Phase 1: Setup
 
 - [ ] T001 Add `monaco-editor` to `package.json`, and confirm it is the only dependency this feature adds. It goes in the webview bundle and nowhere else: Principle VIII forbids Monaco types in `client/core`, and a dependency that can only be imported from one directory is the cheapest way to keep that true
-- [ ] T002 Add an `editor` surface to `scripts/ds-sync.mjs` extracting the five code colours the prototype's `Editor` screen distinguishes — punctuation `#9397ab`, name `#e4e7f5`, keyword `#b5abfc`, type `#d2cefd`, comment `#75798c` — as `--vk-code-punctuation`, `--vk-code-name`, `--vk-code-keyword`, `--vk-code-type`, `--vk-code-comment`. Anchor on the loop that emits the code lines, not on a colour value, so that a changed colour is extracted rather than silently missed (A-EDITPALETTE)
-- [ ] T003 Run `npm run ds:sync` and confirm the five tokens appear in `client/ui/lib/ds/layout-tokens.css` with the prototype's values. Then change one colour in the prototype, re-run, and confirm the token follows — an extractor that cannot report a change is one nobody will notice has broken
+- [X] T002 **No ds-sync change needed, and that is the finding.** The prototype's editor colours are hex literals whose values are already design-system tokens: `#9397ab` is `--color-neutral-500`, `#e4e7f5` is `--color-neutral-200`, `#b5abfc` is `--color-accent-400`, `#d2cefd` is `--color-accent-300`, `#75798c` is `--color-neutral-600`. Extracting them would create five tokens duplicating five that exist, with nothing keeping the copies in step. A-EDITPALETTE is corrected to say so
+- [ ] T003 `tests/unit/editor-palette.test.ts`: assert each of the five hex literals in `mockups/Apex IDE (standalone).html`'s editor markup still equals the design-system token this feature maps it to, reading both from disk. **This is what keeps the mapping honest**: the prototype could change a colour and the application would keep rendering the old token, which is drift in the direction Principle I exists to catch, and no other check would see it
 
 ---
 

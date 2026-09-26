@@ -3465,37 +3465,52 @@ four shipped features, all to move away from what the specification asks for.
 
 ---
 
-## A-EDITPALETTE — The editor's syntax colours are five, extracted, and the rest deferred (2026-09-26)
+## A-EDITPALETTE — The editor's syntax colours are the design system's, mapped to five roles (2026-09-26, corrected during implementation)
 
-**Decision.** `ds-sync` extracts the five colours the prototype's `Editor` screen distinguishes —
-punctuation, function name, keyword, type, comment — as `--vk-code-*` tokens. Monaco's theme is
-built from those plus the existing surface tokens. Every other role in Monaco's token set falls
-back to the editor's foreground colour, and a **complete syntax theme is owed by the design
-system**, not by this feature.
+**Decision.** The five syntax roles the prototype's `Editor` screen distinguishes map to five
+colour tokens the design system already defines:
 
-**Rationale.** The prototype writes its code colours as raw hex — `#9397ab` punctuation,
-`#e4e7f5` names, `#b5abfc` keywords, `#d2cefd` types, `#75798c` comments. None is a design-system
-token. Principle I makes those hexes the specification of appearance, so they bind; and the same
-principle forbids a component writing them, so they are extracted rather than transcribed.
+| Role | Prototype | Design system token |
+|---|---|---|
+| punctuation, operators | `#9397ab` | `--color-neutral-500` |
+| function and method names | `#e4e7f5` | `--color-neutral-200` |
+| keywords | `#b5abfc` | `--color-accent-400` |
+| types | `#d2cefd` | `--color-accent-300` |
+| comments | `#75798c` | `--color-neutral-600` |
 
-Five is a count, not a target: it is what the prototype actually distinguishes. Inventing colours
-for the other forty-odd roles Monaco knows would be this feature deciding what the design system
-looks like, which is exactly the drift Principle I exists to prevent. Falling back to the
-foreground leaves those roles unstyled, which is honest, rather than mis-styled, which is not.
+Monaco's theme is built from those tokens. Every other role in its token set falls back to the
+editor's foreground, and **semantic syntax tokens** — a `--color-syntax-keyword` that says what a
+colour is *for* rather than what it *is* — are owed by the design system.
 
-**Alternatives rejected.** A built-in Monaco theme — immediate, complete, and a different visual
-language from the rest of the application. Inventing the missing tokens — a prettier editor and
-an unapproved design. Shipping no syntax colour at all — a regression from a signed-off artifact
-that does colour code.
+**This record was first written with a wrong premise and is corrected rather than edited away.**
+It said the prototype's editor colours were "raw hex, none of them design-system tokens", on the
+strength of seeing hex literals in the markup. Every one of those literals is a design-system
+value written out longhand. The premise was never checked against the palette; the check takes
+one grep and was not done.
 
-**This is A-TERMPALETTE's shape, one surface over.** That record mapped three hues and deferred
-eleven for the terminal on the same grounds. Two surfaces now defer a palette to the design
-system; a third should prompt the design system to define one rather than a third deferral.
+The mistake matters beyond this record, because it is the second of its kind here — A-WIRECASE
+concluded a protocol divergence by counting spellings instead of reading the paragraph that
+governed them. Both were inspections that stopped one step short of the source. The corrected
+decision is strictly better than the wrong one: no new tokens are extracted, the component reads
+the palette directly, and a test can assert each Monaco colour equals its token.
 
-**Reversal condition.** The design system defining a syntax palette. At that point the extraction
-narrows to a mapping and the deferral is discharged.
+**Rationale.** Under Principle I every colour must come from a design system token. The values
+were always available as tokens; only the mapping from syntax role to token is this feature's,
+and that mapping is what the prototype fixes by using those colours for those roles.
 
----
+Five is a count, not a target: it is what the prototype distinguishes. Inventing colours for the
+other forty-odd roles Monaco knows would be this feature deciding what the design system looks
+like. Falling back to the foreground leaves them unstyled, which is honest, rather than
+mis-styled, which is not.
+
+**Alternatives rejected.** Extracting the hex into new `--vk-code-*` tokens — which is what this
+record originally required, and which would have created five tokens duplicating five that
+already exist, with no mechanism keeping the copies in step. A built-in Monaco theme — a
+different visual language from the rest of the application. Inventing the missing roles — a
+prettier editor and an unapproved design.
+
+**Reversal condition.** The design system defining semantic syntax tokens. At that point the
+mapping moves into the design system and this feature reads it rather than deciding it.
 
 ## A-WRITEECHO — A watched file's writer must not hear its own write as news (2026-09-26)
 
