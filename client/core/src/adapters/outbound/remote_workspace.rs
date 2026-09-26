@@ -277,7 +277,9 @@ impl WorkspaceProvider for RemoteWorkspaceProvider {
         // -- the developer's file destroyed by the act of saving it. The same reasoning as
         // FR-006 on the way in, applied on the way out.
         let text = std::str::from_utf8(content).map_err(|_| {
-            ProviderError::Transport("content is not valid UTF-8, which writeFile cannot carry".into())
+            ProviderError::Transport(
+                "content is not valid UTF-8, which writeFile cannot carry".into(),
+            )
         })?;
 
         let params = wire::WriteFileParams {

@@ -47,10 +47,7 @@ fn workspace(id: &str) -> Workspace {
     }
 }
 
-fn subject(
-    inner: Arc<FakeWorkspace>,
-    dir: &std::path::Path,
-) -> (CachedWorkspace, WorkspaceId) {
+fn subject(inner: Arc<FakeWorkspace>, dir: &std::path::Path) -> (CachedWorkspace, WorkspaceId) {
     let cache = Arc::new(SqliteWorkspaceCache::open(&dir.join("cache.db")).expect("open"));
     cache
         .migrate_to(schema::CURRENT_VERSION, &mut |_| {})

@@ -3,8 +3,8 @@
 //! Input arriving here is untrusted regardless of interface-layer validation (Constitution
 //! Principle VI). Every argument is validated in the core, which rejects rather than coerces.
 
-use crate::application::error::ShellError;
 use crate::adapters::inbound::task_commands::Tasks;
+use crate::application::error::ShellError;
 use crate::application::use_cases::edit_file::{EditFile, WriteOutcome};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
@@ -578,7 +578,11 @@ pub async fn workspace_open(
     // the file tree was built with a literal id and could only show seeded content.
     shell
         .persist
-        .set_workspace(&ws.id.0, &ws.name, crate::domain::session::LocationType::Remote)
+        .set_workspace(
+            &ws.id.0,
+            &ws.name,
+            crate::domain::session::LocationType::Remote,
+        )
         .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?;
     let _ = app.emit("workspace:changed", shell.persist.snapshot().workspace);
 

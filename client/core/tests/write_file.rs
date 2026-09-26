@@ -130,7 +130,9 @@ async fn a_refused_path_is_refused_and_not_not_found() {
 
 #[tokio::test]
 async fn a_missing_file_is_not_found_and_not_a_conflict() {
-    let err = write(Scripted::failing(codes::NOT_FOUND)).await.unwrap_err();
+    let err = write(Scripted::failing(codes::NOT_FOUND))
+        .await
+        .unwrap_err();
     assert!(matches!(err, ProviderError::NotFound), "got {err:?}");
 }
 
@@ -139,7 +141,10 @@ async fn an_unregistered_workspace_says_to_re_register() {
     let err = write(Scripted::failing(codes::WORKSPACE_NOT_REGISTERED))
         .await
         .unwrap_err();
-    assert!(matches!(err, ProviderError::UnknownWorkspace), "got {err:?}");
+    assert!(
+        matches!(err, ProviderError::UnknownWorkspace),
+        "got {err:?}"
+    );
 }
 
 #[tokio::test]
@@ -147,7 +152,9 @@ async fn a_malformed_digest_is_an_error_rather_than_a_silent_miss() {
     // `Sha256::parse` refuses anything that is not 64 lowercase hex, and the adapter must turn
     // that refusal into an error. Adopting a malformed base would make the *next* save fail with
     // a conflict nobody caused, which is a bug reported as "it randomly stops saving".
-    let err = write(Scripted::answering("not-a-digest")).await.unwrap_err();
+    let err = write(Scripted::answering("not-a-digest"))
+        .await
+        .unwrap_err();
     assert!(matches!(err, ProviderError::Transport(_)), "got {err:?}");
 }
 
@@ -158,7 +165,9 @@ async fn content_that_is_not_text_is_refused_rather_than_mangled() {
     // conversion, which would replace each invalid sequence with U+FFFD and save *that* -- the
     // developer's file destroyed by the act of saving it.
     let sender = Scripted::answering(Sha256::of(b"x").as_str());
-    let err = write_bytes(sender.clone(), &[0xff, 0xfe, 0x00]).await.unwrap_err();
+    let err = write_bytes(sender.clone(), &[0xff, 0xfe, 0x00])
+        .await
+        .unwrap_err();
     assert!(matches!(err, ProviderError::Transport(_)), "got {err:?}");
     assert!(
         sender.seen.lock().expect("seen").is_empty(),

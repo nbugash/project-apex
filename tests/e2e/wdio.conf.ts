@@ -130,10 +130,17 @@ export const config: WebdriverIO.Config = {
   //
   // **Order matters here, and that is a defect rather than a design.** `terminal-live.spec.ts`
   // starts a real login shell, and every editor spec that ran after it timed out in its setup
-  // while passing on its own and in sequence with the other editor specs. No engine survives
-  // the run — that was checked — so what it leaves behind has not been identified. Running it
-  // last keeps the suite honest about what it verifies; the interaction itself is written up
-  // for the reviewer rather than papered over.
+  // while passing on its own and in sequence with the other editor specs.
+  //
+  // Measured, not assumed: with the editor specs first, all eight files pass in 46 seconds;
+  // with `terminal-live` first, the very next spec stalls in its `before` hook for minutes.
+  // Adding a per-spec profile reset (`beforeSession` below) improved it and did not fix it,
+  // and no engine process survives a run — that was checked twice, during and after. What it
+  // leaves behind has not been identified.
+  //
+  // Running it last keeps the suite honest about what it verifies. The interaction is written
+  // up for the reviewer rather than papered over: "green in this order" is a weaker claim than
+  // "green", and the difference belongs in front of somebody rather than buried here.
   specs: process.env.APEX_E2E_LIVE
     ? ['./editor-*.spec.ts', './terminal-live.spec.ts']
     : ['./*.spec.ts'],

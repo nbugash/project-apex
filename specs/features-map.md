@@ -66,12 +66,12 @@ an intention to do it.
   - [ ] Idle detection and proactive stop policy
   - [ ] Security group and provisioning verification
   - [ ] Wake progress and cost state surfaced in the UI
-- [ ] **F006 editor-integration** (depends: F000, F003)
+- [x] **F006 editor-integration** (depends: F000, F003)
   - Spec: specs/008-editor-integration
-  - [ ] Monaco text model bound to cached content with local echo
-  - [ ] Write path with baseSha256 conflict rejection
-  - [ ] Large-file chunked loading on scroll
-  - [ ] Tab and layout state persistence
+  - [x] Monaco text model bound to cached content with local echo
+  - [x] Write path with baseSha256 conflict rejection
+  - [x] Large-file chunked loading on scroll
+  - [x] Tab and layout state persistence
 - [ ] **F007 lsp-multiplexing** (depends: F006)
   - Spec: not yet specified
   - [ ] Engine-side language server spawn, supervision and cgroup isolation

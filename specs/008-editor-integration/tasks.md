@@ -101,7 +101,7 @@ host, save again, observe the refusal and the host's content unchanged.
 - [X] T044 [US2] `client/ui/lib/editor/buffers.svelte.ts`: on a file event for an open file, ask for the file's current hash and compare with the buffer's base before treating it as a change (A-WRITEECHO, FR-024, FR-024a)
 - [X] T045 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, a genuinely diverged file with a **clean** buffer may refresh; with a **dirty** buffer it must not be replaced and the unsaved changes must survive (FR-024b)
 - [X] T046 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, report a deletion of an open file without discarding the buffer (FR-025)
-- [ ] T047 [US2] `tests/e2e/editor-echo.spec.ts`: saving produces **zero** "changed on the host" notices (SC-012), and a change made by something other than the client **is** reported (SC-013). Both, because each is the other's failure mode — a fix for one that breaks the other looks correct from whichever side you are standing on
+- [X] T047 [US2] `tests/e2e/editor-echo.spec.ts`: saving produces **zero** "changed on the host" notices (SC-012), and a change made by something other than the client **is** reported (SC-013). Both, because each is the other's failure mode — a fix for one that breaks the other looks correct from whichever side you are standing on
 
 ---
 
@@ -118,7 +118,7 @@ the whole file has transferred, and that scrolling fetches more.
 - [X] T051 [US3] In `client/ui/lib/editor/buffers.svelte.ts`, read a file at or below the threshold whole, in one request (FR-018) — a range request for a small file costs the same round trip and delivers less
 - [X] T052 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, refuse edits to a partially loaded buffer, visibly, and load the remainder when the developer asks to edit. A whole-file write of a partial buffer would replace the unloaded regions with nothing (research.md, *Ranges*)
 - [X] T053 [US3] `client/core/tests/editor_first_paint.rs`: p99 over at least 100 samples from open to the first window being available, **printed** against 250 ms, with the chunk count and the largest response recorded (SC-005, SC-006, SC-007, A-NFR)
-- [ ] T054 [US3] `tests/e2e/editor-large-file.spec.ts`: US3's acceptance scenarios — the first window renders, scrolling fetches more, no response exceeds the frame limit, and a small file is read whole
+- [X] T054 [US3] `tests/e2e/editor-large-file.spec.ts`: US3's acceptance scenarios — the first window renders, scrolling fetches more, no response exceeds the frame limit, and a small file is read whole
 
 ---
 
@@ -131,13 +131,13 @@ with the second focused and showing its content.
 
 - [X] T055 [US4] In `client/ui/lib/editor/EditorPanel.svelte`, restore a focused tab's content on relaunch, from the cache where valid and from the engine otherwise (FR-021). The tab list itself is already restored by F000; this gives it something behind it
 - [X] T056 [US4] In `client/ui/lib/editor/buffers.svelte.ts`, report a restored tab whose file no longer exists rather than presenting an empty buffer (FR-022)
-- [ ] T057 [US4] `tests/e2e/editor-session.spec.ts`: US4's acceptance scenarios — tab count, order and focus identical after a relaunch (SC-008), content shown when focused, and a vanished file reported
+- [X] T057 [US4] `tests/e2e/editor-session.spec.ts`: US4's acceptance scenarios — tab count, order and focus identical after a relaunch (SC-008), content shown when focused, and a vanished file reported
 
 ---
 
 ## Phase 7: Polish and cross-cutting
 
-- [ ] T058 [P] `tests/e2e/editor-a11y.spec.ts`: the conflict notice and the autosave control are reachable from the keyboard and legible in greyscale, following `rail-greyscale.spec.ts` — comparing what survives desaturation rather than comparing hues, since a test that compared colours would pass for a design that relied on them
+- [X] T058 [P] `tests/e2e/editor-a11y.spec.ts`: the conflict notice and the autosave control are reachable from the keyboard and legible in greyscale, following `rail-greyscale.spec.ts` — comparing what survives desaturation rather than comparing hues, since a test that compared colours would pass for a design that relied on them
 - [X] T059 [P] Update `docs/app-shell.md` with the editor surface: where the buffer model lives and why it outlives the component, what the palette translates, and the partial-buffer interlock
 - [X] T060 [P] Update `docs/engine.md` with the write path: containment reused rather than re-implemented, compare-before-open, and rename-over-write with the temp file in the destination's directory
 - [X] T061 Per `specs/008-editor-integration/quickstart.md` §5, run the seven mutation checks in [quickstart.md](./quickstart.md) §5 and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 4 and 5 matter most: they are each other's failure mode, and a fix for one that breaks the other looks correct from either side

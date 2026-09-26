@@ -230,8 +230,13 @@ pub fn build(
     // remote base it would need is a property of a workspace rather than of the process, so it
     // arrives with the workspace rather than here (A-BULK).
     let inner: Arc<dyn WorkspaceProvider> = match sender.as_ref() {
-        Some(transport) => Arc::new(crate::adapters::outbound::remote_workspace::
-            RemoteWorkspaceProvider::new(transport.clone(), None, String::new())),
+        Some(transport) => Arc::new(
+            crate::adapters::outbound::remote_workspace::RemoteWorkspaceProvider::new(
+                transport.clone(),
+                None,
+                String::new(),
+            ),
+        ),
         // Still the truth when no host is configured: nothing is reachable, the projection
         // serves what it holds, and the rest reports offline.
         None => Arc::new(DisconnectedWorkspace),

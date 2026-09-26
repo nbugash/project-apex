@@ -331,7 +331,10 @@ mod tests {
     fn with_docs(n: usize) -> (PersistedSession, Vec<DocumentId>) {
         let mut s = PersistedSession::default();
         let ids = (0..n)
-            .map(|i| s.open_document(&format!("doc{i}"), &format!("/doc{i}")).unwrap())
+            .map(|i| {
+                s.open_document(&format!("doc{i}"), &format!("/doc{i}"))
+                    .unwrap()
+            })
             .collect();
         (s, ids)
     }
