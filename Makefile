@@ -67,6 +67,9 @@ XVFB = $(if $(DISPLAY),,xvfb-run -a -s "-screen 0 1400x900x24")
 
 gate: test ## Everything in `test`, plus the end-to-end suite and the fidelity gate
 	$(XVFB) npm run e2e
+	# A second run, with a real engine in scope. Separate because an engine changes which
+	# adapter the status bar observes, which the stub-driven specs in the first run depend on.
+	$(XVFB) npm run e2e:live
 	$(XVFB) npm run gate:fidelity
 	$(MAKE) no-network
 

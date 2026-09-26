@@ -558,7 +558,8 @@ Where a check could not be made on this host it is recorded as a **skip**, never
 | Check | Result |
 |---|---|
 | `make test` | **PASS** — 815 Rust assertions across 113 test binaries, plus the webview unit suite |
-| `make gate` | **PASS** — clippy `-D warnings`, `fmt --check`, `lint`, `lint:ds`, build, every suite, 105 end-to-end assertions across 32 spec files with all 32 green and a screenshot filed per test, and `gate:fidelity` reporting three surfaces within 2 px of the prototype at 0.107% of pixels differing |
+| `make gate` | **PASS** — clippy `-D warnings`, `fmt --check`, `lint`, `lint:ds`, build, every suite, 105 end-to-end assertions across 32 spec files plus the live-engine suite's 1, all green with a screenshot filed per test, and `gate:fidelity` reporting three surfaces within 2 px of the prototype at 0.191% of pixels differing |
+| The terminal, used (added 2026-09-26) | **PASS** — a real `/bin/bash -l` started from the panel's own control, answering `ls -la` and `echo $((6*7))` with `42`. See *The control path* below |
 | `make no-network` (SC-017) | **SKIP** — unprivileged user namespaces are unavailable here, so the `unshare -rn` mode did not run. The source-scan fallback reported no network literal, which is recorded as a skip and not a pass: it greps for addresses, F010 adds none, and it would report success whatever the code did |
 | The eight printed measurements (§8) | **PASS** — all eight below, each p99 over ≥100 samples, printed |
 | The nine negative checks (§9) | **PASS** — each fixture condition confirmed present, two of them added during the audit; see below |
@@ -572,6 +573,35 @@ broken specs rather than one missing dependency. `make shot` had it right all al
 `xvfb-run -a`. The target now uses Xvfb when there is no display and leaves a desktop run
 untouched. Worth recording because of the shape of it: a gate that cannot run in the environment
 it is meant to guard fails loudly and says nothing true.
+
+### The control path
+
+**Found by trying to use the feature rather than by testing it.** Every suite was green and the
+terminal could not run a command, because nothing connected the two halves: the client had no
+`RequestSender` implementation, so `RemoteTasks` could not be constructed; the four Tauri
+commands the interface had been invoking since T077 did not exist; nothing had ever sent
+`workspace/register`, so the engine would have refused every task with `-32001`; and the
+transport discarded every frame the engine sent unasked, which is all of a task's output.
+
+This was not hidden — `sink.ts` and `terminal.spec.ts` both said so in their own comments — but
+"147 of 151 tasks, gate green" did not say it, and that is the number anybody would have read.
+
+**The lesson worth keeping: no amount of testing on either side of a seam tests the seam.** Each
+half was correct, each half's tests passed, and the feature did not work. What closed it was an
+assertion that crosses the join — `engine_notifications.rs` at the core boundary and
+`terminal-live.spec.ts` through the window — both against the real engine binary rather than a
+double, because a double on either side answers a different question.
+
+Both are mutation-checked. Removing the transport's forwarding fails the first with
+`frames seen: []`; removing the interface's rendering fails the second with "the shell never
+answered" after thirty seconds.
+
+**The live suite runs separately** (`npm run e2e:live`), because an engine in scope changes which
+adapter the status bar observes and the stub-driven specs depend on the other one. That was found
+the same way — by `connection-status.spec.ts` failing on FR-011's five-second budget after a
+local engine was selected automatically. It is now opt-in through `APEX_LOCAL_ENGINE`; inferring
+an engine from a binary happening to exist changed the application's wiring on a signal nobody
+chose.
 
 ### The eight measurements
 

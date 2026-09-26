@@ -69,6 +69,13 @@ export class TerminalPanel {
   #terminalShape = true;
   #disposers: Array<() => void> = [];
 
+  /// How the task ended, or null while it is still running.
+  ///
+  /// Held on the panel rather than derived from the last frame, because the ending outlives the
+  /// frame that carried it: the panel keeps its scrollback and stays on screen afterwards, which
+  /// is what a terminal does when its process exits.
+  ending = $state<Ending | null>(null);
+
   constructor(taskId: string, hasTerminal = true) {
     this.taskId = taskId;
     this.#terminalShape = hasTerminal;
@@ -315,6 +322,16 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+/// How a task ended, as `execution/onExit` reports it.
+///
+/// Both fields are carried as they arrived, including the combinations the protocol says cannot
+/// happen. Deciding what a missing pair *means* is a rule, and this is a record; the panel that
+/// renders it is where FR-029 says the two must never be confused with `Exited 0`.
+export interface Ending {
+  exitCode: number | null;
+  signal: string | null;
+}
+
 /// The set of panels, keyed by task id.
 export class Terminals {
   /// An array rather than a map: the count is the number of tasks a person is watching, so the
@@ -348,6 +365,15 @@ export class Terminals {
 
   has(taskId: string): boolean {
     return this.panels.some((p) => p.taskId === taskId);
+  }
+
+  /// Record how a task ended.
+  ///
+  /// `show` rather than `panel`, because an exit can be the first thing this client hears about
+  /// a task -- a reattached one that finished while nobody was looking -- and a recorded ending
+  /// with no panel to hold it would be an ending nobody is told about.
+  ended(taskId: string, ending: Ending): void {
+    this.panel(taskId).ending = ending;
   }
 
   /// Show the developer what a reconnection found, in the panel they are looking at.

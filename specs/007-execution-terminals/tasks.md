@@ -403,3 +403,28 @@ how things ended and stops it leaking processes. US4 is the one that proves the 
 is the first feature to put real volume through F004's writer seam, and SC-006 is the criterion
 that would otherwise fail alone while everything else passed. US5 is what makes a dropped link
 survivable.
+
+
+---
+
+## Phase 8: The control path (added 2026-09-26)
+
+**Why these were not here before.** The feature map lists "Stdin, resize and terminate control
+path" as F010's, and the spec's *What this feature is not* excludes it from nothing — but no task
+built it, and 147 tasks were marked complete against a feature that could not run a command from
+its own interface. The engine half and the interface half were each finished and tested; nothing
+joined them, and nothing asserted across the join, so every suite stayed green.
+
+It was found by trying to use it. That is the finding worth keeping: **no amount of testing on
+either side of a seam tests the seam.**
+
+- [X] T135 Add `NotificationSink` in `client/core/src/application/ports/notification_sink.rs` and call it from `deliver` in `client/core/src/adapters/outbound/openssh/mod.rs` for any frame with no `id`. The transport dropped every server-initiated frame; this is the route it never had (A-NOTIFYROUTE). **The sink runs on the reader thread and must not block** — that is FR-013's backpressure chain, not an implementation detail
+- [X] T136 Add `LocalEngineSpawner` in `client/core/src/adapters/outbound/local_engine.rs`, behind the existing `ProcessSpawner` port, so the application has an engine to talk to without an instance (A-LOCALENGINE). A spawner and not a transport: the difference between `ssh` and a child process is how it starts, and everything after that is identical
+- [X] T137 Add `notify` to `RequestTransport` and `TransportSender` in `client/core/src/adapters/outbound/transport_sender.rs`, the concrete `RequestSender` that `RemoteTasks` and `RemoteWorkspaceProvider` have both been waiting for since they were written. Concrete in `SshTransport` deliberately — a generic parameter gives the compiler no way to prove the future is `Send`, which is the exact reason `request_sender.rs` exists
+- [X] T138 Add `task_run`, `task_write_stdin`, `task_resize` and `task_terminate` in `client/core/src/adapters/inbound/task_commands.rs` and register them in `lib.rs`. The interface has been invoking these four names since T077; none of them existed. Validate every argument in the core (Principle VI): the signal name is parsed against the three §4.8 admits, `0 x 0` is refused, and `workspaceId` is **not accepted from the interface at all** — the core registered the workspace, so the core knows which one
+- [X] T139 Forward `workspace/register` to the engine from `workspace_open` in `client/core/src/adapters/inbound/tauri_commands.rs`. Nothing on the client ever sent it, so the engine would have refused every task with `-32001`. Done when the workspace is opened rather than lazily at the first task, because that is when the root path is in hand and when the client registers it locally — the two learning together is one fact, two lazy paths that must agree is two
+- [X] T140 Bind the whole chain in `client/core/src/composition.rs`: choose remote or local engine, connect, set the notification sink **before** connecting, and construct `RemoteTasks`. Setting the sink after connecting would drop the first frames of a task started immediately — the original defect, reintroduced as a race
+- [X] T141 Receive it in the interface: `client/ui/lib/terminal/engine.ts` listens for `apex:notification`, routes on the method and ends at `applyChunk` — the same call the harness uses, so what the suite proves about the renderer is true of the real one. Record the ending on the panel and **stop sending input once a task has ended**, because a notification carries no refusal and the engine would discard those keystrokes silently
+- [X] T142 A way to start one: the idle panel's `Start a terminal` control in `client/ui/lib/terminal/TerminalPanel.svelte`, running the developer's own login shell as an argv vector (§7.3 interposes no `sh -c`)
+- [X] T143 `tests/e2e/terminal-live.spec.ts` — start a real process from the interface and assert on output it did not write. `echo apex-live-terminal-$((6*7))` and assert on `42`, so a harness replaying what the panel sent, or an engine echoing input, both fail where a shell passes
+- [X] T144 `client/core/tests/engine_notifications.rs` — the same join at the core boundary, against the real engine binary rather than a double, because the thing under test is whether two correct halves are connected

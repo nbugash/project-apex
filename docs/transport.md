@@ -77,6 +77,38 @@ must not be routed through the machinery that builds a reply for every request; 
 that took the normal path would emit a response with a null id, which §4.2 forbids and a client
 would have nothing to match against.
 
+### Frames the engine sends unasked
+
+JSON-RPC is bidirectional and the engine uses that: `execution/onStdout`, `execution/onExit` and
+`workspace/onFileEvent` arrive with no id to correlate.
+
+Until F010 the transport **dropped them**. `deliver` matched replies to requests, and a frame
+that is not a reply fell off the end of that function — correctly, in the sense that reply
+matching has nothing to say about it, and catastrophically, in the sense that nothing else was
+looking. Two features had already built their receiving ends against a route that did not exist.
+
+`NotificationSink` is that route. The transport calls it for any id-less frame; the composition
+root decides where it goes, which today is the webview over one Tauri event.
+
+**A sink is called on the reader thread and must not block.** This is the backpressure contract,
+not a performance note. The chain is: sink blocks → reader stops → engine's stdout fills →
+engine's frame writer blocks → its task reader stops → the pseudo-terminal fills → the task
+blocks in `write`. Nothing buffers anywhere along it, which is what makes FR-013 true without a
+flow-control mechanism. A queue between the reader and the sink would sever it at the cheapest
+place to sever and the hardest place to notice.
+
+See A-NOTIFYROUTE for the alternatives weighed.
+
+### Running the engine without a host
+
+`ProcessSpawner` is what `SshTransport` uses to start its child, and it does not care what that
+child is. `LocalEngineSpawner` runs the engine binary directly, so the same transport — framing,
+registry, timeouts, cancellation, connection state — carries the protocol over a plain pipe.
+
+Selected when no host is named and an engine binary is present, so it stays out of a packaged
+application. It is not F015 `local-mode`, which is about having no engine at all; see
+A-LOCALENGINE.
+
 ## Connecting
 
 Two phases, and §3.3 makes them mutually exclusive rather than merely ordered:

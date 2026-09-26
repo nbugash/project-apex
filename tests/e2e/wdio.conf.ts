@@ -121,7 +121,10 @@ let preview: ChildProcess | null = null;
 
 export const config: WebdriverIO.Config = {
   runner: 'local',
-  specs: ['./*.spec.ts'],
+  // `terminal-live.spec.ts` is excluded here and run by `npm run e2e:live`, which sets
+  // `APEX_E2E_LIVE`. See onPrepare: an engine in scope changes what the status bar observes.
+  specs: process.env.APEX_E2E_LIVE ? ['./terminal-live.spec.ts'] : ['./*.spec.ts'],
+  exclude: process.env.APEX_E2E_LIVE ? [] : ['./terminal-live.spec.ts'],
   // The app is a singleton desktop process and there is one driver on one port.
   maxInstances: 1,
   // Point at the driver started in onPrepare. Without an explicit hostname and port, WDIO
@@ -156,6 +159,19 @@ export const config: WebdriverIO.Config = {
     spawnSync('cargo', ['build', '--manifest-path', 'client/core/Cargo.toml'], {
       stdio: 'inherit',
     });
+    // The engine, built only when this run is the one that needs it.
+    //
+    // **Not set for the ordinary suite, and that is the point.** With an engine present the
+    // composition root binds the real transport as the connection status source, and
+    // `connection-status.spec.ts` drives the *stub* -- so an engine in scope makes that spec
+    // watch a source nothing is driving, and it fails on FR-011's five-second budget. The two
+    // suites want different applications, so they get different runs rather than a flag one of
+    // them has to remember.
+    if (process.env.APEX_E2E_LIVE) {
+      spawnSync('cargo', ['build', '-p', 'apex-engine', '--bins'], { stdio: 'inherit' });
+      // Absolute, because the application's working directory is tauri-driver's, not this one.
+      process.env.APEX_LOCAL_ENGINE = join(process.cwd(), 'target/debug/ide-engine');
+    }
 
     // Launch time here is dominated by something that is not the application. On a machine
     // with no desktop session, GTK asks the session bus to activate

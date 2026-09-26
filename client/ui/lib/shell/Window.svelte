@@ -12,6 +12,7 @@
   import TerminalPanel from '../terminal/TerminalPanel.svelte';
   import { terminals } from '../terminal/terminals.svelte';
   import { installTerminalHarness } from '../terminal/harness';
+  import { listenToEngine } from '../terminal/engine';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
   import { shellState } from '../state.svelte';
@@ -19,6 +20,18 @@
   // The end-to-end suite's way in to the terminal renderer. Installs nothing outside
   // automation; `harness.ts` says why that guard is not merely tidiness.
   $effect(() => installTerminalHarness());
+
+  // The product route for a task's output. Separate from the harness above, which exists only
+  // under automation: this one runs always, and both end at `applyChunk` so the suite drives the
+  // same rendering the engine does.
+  $effect(() => {
+    // The bridge is async, so the effect can be torn down before the listener is registered.
+    // Awaiting the promise before unlistening is what stops a listener outliving this component.
+    const pending = listenToEngine();
+    return () => {
+      void pending.then((unlisten) => unlisten()).catch(() => {});
+    };
+  });
 
   /// `Terminal — <workspace>` remotely, `Terminal — local` locally, following the prototype.
   const dockTitle = $derived.by(() => {

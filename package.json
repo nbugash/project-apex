@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "lint:ds": "eslint client/ui && node scripts/lint-ds.mjs",
     "e2e": "wdio run tests/e2e/wdio.conf.ts",
+    "e2e:live": "APEX_E2E_LIVE=1 wdio run tests/e2e/wdio.conf.ts",
     "perf:budget": "vitest run tests/perf",
     "smoke:macos": "bash scripts/smoke-macos.sh",
     "stub:connection": "node scripts/stub-connection.mjs",

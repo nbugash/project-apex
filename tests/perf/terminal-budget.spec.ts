@@ -41,6 +41,8 @@ describe('the panel survives a fifty-megabyte burst (SC-024)', () => {
     const accepted: number[] = [];
     const answered: number[] = [];
     const recorder: TaskSink = {
+      // This suite measures the keystroke path; nothing here starts a task.
+      run: async () => true,
       writeStdin() {
         answered.push(performance.now());
       },

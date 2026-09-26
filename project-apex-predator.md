@@ -3364,3 +3364,94 @@ contracts. All of that has been corrected or removed.
 
 The working assumption for anyone extending this document: named crates, flags and figures are
 claims to verify, not decisions already validated.
+
+---
+
+## A-NOTIFYROUTE — How an engine-initiated frame reaches the interface (2026-09-26)
+
+**The gap this closes.** The transport read every inbound frame, matched the ones carrying an
+`id` to their requests, and dropped the rest. The rest is every byte a task produces, every file
+event, and every exit — the entire server-initiated half of a bidirectional protocol. F004 and
+F010 both built their receiving ends against it and neither could ever have been reached.
+
+It was invisible because nothing on either side was wrong on its own terms: a reply-matching
+function has no business with a frame that is not a reply, and the renderers were correct about
+bytes nobody delivered. Each half's tests passed throughout. **A feature is not joined because
+its ends are written; it is joined when something asserts across the seam.**
+
+**The route.** `NotificationSink` (a client-core port) receives any frame with no `id`. The
+composition root binds `WebviewNotifications`, which forwards it to the interface on one Tauri
+event, `apex:notification`, carrying the method and the frame untouched. The interface routes on
+the method.
+
+**Three decisions inside that, each of which could reasonably have gone the other way.**
+
+1. **The sink is called on the transport's reader thread, and must not block.** This is not an
+   implementation detail, it is the backpressure contract. A sink that blocks stops the reader,
+   which stops draining the engine's stdout, which blocks the engine's frame writer, which stops
+   its task reader, which fills the pseudo-terminal, which blocks the task in `write` — FR-013,
+   end to end, with nothing buffering anywhere along it. Handing frames to an unbounded queue
+   here would sever that chain at the one place it is cheapest to sever and hardest to notice.
+
+2. **One event, not one per method.** An event per method reads better until a method is added,
+   at which point the addition is in three places and omitting the middle one produces silence
+   rather than an error. With one event a new method arrives whether or not anyone remembered,
+   and an unrouted method is visible at the interface as an unhandled case rather than invisible
+   in the core as an absent branch.
+
+3. **The frame crosses uninterpreted.** The interface already parses `data`; a second parser in
+   the core would be a second place that has to agree with the wire. Two parsers obliged to stay
+   in step is how a client and an engine come to disagree about a field name while each remains
+   correct alone — which this project has one live instance of already (see A-WIRECASE).
+
+**What this binds.** F007's diagnostics and F020's reconnection notices arrive by this route; so
+does F004's `workspace/onFileEvent`, whose receiving end has been waiting for it. None of them
+needs to add a transport-level mechanism, and none of them may add a queue between the reader and
+the sink without re-deriving point 1 above.
+
+---
+
+## A-LOCALENGINE — Running the engine as a child process (2026-09-26)
+
+**A spawner, not a transport.** The engine speaks JSON-RPC over stdin and stdout and has no
+notion of what carries them. `ssh` is a pipe with a network in the middle; a child process is the
+same pipe without one. So framing, the correlation registry, timeouts, cancellation, connection
+state and the send queue are all already correct for both, and the only difference is how the
+child starts — which was already a port, `ProcessSpawner`. `LocalEngineSpawner` sits behind it.
+
+A `LocalTransport` was the obvious alternative and would have duplicated every one of those
+behaviours in a copy that F001's suite does not cover.
+
+**It is selected only when no host is named and a binary is present**, which keeps it out of a
+packaged application where neither holds. In a development workspace it is the difference between
+a terminal that works and one that renders correctly and shows nothing.
+
+**It is not F015 `local-mode`.** That feature runs a developer's tasks on their own machine with
+no engine at all, and `LocalTasks` refuses on its behalf. This runs the real engine over the real
+protocol; only the machine differs. A task started through it gets the same pseudo-terminal, the
+same limits and the same lifecycle as one on the instance.
+
+**It is not a deployment path.** A-BOOT owns getting a binary onto a remote host. This one is
+already there.
+
+---
+
+## A-WIRECASE — The wire is snake_case; the catalogue says otherwise (2026-09-26)
+
+**Unresolved, and recorded so it is not rediscovered as a surprise.** §4.8 and
+`contracts/task-methods.md` specify `workspaceId`, `taskId` and `exitCode`. The implementation
+emits and accepts `workspace_id`, `task_id` and `exit_code`: there is no
+`serde(rename_all = "camelCase")` anywhere in `protocol/src/wire.rs`. Confirmed by writing frames
+by hand against a running engine — snake_case is accepted and camelCase is not.
+
+Nothing is currently broken, because the client and the engine share the same Rust structs and so
+agree with each other. What is wrong is that the documented protocol and the implemented one are
+different protocols, and the contract names §4.8 as its source of truth. Any client that does not
+share the crate — a third-party tool, a script, a future non-Rust component — would be written
+against the catalogue and would fail on every execution method.
+
+**Left open deliberately.** Choosing a direction is cheap; the change is not. It touches F001
+through F004 as well as F010, and either the catalogue moves to snake_case or the crate gains a
+rename and every recorded frame in four features' tests changes with it. That is a decision about
+four shipped features, not one, and it should be taken as such rather than inside whichever
+feature happened to notice.

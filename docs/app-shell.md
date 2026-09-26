@@ -35,6 +35,38 @@ capability rather than the technology — `SessionStore`, not `JsonFileStore`. I
 `ConnectionStatusSource`. Swap the binding in `composition.rs`; nothing else changes. That
 one-line swap is the property the port structure exists to buy.
 
+## Reaching the engine
+
+Until F010 the application never sent a request to an engine for any feature. The transport was
+built and used only as a connection-status source; `RemoteWorkspaceProvider` and `RemoteTasks`
+were both written, both tested against doubles, and neither could be constructed, because nothing
+implemented the `RequestSender` port they depend on.
+
+The chain, now closed:
+
+```
+webview  ──invoke──▶  task_commands.rs  ──▶  RemoteTasks  ──▶  TransportSender
+                                                                     │
+                                                              SshTransport
+                                                                     │
+                                                    ssh  ──or──  LocalEngineSpawner
+                                                                     │
+                                                                ide-engine
+engine  ──frame──▶  NotificationSink  ──▶  WebviewNotifications  ──emit──▶  engine.ts  ──▶  panel
+```
+
+**`TransportSender` is concrete in `SshTransport` on purpose.** The generic version does not
+compile: `RequestTransport::send` is a native `async fn` in a trait, so for an unknown `T` the
+compiler cannot prove the returned future is `Send`, and a provider must be `dyn` **and** `Send`.
+Naming the one implementation is what lets it check the future it is checking. `request_sender.rs`
+exists for exactly this reason and is worth reading before generalising it.
+
+**A workspace is registered with the engine when it is opened**, in `workspace_open`, because
+that is the moment the root path is in hand. Nothing did this before, so the engine would have
+refused every task with `-32001`. A task command does **not** accept a `workspaceId` from the
+webview: the core registered the workspace, so the core knows which one, and an interface that
+named it would be choosing where a command runs (Principle VI).
+
 ## What the store remembers (A-STATE, A-STATE2)
 
 `PersistedSession` is at **schema version 3**. Each bump added fields, and each added them with

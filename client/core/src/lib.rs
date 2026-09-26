@@ -33,6 +33,10 @@ pub fn run() {
             cmd::workspace_read_directory,
             cmd::workspace_open,
             cmd::workspace_delete,
+            adapters::inbound::task_commands::task_run,
+            adapters::inbound::task_commands::task_write_stdin,
+            adapters::inbound::task_commands::task_resize,
+            adapters::inbound::task_commands::task_terminate,
             #[cfg(debug_assertions)]
             cmd::workspace_seed_for_tests,
             #[cfg(debug_assertions)]
@@ -51,7 +55,15 @@ pub fn run() {
             logging::info("shell starting");
 
             let window = Arc::new(window::controller::WindowController::from_app(&handle)?);
-            let wiring = composition::build(data_dir, window.clone());
+            // The sink is built here rather than inside composition because it is the one
+            // piece that needs a Tauri handle, and composition stays free of the framework for
+            // the same reason the window controller is passed in rather than constructed there.
+            let notifications = Arc::new(
+                adapters::outbound::webview_notifications::WebviewNotifications::new(
+                    handle.clone(),
+                ),
+            );
+            let wiring = composition::build(data_dir, window.clone(), notifications);
 
             // Connection transitions reach the interface as events, emitted once at startup
             // so the interface never polls for an initial value.
@@ -85,6 +97,11 @@ pub fn run() {
                 }
             });
 
+            app.manage(adapters::inbound::task_commands::Tasks {
+                provider: wiring.tasks,
+                sender: wiring.sender,
+                current: std::sync::Mutex::new(None),
+            });
             app.manage(wiring.shell);
             app.manage(wiring.workspace);
             Ok(())

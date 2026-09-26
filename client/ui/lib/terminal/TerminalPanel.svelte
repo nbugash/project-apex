@@ -15,6 +15,36 @@
   import { inputBytes } from './wire';
   import { terminals } from './terminals.svelte';
 
+  /// What a bare "start a terminal" runs.
+  ///
+  /// The developer's own login shell, because that is what every other terminal gives them and
+  /// a different one would silently drop their aliases, prompt and path. An argv vector rather
+  /// than a command line: §7.3 scopes this as process execution and not a shell, so nothing
+  /// here interposes `sh -c` and nothing has to think about quoting.
+  const DEFAULT_SHELL = ['/bin/bash', '-l'];
+
+  let starting = $state(false);
+
+  async function startTerminal(): Promise<void> {
+    if (starting) return;
+    starting = true;
+    try {
+      // The identity is the client's to choose (FR-001). Time-based rather than counted, so
+      // two windows of the same application cannot mint the same one.
+      const id = `term-${Date.now()}`;
+      const panel = terminals.show(id);
+      const fitted = panel.hasTerminal ? panel.fit() : { cols: 80, rows: 24 };
+      const started = await taskSink().run(id, DEFAULT_SHELL, fitted.cols, fitted.rows);
+      if (!started) {
+        // Released rather than left showing an empty terminal that will never fill. A panel
+        // for a task that does not exist is the same lie this feature started with.
+        terminals.release(id);
+      }
+    } finally {
+      starting = false;
+    }
+  }
+
   interface Props {
     /** The task whose output this panel shows, or null for the idle prompt. */
     taskId?: string | null;
@@ -57,6 +87,11 @@
       taskSink().resize(id, fitted.cols, fitted.rows);
 
       panel.onInput((data) => {
+        // A finished task has no stdin to write to. The engine would discard this silently --
+        // `writeStdin` is a notification and carries no refusal -- so stopping here is the only
+        // place the difference is visible. A native terminal behaves the same way: the buffer
+        // stays, scrollback stays, and keys reach nothing.
+        if (panel.ending) return;
         // T078. With a terminal the line discipline turns 0x03 into SIGINT for the foreground
         // process group, so an interrupt is just a byte. With pipes there is no line discipline
         // and the same byte is data the task has to parse, so the interrupt must be a signal
@@ -86,6 +121,9 @@
       <span class="prompt">{prompt}</span>
       <span class="cursor" aria-hidden="true"></span>
     </div>
+    <button class="start" onclick={startTerminal} disabled={starting}>
+      {starting ? 'Starting…' : 'Start a terminal'}
+    </button>
   {/if}
 </div>
 
@@ -99,12 +137,35 @@
     line-height: var(--vk-term-line-height);
     min-block-size: 0;
   }
+  .transcript:has(.start) {
+    display: flex;
+    flex-direction: column;
+  }
   .prompt-row {
     display: flex;
     gap: var(--vk-term-prompt-gap);
   }
   .prompt {
     color: var(--color-accent);
+  }
+  .start {
+    margin-block-start: var(--vk-term-prompt-gap);
+    align-self: flex-start;
+    padding: var(--space-1) var(--space-3);
+    font: inherit;
+    color: var(--color-text);
+    background: transparent;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .start:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .start:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
   }
   .cursor {
     inline-size: var(--vk-term-cursor-w);

@@ -30,12 +30,6 @@ use std::sync::Mutex;
 use crate::application::ports::spawner::{ProcessSpawner, SpawnError, SpawnSpec, SpawnedChild};
 use crate::domain::request::Secret;
 
-/// Where to find the engine when nothing names one.
-///
-/// A development default, and deliberately the debug build: the only situation in which
-/// nothing has named a binary is a developer running from the workspace.
-const DEFAULT_BINARY: &str = "target/debug/ide-engine";
-
 /// The variable that names an engine binary to run locally.
 ///
 /// Read by the composition root rather than here, on the same rule the remote target follows:
@@ -58,11 +52,19 @@ impl LocalEngineSpawner {
         }
     }
 
-    /// The binary this spawner would run, from the environment or the development default.
-    pub fn configured() -> PathBuf {
+    /// The binary the environment names, if it names one.
+    ///
+    /// No default, deliberately. The first version fell back to `target/debug/ide-engine` when
+    /// the file existed, which meant every developer with a built workspace silently acquired a
+    /// live transport -- and with it a status bar reporting a real connection instead of the
+    /// stub, which is what F001's `connection-status` spec drives. It failed on a five-second
+    /// budget naming neither the engine nor the cause. An engine is too large a thing to infer
+    /// from a file being on disk.
+    pub fn named() -> Option<PathBuf> {
         std::env::var(ENGINE_BINARY_VAR)
+            .ok()
+            .filter(|v| !v.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_BINARY))
     }
 }
 

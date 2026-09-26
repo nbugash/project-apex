@@ -111,10 +111,7 @@ async fn a_task_s_output_reaches_the_client_instead_of_being_dropped() {
     let register = call(
         &transport,
         "workspace/register",
-        &format!(
-            r#"{{"workspace_id":"ws1","path":"{}"}}"#,
-            root.display()
-        ),
+        &format!(r#"{{"workspace_id":"ws1","path":"{}"}}"#, root.display()),
     )
     .await;
     assert!(

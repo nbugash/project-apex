@@ -29,6 +29,10 @@ pub enum ShellError {
     /// degrade persistence, not usability (FR-023).
     #[error("session state could not be written")]
     PersistenceFailed,
+    /// No engine is configured, which is a thing the developer can fix and so is reported
+    /// distinguishably from an engine that refused the request.
+    #[error("no engine is connected")]
+    NotConnected,
 }
 
 impl From<LayoutError> for ShellError {

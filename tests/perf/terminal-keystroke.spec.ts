@@ -43,6 +43,8 @@ describe('a keystroke is answered during a fifty-megabyte burst (SC-030)', () =>
 
     const sent: number[] = [];
     const recorder: TaskSink = {
+      // This suite measures the keystroke path; nothing here starts a task.
+      run: async () => true,
       writeStdin() {
         sent.push(performance.now());
       },

@@ -15,6 +15,16 @@ import { encodeBase64 } from './wire';
 export type TerminateSignal = 'SIGINT' | 'SIGTERM' | 'SIGKILL';
 
 export interface TaskSink {
+  /// Start a task, and answer whether it started.
+  ///
+  /// The only one of these that awaits, because `execution/runTask` is a request and its
+  /// refusals matter: a command that does not exist, an identity already running, a workspace
+  /// whose root has vanished. Reporting "started" for any of those would leave a terminal
+  /// waiting for output that is never coming.
+  ///
+  /// No workspace argument: the core knows which workspace it registered, and an interface
+  /// that named one would be choosing where a command runs (Principle VI).
+  run(taskId: string, command: string[], cols: number, rows: number): Promise<boolean>;
   /// Bytes to the task's input, base64 as the wire carries them.
   writeStdin(taskId: string, data: Uint8Array): void;
   resize(taskId: string, cols: number, rows: number): void;
@@ -40,6 +50,18 @@ function reportOnce(method: string, reason: unknown): void {
 }
 
 const overIpc: TaskSink = {
+  async run(taskId, command, cols, rows) {
+    recordForAutomation('run', taskId, command.join(' '));
+    try {
+      await invoke('task_run', { taskId, command, cols, rows });
+      return true;
+    } catch (e) {
+      // Surfaced every time rather than once: a start that failed is a single event with a
+      // cause the developer can act on, which is the opposite of a dropped keystroke.
+      console.warn(`[apex] execution/runTask refused: ${String(e)}`);
+      return false;
+    }
+  },
   writeStdin(taskId, data) {
     const encoded = encodeBase64(data);
     recordForAutomation('writeStdin', taskId, encoded);

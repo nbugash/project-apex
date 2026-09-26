@@ -20,8 +20,8 @@ pub use classify::classify;
 pub use spawner::{control_options, parse_version, OpenSshSpawner, ASKPASS_MIN_VERSION};
 
 use crate::adapters::outbound::askpass::ipc::AskpassChannel;
-use crate::application::ports::notification_sink::{DiscardNotifications, NotificationSink};
 use crate::application::ports::connection::{ConnectionStatusSource, StateSink};
+use crate::application::ports::notification_sink::{DiscardNotifications, NotificationSink};
 use crate::application::ports::spawner::{ProcessSpawner, SpawnError, SpawnSpec};
 use crate::application::ports::transport::{Pending, Request, RequestTransport};
 use crate::application::use_cases::connect::ConnectAttempt;
@@ -204,9 +204,7 @@ impl SshTransport {
                     }
                     loop {
                         match codec.decode(&mut buf) {
-                            Ok(Some(frame)) => {
-                                deliver(&registry, notifications.as_ref(), &frame.0)
-                            }
+                            Ok(Some(frame)) => deliver(&registry, notifications.as_ref(), &frame.0),
                             Ok(None) => break,
                             // A refused frame is refused alone. The codec has already left
                             // the buffer at a boundary, so the next frame still reads.
@@ -430,6 +428,31 @@ impl RequestTransport for SshTransport {
     async fn send(&self, request: Request) -> RequestOutcome {
         let (_id, pending) = self.begin(request);
         pending.await
+    }
+
+    fn notify(&self, request: Request) {
+        // No registry entry, because there is nothing to correlate and nothing to time out.
+        // An id registered here would never be resolved and would leak one slot per keystroke.
+        let body = crate::application::use_cases::exchange::notification_body(&request);
+        let frame = match FrameCodec::new().encode(&body) {
+            Ok(f) => f,
+            Err(e) => {
+                // Logged rather than returned: the signature has no outcome, and silence here
+                // is how a dropped keystroke becomes indistinguishable from a delivered one.
+                crate::logging::warn(&format!("could not encode {}: {e:?}", request.method));
+                return;
+            }
+        };
+        let guard = self.live.lock().expect("live lock");
+        match guard.as_ref() {
+            Some(live) => live.queue.push(request.priority, frame),
+            // Deliberately not queued for a connection that may never return. A keystroke
+            // replayed into a task minutes later is worse than one lost: the task has moved on,
+            // and the bytes arrive as input to whatever is running now.
+            None => {
+                crate::logging::warn(&format!("{} was not sent: no connection", request.method))
+            }
+        }
     }
 
     fn begin(&self, request: Request) -> (RequestId, Pending) {

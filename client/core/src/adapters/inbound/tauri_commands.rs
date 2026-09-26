@@ -300,11 +300,12 @@ pub async fn workspace_read_directory(
 }
 
 #[tauri::command]
-pub fn workspace_open(
+pub async fn workspace_open(
     name: String,
     host: String,
     base_path: String,
     access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, crate::adapters::inbound::task_commands::Tasks>,
 ) -> Result<WorkspaceDto, WorkspaceFailure> {
     use crate::application::use_cases::register_workspace::RegisterWorkspace;
     use crate::domain::workspace::Location;
@@ -313,6 +314,8 @@ pub fn workspace_open(
     // engine has ever seen it (A-WORKSPACE). Nothing keys on the display name, which is why two
     // checkouts of one repository can both be called "apex".
     let id = RegisterWorkspace::mint();
+    // Kept before `base_path` is moved into the location below.
+    let base_path_for_engine = base_path.clone();
     let (ws, attachment) = access
         .register
         .open(
@@ -324,6 +327,18 @@ pub fn workspace_open(
             },
         )
         .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?;
+    // The engine has to know the workspace before a task can name it. Awaited rather than
+    // spawned, so a terminal started immediately after opening a workspace does not race the
+    // registration it depends on.
+    if let Some(sender) = tasks.sender.as_ref() {
+        crate::adapters::inbound::task_commands::register_with_engine(
+            sender,
+            &ws.id.0,
+            &base_path_for_engine,
+        )
+        .await;
+        *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
+    }
     Ok(WorkspaceDto {
         id: ws.id.0,
         name: ws.name,
