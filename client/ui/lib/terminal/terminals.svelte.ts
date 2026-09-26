@@ -199,6 +199,11 @@ export class TerminalPanel {
       import('@xterm/xterm'),
       import('@xterm/addon-fit'),
       import('@xterm/xterm/css/xterm.css'),
+      // The Nerd Font symbols, on the same terms as the stylesheet: fetched when a terminal is
+      // first attached and never for a window that does not open the dock. It supplies only the
+      // private-use-area glyphs a shell prompt is built from, which no text font carries -- see
+      // the file's own header for why it is symbols-only and why it is not in `lib/ds`.
+      import('./fonts/symbols.css'),
     ]);
     // **Measured and drawn must be the same font.** xterm sizes its cell grid from its own
     // `fontFamily` and `fontSize` options, which default to Courier at 15px -- while the
@@ -217,6 +222,7 @@ export class TerminalPanel {
       theme,
       fontFamily: measured.fontFamily || undefined,
       fontSize: Number.parseFloat(measured.fontSize) || undefined,
+      // Corrected after the first render rather than set here -- see `alignRowHeight`.
       cols: this.cols,
       rows: this.rows,
     });
@@ -228,6 +234,8 @@ export class TerminalPanel {
     this.#pendingBytes = 0;
     this.#terminal = terminal;
     this.#fit = fit;
+    this.fit();
+    alignRowHeight(terminal, el);
     this.fit();
     publishForAutomation(terminal);
   }
@@ -288,6 +296,34 @@ export class TerminalPanel {
     this.#terminal = null;
     this.#fit = null;
   }
+}
+
+/// Make a rendered row as tall as the stylesheet says it should be.
+///
+/// **xterm's `lineHeight` is not the CSS one.** It multiplies the character height xterm
+/// measures from the font, not the font size, so handing it the stylesheet's ratio directly
+/// gives the wrong answer: 1.6 produced 27px rows where the design asks for 20. The ratio that
+/// lands on 20 depends on the font's own metrics, which are only known once something has been
+/// rendered -- so this measures a row and corrects, rather than computing a number up front that
+/// would be right for one font and wrong for the next.
+///
+/// Applied once. The correction changes the row height, so re-measuring after it would chase a
+/// moving target for no gain; a single pass is within a pixel and the alternative is a loop whose
+/// termination depends on rounding.
+function alignRowHeight(terminal: Terminal, el: HTMLElement): void {
+  const wanted = Number.parseFloat(getComputedStyle(el).lineHeight);
+  if (!Number.isFinite(wanted) || wanted <= 0) return;
+  const row = el.querySelector('.xterm-rows > div');
+  const actual = row?.getBoundingClientRect().height ?? 0;
+  if (actual <= 0) return;
+  const corrected = ((terminal.options.lineHeight ?? 1) * wanted) / actual;
+  // **The font's own line box is the floor, and it is xterm's rule rather than a choice made
+  // here**: `lineHeight` below 1 throws `lineHeight cannot be less than 1`, and setting it
+  // during attach takes the terminal down with it. So a stylesheet asking for rows tighter than
+  // the font's natural leading gets the tightest the font allows, and the way to go tighter is a
+  // smaller font -- there is no other lever.
+  if (!Number.isFinite(corrected)) return;
+  terminal.options.lineHeight = Math.max(1, corrected);
 }
 
 /// Expose the mounted terminal so the end-to-end suite can read its cell buffer.

@@ -117,8 +117,7 @@
        to this feature. */
     font-family:
       var(--vk-mono-primary),
-      'Symbols Nerd Font Mono',
-      'Symbols Nerd Font',
+      'JetBrains Mono Nerd Symbols',
       'JetBrainsMono Nerd Font',
       'MesloLGS NF',
       'Hack Nerd Font',
@@ -128,8 +127,22 @@
       ui-monospace,
       Menlo,
       monospace;
-    font-size: var(--vk-term-fs);
-    line-height: var(--vk-term-line-height);
+    /* A deviation from the prototype's `--vk-term-fs` (12.5px), approved 2026-09-26 -- see
+       spec.md, *Design deviations*. 0.88 of it is 11px.
+
+       Expressed as a fraction rather than as `11px` so the relationship to the prototype's value
+       survives: if the design changes its terminal size, this moves with it instead of silently
+       becoming a different proportion. */
+    font-size: calc(var(--vk-term-fs) * 0.88);
+    /* Also a deviation, and one the library then floors.
+
+       **Tightening the leading alone does not work**, which is worth recording because it is the
+       first thing anyone will try: xterm refuses a `lineHeight` below 1 -- it throws
+       `lineHeight cannot be less than 1` -- so rows can never be packed tighter than the font's
+       own line box. At the prototype's 12.5px that floor is 17px, which is why the size had to
+       move instead. Asking for 1.2 here lands on the floor at whatever size is in use, which is
+       the tightest the font allows; `alignRowHeight` does the clamping and the arithmetic. */
+    line-height: 1.2;
     min-block-size: 0;
   }
   .prompt-row {

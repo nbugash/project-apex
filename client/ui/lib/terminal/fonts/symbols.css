@@ -1,0 +1,38 @@
+/* The Nerd Font symbol ranges, cut from JetBrains Mono's own patched build.
+ *
+ * NOT part of the design system, and deliberately not in `lib/ds`: `ds:sync` owns that directory
+ * and overwrites it. This carries no latin at all — the design system's JetBrains Mono supplies
+ * every character the prototype can show, and this supplies only the private use area, which no
+ * text font carries and which every Powerline or Nerd Font shell prompt is built from.
+ *
+ * # Why this font and not the standalone symbols one
+ *
+ * Because **advance widths have to match the primary font, and only a patched build of that same
+ * font guarantees it.** CSS font fallback uses the fallback's own advance, not the primary's, so
+ * a symbol wider than the cell overruns the character beside it and eats it. Measured:
+ *
+ *   JetBrains Mono          0.600 em
+ *   Symbols Nerd Font Mono  1.000 em   <- 1.67x too wide, one glyph swallowed per icon
+ *   JetBrainsMono Nerd Font 0.600 em   <- this file
+ *
+ * That was visible as `on git` rendering as `on gi`, and it was there at every font size, which
+ * is how it was traced to metrics rather than to scaling.
+ *
+ * Patching only ever adds glyphs in the private use area, so the latin faces are untouched and
+ * the design's type is unchanged — the objection that made the standalone symbols font look like
+ * the safer choice does not apply to a patched build of the design system's own family.
+ *
+ * Subset to the symbol ranges: 934 KB, against 7 MB for the whole patched family and 1.2 MB for
+ * the standalone symbols font it replaces. Loaded only when a terminal is attached — see
+ * `terminals.svelte.ts`, which imports this beside xterm's stylesheet.
+ *
+ * MIT, Ryan L McIntyre and the Nerd Fonts contributors; JetBrains Mono is SIL OFL 1.1. See
+ * LICENSE.txt beside this file.
+ */
+@font-face {
+  font-family: 'JetBrains Mono Nerd Symbols';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./jbm-nerd-pua.woff2') format('woff2');
+}

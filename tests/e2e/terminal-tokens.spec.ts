@@ -134,6 +134,54 @@ describe('the panel paints the design system (SC-016)', () => {
     expect(first).toBe(unquote(token('--vk-mono-primary')));
   });
 
+  it('has the symbols font the private use area needs', async () => {
+    // A shell prompt is built from Powerline separators and Nerd Font icons in the private use
+    // area. No text font carries them, so without this face they are blank boxes -- the defect
+    // that was reported, and one that a screenshot shows and no assertion about bytes can: the
+    // codepoints arrive intact either way.
+    //
+    // Checked through the font system rather than by measuring a glyph, because a missing glyph
+    // and a present one both occupy a cell and the difference is what is painted inside it.
+    // `load` rather than `check`: a face that is declared but not yet fetched reports false,
+    // and what is being guarded is that the file ships, is wired up, and parses -- all three of
+    // which `load` resolving proves and a declaration alone does not.
+    const loaded = await browser.execute(async () => {
+      // The size is read from the terminal rather than written here. Any size would answer the
+      // availability question, but a literal one is this test asserting a value the stylesheet
+      // owns -- the same rule the components follow.
+      const el = document.querySelector('.xterm') as HTMLElement | null;
+      const size = el ? getComputedStyle(el).fontSize : '';
+      const spec = `${size} "JetBrains Mono Nerd Symbols"`;
+      try {
+        const faces = await document.fonts.load(spec, '\ue0b0');
+        return { count: faces.length, usable: document.fonts.check(spec) };
+      } catch (e) {
+        return { count: -1, usable: false, error: String(e) };
+      }
+    });
+    expect(loaded.count).toBeGreaterThan(0);
+    expect(loaded.usable).toBe(true);
+
+    // And it is metrically the same cell as the primary font. CSS fallback uses the fallback's
+    // own advance, so a symbol font whose advance differs overruns the character beside it --
+    // which showed up as `on git` rendering as `on gi`, at every size, because it is a property
+    // of the font rather than of the scaling.
+    const widths = await browser.execute(() => {
+      const measure = (family: string) => {
+        const c = document.createElement('canvas').getContext('2d');
+        if (!c) return 0;
+        c.font = `100px ${family}`;
+        return c.measureText('M').width;
+      };
+      return {
+        primary: measure('"JetBrains Mono"'),
+        symbols: measure('"JetBrains Mono Nerd Symbols", "JetBrains Mono"'),
+      };
+    });
+    expect(widths.primary).toBeGreaterThan(0);
+    expect(widths.symbols).toBeCloseTo(widths.primary, 1);
+  });
+
   it('paints no colour the design system did not give it', async () => {
     // The whole of SC-016 in one assertion: every value in the theme must be one the design
     // system holds. A slot with a value from nowhere is a colour somebody invented.

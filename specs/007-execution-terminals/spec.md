@@ -53,6 +53,38 @@ Assumptions.
 - **Not a shell.** A login shell is a command like any other; this feature does not implement
   one, configure one, or assume one.
 
+## Design deviations
+
+Principle I: where this feature renders something the prototype does not specify, or specifies
+differently, the departure is recorded here with who approved it and when. A deviation without a
+name against it has not been approved; it has only been made.
+
+### Terminal type size and leading (approved by Nico Bugash, 2026-09-26)
+
+**Prototype state it was given against:** `mockups/Apex IDE (standalone).html`, the `isTerminal`
+branch, which sets the transcript at `font-size: 12.5px` and `line-height: 1.6` — 20px rows.
+
+**What ships instead:** 11px glyphs (`calc(var(--vk-term-fs) * 0.88)`) at the tightest leading the
+font allows, which is 14px rows. Expressed as a fraction of the extracted token rather than as a
+literal, so the relationship to the prototype's value survives a change to it.
+
+**Why:** the prototype draws a static transcript, where 12.5px at 1.6 reads comfortably. A working
+terminal is judged on how much of a build you can see at once, and at the prototype's values the
+dock holds 26 rows where it now holds 28, at 118 columns rather than 103.
+
+**Why the leading alone could not carry it**, which is the part worth keeping: xterm refuses a
+`lineHeight` below 1 — it throws `lineHeight cannot be less than 1` — so rows can never be packed
+tighter than the font's own line box. At 12.5px that floor is 17px. Tightening the leading was the
+approved approach and turned out not to exist; the size had to move instead, and that is a
+departure from what was approved in kind rather than in intent.
+
+**Tokens used:** `--vk-term-fs`, scaled. No new colour, and nothing invented — the only new value
+is the ratio.
+
+**Absorbed by the design system?** Open. A terminal's type size is the kind of thing a developer
+expects to set, and both editors this imitates make it a setting; until a settings surface exists
+this is a fixed deviation rather than a default.
+
 ## Clarifications
 
 ### Session 2026-09-24

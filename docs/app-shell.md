@@ -90,10 +90,21 @@ and then names the patched families developers install.
 reached; the terminal could not extend the token, only rebuild it, and rebuilding would mean
 restating a value the prototype owns.
 
-Where none of the fallbacks is installed the characters are blank boxes, and that is a font that
-is absent rather than a defect. Shipping a patched font is a design-system decision with a real
-size cost; a user-settable terminal font is what VS Code and IntelliJ provide, and needs a
-settings surface that does not exist yet.
+**The symbols themselves are shipped**, so this does not depend on what the host happens to have
+installed. `Symbols Nerd Font Mono` (MIT, 1.2 MB as woff2) lives in `lib/terminal/fonts/` and is
+imported beside xterm's own stylesheet, so a window that never opens the dock never fetches it.
+
+Symbols-only by choice: the fully patched Nerd Fonts replace the text face too, which would put a
+font of this application's choosing ahead of the design system's. This one contains no latin, so
+it can only ever supply characters the design system's family does not have. The complete font
+rather than a subset, because restricting to the BMP saves 563 KB and drops 6,896 of its 10,629
+glyphs — and a partial fix reproduces the original report for a different icon.
+
+It is not in `lib/ds`: `ds:sync` owns that directory and overwrites it, and this font is not the
+prototype's.
+
+Still absent: a user-settable terminal font, which both VS Code and IntelliJ provide and which
+needs a settings surface that does not exist yet.
 
 ## Reaching the engine
 
