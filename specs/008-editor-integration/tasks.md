@@ -16,9 +16,9 @@ glad of.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `monaco-editor` to `package.json`, and confirm it is the only dependency this feature adds. It goes in the webview bundle and nowhere else: Principle VIII forbids Monaco types in `client/core`, and a dependency that can only be imported from one directory is the cheapest way to keep that true
+- [X] T001 Add `monaco-editor` to `package.json`, and confirm it is the only dependency this feature adds. It goes in the webview bundle and nowhere else: Principle VIII forbids Monaco types in `client/core`, and a dependency that can only be imported from one directory is the cheapest way to keep that true
 - [X] T002 **No ds-sync change needed, and that is the finding.** The prototype's editor colours are hex literals whose values are already design-system tokens: `#9397ab` is `--color-neutral-500`, `#e4e7f5` is `--color-neutral-200`, `#b5abfc` is `--color-accent-400`, `#d2cefd` is `--color-accent-300`, `#75798c` is `--color-neutral-600`. Extracting them would create five tokens duplicating five that exist, with nothing keeping the copies in step. A-EDITPALETTE is corrected to say so
-- [ ] T003 `tests/unit/editor-palette.test.ts`: assert each of the five hex literals in `mockups/Apex IDE (standalone).html`'s editor markup still equals the design-system token this feature maps it to, reading both from disk. **This is what keeps the mapping honest**: the prototype could change a colour and the application would keep rendering the old token, which is drift in the direction Principle I exists to catch, and no other check would see it
+- [X] T003 `tests/unit/editor-palette.test.ts`: assert each of the five hex literals in `mockups/Apex IDE (standalone).html`'s editor markup still equals the design-system token this feature maps it to, reading both from disk. **This is what keeps the mapping honest**: the prototype could change a colour and the application would keep rendering the old token, which is drift in the direction Principle I exists to catch, and no other check would see it
 
 ---
 
@@ -27,15 +27,15 @@ glad of.
 **Blocks every user story.** Until a buffer can be mounted and shown, none of the four stories
 has anywhere to happen.
 
-- [ ] T004 [P] `client/ui/lib/editor/ranges.ts`: `LoadedRegions` with `covers`, `complete`, `add` and `missingFor`. Pure — no Monaco, no IPC — so the arithmetic that decides what to fetch is testable without a window (data-model.md, *LoadedRegions*)
-- [ ] T005 [P] `tests/unit/editor-ranges.test.ts`: ranges merge on insert, stay ascending and non-overlapping, `complete` is true only at full coverage, and a short response narrows rather than corrupts the record. Written before T004's body
-- [ ] T006 [P] `client/ui/lib/editor/palette.ts`: `monacoTheme(el)` reading the five `--vk-code-*` tokens plus background, foreground, selection and cursor from the mounted element, returning Monaco's theme object. The only place any editor colour is decided
-- [ ] T007 [P] `tests/unit/editor-palette.test.ts`: every colour in the returned theme traces to a token, no literal appears, and a role the prototype does not define falls back to the foreground rather than to a guess (A-EDITPALETTE)
-- [ ] T008 `client/ui/lib/editor/buffers.svelte.ts`: `Buffer` and `BufferSet` per data-model.md. **Module-level, not component state** — the panel is unmounted on every tab switch, and a model held in the component loses the buffer, its base and its dirty flag with it. This is the defect the terminal had when `detach()` disposed its instance; it is designed out here rather than found later
-- [ ] T009 [P] `tests/unit/editor-buffers.test.ts`: one buffer per path however many times it is opened (FR-023); `dirty` set by an edit and cleared only by `adopt` or `reload`; a buffer with no base refuses to save; `editable` false while regions are missing
-- [ ] T010 `client/ui/lib/editor/sink.ts`: the `EditorSink` port — `read`, `write`, `hash` — with an `overIpc` implementation and a `setEditorSink` swap for tests, following `terminal/sink.ts`, which is the established shape for this seam
-- [ ] T011 `client/ui/lib/editor/EditorPanel.svelte`: mounts Monaco into the document area, themed from T006, with language web workers **disabled** (FR-004). Renders the buffer for the focused tab and nothing when no document is open
-- [ ] T012 Wire `EditorPanel` into `client/ui/lib/shell/Window.svelte`'s document area, replacing the `No document open` placeholder when a tab is focused
+- [X] T004 [P] `client/ui/lib/editor/ranges.ts`: `LoadedRegions` with `covers`, `complete`, `add` and `missingFor`. Pure — no Monaco, no IPC — so the arithmetic that decides what to fetch is testable without a window (data-model.md, *LoadedRegions*)
+- [X] T005 [P] `tests/unit/editor-ranges.test.ts`: ranges merge on insert, stay ascending and non-overlapping, `complete` is true only at full coverage, and a short response narrows rather than corrupts the record. Written before T004's body
+- [X] T006 [P] `client/ui/lib/editor/palette.ts`: `monacoTheme(el)` reading the five `--vk-code-*` tokens plus background, foreground, selection and cursor from the mounted element, returning Monaco's theme object. The only place any editor colour is decided
+- [X] T007 [P] `tests/unit/editor-palette.test.ts`: every colour in the returned theme traces to a token, no literal appears, and a role the prototype does not define falls back to the foreground rather than to a guess (A-EDITPALETTE)
+- [X] T008 `client/ui/lib/editor/buffers.svelte.ts`: `Buffer` and `BufferSet` per data-model.md. **Module-level, not component state** — the panel is unmounted on every tab switch, and a model held in the component loses the buffer, its base and its dirty flag with it. This is the defect the terminal had when `detach()` disposed its instance; it is designed out here rather than found later
+- [X] T009 [P] `tests/unit/editor-buffers.test.ts`: one buffer per path however many times it is opened (FR-023); `dirty` set by an edit and cleared only by `adopt` or `reload`; a buffer with no base refuses to save; `editable` false while regions are missing
+- [X] T010 `client/ui/lib/editor/sink.ts`: the `EditorSink` port — `read`, `write`, `hash` — with an `overIpc` implementation and a `setEditorSink` swap for tests, following `terminal/sink.ts`, which is the established shape for this seam
+- [X] T011 `client/ui/lib/editor/EditorPanel.svelte`: mounts Monaco into the document area, themed from T006, with language web workers **disabled** (FR-004). Renders the buffer for the focused tab and nothing when no document is open
+- [X] T012 Wire `EditorPanel` into `client/ui/lib/shell/Window.svelte`'s document area, replacing the `No document open` placeholder when a tab is focused
 
 ---
 

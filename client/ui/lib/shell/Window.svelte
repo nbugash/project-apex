@@ -15,6 +15,7 @@
   import { listenToEngine } from '../terminal/engine';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
+  import EditorPanel from '../editor/EditorPanel.svelte';
   import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
@@ -229,7 +230,12 @@
       />
       <div class="content">
         {#if activeDocument}
-          <p>{activeDocument.display_name}</p>
+          <!-- Keyed on the document so switching tabs gives Monaco a fresh mount rather than a
+               model swapped underneath it. The buffer behind it is not remounted: it lives in
+               `buffers.svelte.ts` precisely so a tab switch cannot lose it. -->
+          {#key activeDocument.id}
+            <EditorPanel path={activeDocument.display_name} />
+          {/key}
         {:else}
           <p class="empty">No document open</p>
         {/if}
