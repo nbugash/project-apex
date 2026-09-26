@@ -27,8 +27,20 @@ async function noticeTone(): Promise<string> {
 }
 
 /// End the engine the application spawned, which is what an outage is.
+///
+/// **Waits for the process to be gone before returning.** `pkill` only delivers a signal; it
+/// says nothing about when the process dies. Returning while the engine was still exiting left
+/// the kill racing the *next* spec file's startup, and `editor-session.spec.ts` failed its setup
+/// once in a full run because of it — an engine that was reachable when its app asked for a
+/// workspace and gone a moment later. The blast radius is still every engine on the machine,
+/// which is tolerable only because the suite runs one application at a time (`maxInstances: 1`).
 function killEngine(): void {
   spawnSync('pkill', ['-x', 'ide-engine']);
+  for (let i = 0; i < 50; i += 1) {
+    if (spawnSync('pgrep', ['-x', 'ide-engine']).status !== 0) return;
+    spawnSync('sleep', ['0.1']);
+  }
+  throw new Error('the engine would not die, so the test that follows cannot trust its state');
 }
 
 describe('saving', () => {
