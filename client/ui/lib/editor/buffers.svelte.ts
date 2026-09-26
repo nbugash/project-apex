@@ -81,6 +81,10 @@ export class Buffer {
   /// True while a write is in flight. FR-014: two saves of one file must not race into a wrong
   /// base.
   saving = $state(false);
+  /// True while a read is in flight, so a component that re-runs its effect does not start a
+  /// second read of the same file. Without it a reactive effect issues one request per
+  /// re-evaluation, and SC-002 counts requests.
+  loading = $state(false);
 
   constructor(path: string) {
     this.path = path;
@@ -192,6 +196,8 @@ export const buffers = new BufferSet();
 /// costs a round trip on every open to save one on the rare large file, and SC-002 counts the
 /// common case (FR-018).
 export async function load(b: Buffer): Promise<void> {
+  if (b.loading) return;
+  b.loading = true;
   try {
     const chunk = await editorSink().read(b.path, null);
     b.fill(chunk.text, chunk.sha256, chunk.total, [
@@ -225,6 +231,8 @@ export async function load(b: Buffer): Promise<void> {
       return;
     }
     b.notice = { kind: 'unavailable', message: refusal.message };
+  } finally {
+    b.loading = false;
   }
 }
 

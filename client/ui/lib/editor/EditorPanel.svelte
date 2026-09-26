@@ -52,9 +52,14 @@
 
   const THEME = 'apex';
 
-  /// The buffer on screen, or null. Derived so the component follows the model rather than
-  /// holding a copy of it.
-  const buffer = $derived<Buffer | null>(path ? (buffers.ensure(path) ?? null) : null);
+  /// The buffer on screen, or null.
+  ///
+  /// A **read**, never a create. `ensure` pushes onto the buffer set, and Svelte 5 refuses a
+  /// state mutation inside a derived — which does not fail quietly: the whole shell stopped
+  /// mounting the moment a tab was focused, and `.shell` never appeared. Creating belongs in
+  /// the effect below, where a mutation is legal and where the read that follows it still sees
+  /// the new buffer, because the set is itself state.
+  const buffer = $derived<Buffer | null>(path ? (buffers.get(path) ?? null) : null);
 
   /// What the last save produced, in the developer's terms.
   const ending = $derived(buffer?.ending ? describeOutcome(buffer.ending) : null);
@@ -138,10 +143,6 @@
       });
 
       publishForAutomation(editor);
-      // A restored tab has a buffer before it has content (FR-021). Fetched when the tab is
-      // focused, which is when this component mounts, rather than for every tab at launch --
-      // restoring ten tabs would otherwise be ten reads of files nobody is looking at.
-      if (buffer && buffer.base === null && buffer.notice === null) void load(buffer);
     })();
     return () => {
       disposed = true;
@@ -149,6 +150,17 @@
       editor?.dispose();
       editor = null;
     };
+  });
+
+  /// Make sure a buffer exists for this tab, and fill it the first time.
+  ///
+  /// A restored tab has a buffer before it has content (FR-021). Fetched when the tab is
+  /// focused, which is when this component mounts, rather than for every tab at launch —
+  /// restoring ten tabs would otherwise be ten reads of files nobody is looking at.
+  $effect(() => {
+    if (!path) return;
+    const b = buffers.ensure(path);
+    if (b.base === null && b.notice === null && !b.loading) void load(b);
   });
 
   /// Follow the buffer when the tab changes or the content is reloaded from the host.
