@@ -18,7 +18,7 @@ import { LoadedRegions } from './ranges';
 export type WriteOutcome =
   | { kind: 'written'; sha256: string }
   | { kind: 'conflict' }
-  | { kind: 'refused'; code: number; message: string }
+  | { kind: 'refused'; message: string }
   | { kind: 'unreachable' };
 
 export class Buffer {

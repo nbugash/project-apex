@@ -4,6 +4,8 @@
 //! Principle VI). Every argument is validated in the core, which rejects rather than coerces.
 
 use crate::application::error::ShellError;
+use crate::adapters::inbound::task_commands::Tasks;
+use crate::application::use_cases::edit_file::{EditFile, WriteOutcome};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
 use crate::domain::layout::RegionId;
@@ -151,6 +153,213 @@ pub fn connection_current(shell: State<'_, Shell>) -> crate::domain::connection:
     shell.connection.current()
 }
 
+// ---- The editor's file surface (F006) ----
+
+/// The largest file this editor opens as text (plan.md, *Fixed Quantities*).
+///
+/// Monaco holds the whole model in memory once loaded, so past this the window stops responding
+/// rather than merely being slow. A refusal naming the limit is worse than opening the file and
+/// far better than a hang the developer cannot escape.
+pub const MAX_TEXT_FILE: u64 = 64 * 1024 * 1024;
+
+/// A piece of a file, as text.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkDto {
+    pub text: String,
+    /// Of the **whole** file, never of `text`. It is what a save is conditional on, and what a
+    /// caller assembling several ranges compares across them.
+    pub sha256: String,
+    /// The whole file's size, so a partial read knows what it is part of.
+    pub total: u64,
+    /// Where `text` begins. Not always what was asked for: a range boundary can land inside a
+    /// multi-byte character, and the answer is trimmed to whole characters.
+    pub offset: u64,
+}
+
+/// What a save produced, as four cases the interface switches on.
+///
+/// Carried in the success channel deliberately. Three of these are failures, but they are
+/// failures the interface must *branch* on rather than merely report, and splitting them across
+/// `Ok` and `Err` would push the caller back to inspecting an error to find out which it was --
+/// which is what the typed variants exist to prevent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WriteOutcomeDto {
+    Written { sha256: String },
+    Conflict,
+    Refused { message: String },
+    Unreachable,
+}
+
+impl From<WriteOutcome> for WriteOutcomeDto {
+    fn from(o: WriteOutcome) -> Self {
+        match o {
+            WriteOutcome::Written { sha256 } => Self::Written {
+                sha256: sha256.to_string(),
+            },
+            WriteOutcome::Conflict => Self::Conflict,
+            WriteOutcome::Refused { reason } => Self::Refused { message: reason },
+            WriteOutcome::Unreachable => Self::Unreachable,
+        }
+    }
+}
+
+/// The workspace a file command acts in.
+///
+/// Read from the core rather than accepted from the webview, the same Principle VI decision
+/// F010 made for tasks: a `workspaceId` supplied by the interface is the interface choosing
+/// which workspace a command reaches, and it has no business choosing that. The core registered
+/// the workspace, so the core knows which one it is.
+fn current_workspace(tasks: &Tasks) -> Result<WorkspaceId, WorkspaceFailure> {
+    tasks
+        .current
+        .lock()
+        .expect("current workspace")
+        .clone()
+        .map(WorkspaceId)
+        .ok_or(WorkspaceFailure::UnknownWorkspace)
+}
+
+/// Untrusted input, refused rather than repaired into something that parses.
+fn editor_path(raw: &str) -> Result<RelPath, WorkspaceFailure> {
+    RelPath::parse(raw).map_err(|_| WorkspaceFailure::Refused)
+}
+
+/// Decode a chunk's bytes as text, trimming a range's edges to whole characters.
+///
+/// Trimming is not lossy: the bytes dropped belong to a character the adjacent range delivers
+/// whole. A lossy decode would be -- it replaces the partial character with U+FFFD, and the
+/// developer saves that substitution back over their file. `Utf8Error::error_len` separates the
+/// two cases exactly: `None` means the input ended mid-character, `Some` means a sequence that
+/// is invalid wherever it appears, which is binary content and belongs to F017 (FR-006).
+fn decode_chunk(chunk: FileChunk) -> Result<ChunkDto, WorkspaceFailure> {
+    if chunk.total_size > MAX_TEXT_FILE {
+        return Err(WorkspaceFailure::TooLarge(chunk.total_size));
+    }
+
+    let bytes = &chunk.bytes[..];
+    // Leading continuation bytes can only be the tail of a character the previous range holds.
+    // Only when the range starts partway in: at offset zero they are invalid, not partial.
+    let mut start = 0;
+    if chunk.range.offset > 0 {
+        while start < bytes.len() && (bytes[start] & 0xC0) == 0x80 {
+            start += 1;
+        }
+    }
+    let rest = &bytes[start..];
+
+    let end = match std::str::from_utf8(rest) {
+        Ok(_) => rest.len(),
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        Err(_) => return Err(WorkspaceFailure::NotText),
+    };
+
+    let text = std::str::from_utf8(&rest[..end])
+        .map_err(|_| WorkspaceFailure::NotText)?
+        .to_string();
+
+    Ok(ChunkDto {
+        text,
+        sha256: chunk.sha256.to_string(),
+        total: chunk.total_size,
+        offset: chunk.range.offset + start as u64,
+    })
+}
+
+/// Read a whole file as text.
+///
+/// Unranged on purpose: only an unranged read is cached (`CachedWorkspace` stores whole content
+/// and nothing else), so asking for a range here would make every reopen cost a request and
+/// SC-002 unachievable.
+#[tauri::command]
+pub async fn file_read(
+    path: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<ChunkDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let rel = editor_path(&path)?;
+    match access.provider.read_file(&ws, &rel, None).await {
+        Ok(chunk) => decode_chunk(chunk),
+        Err(ProviderError::TooLarge { .. }) => {
+            // The refusal says the file is above the inline limit but not always how far: §4.8
+            // gives it no structured field for the size. So ask the method whose job is
+            // reporting size. One extra round trip, and only for a file that is about to cost
+            // many more, against the alternative of reading a number out of a sentence.
+            let meta = access.provider.stat(&ws, &rel).await?;
+            Err(WorkspaceFailure::TooLarge(meta.size))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Read one window of a file (FR-017).
+///
+/// Deliberately not cached: the projection holds whole files, and storing a fragment under a
+/// whole file's digest would make the next validity check agree with content that is not there.
+#[tauri::command]
+pub async fn file_read_range(
+    path: String,
+    offset: u64,
+    len: u64,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<ChunkDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let rel = editor_path(&path)?;
+    let chunk = access
+        .provider
+        .read_file(
+            &ws,
+            &rel,
+            Some(ByteRange {
+                offset,
+                length: len,
+            }),
+        )
+        .await?;
+    decode_chunk(chunk)
+}
+
+/// The file's current digest, or `None` when it has none.
+///
+/// Exists for A-WRITEECHO: deciding whether a file event describes our own write or somebody
+/// else's change is a hash comparison, and nothing else can answer it.
+#[tauri::command]
+pub async fn file_hash(
+    path: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<Option<String>, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let rel = editor_path(&path)?;
+    let meta = access.provider.stat(&ws, &rel).await?;
+    Ok(meta.sha256.map(|h| h.to_string()))
+}
+
+/// Save, conditional on the base the buffer held (FR-007).
+#[tauri::command]
+pub async fn file_write(
+    path: String,
+    content: String,
+    base: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<WriteOutcomeDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let rel = editor_path(&path)?;
+    // A base that is not a digest cannot have come from a read this client performed. Refused
+    // rather than forwarded: the engine would compare it, fail to match and answer `-32004`,
+    // and the developer would be told a colleague edited their file when nobody did.
+    let base = Sha256::parse(&base).ok_or(WorkspaceFailure::Refused)?;
+
+    let outcome = EditFile::new(access.provider.clone())
+        .save(&ws, &rel, &content, &base)
+        .await;
+    Ok(outcome.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,7 +400,7 @@ mod tests {
 // stale or hostile caller.
 
 use crate::application::ports::workspace_provider::{ProviderError, WorkspaceProvider};
-use crate::domain::workspace::{PageRequest, RelPath, WorkspaceId};
+use crate::domain::workspace::{ByteRange, FileChunk, PageRequest, RelPath, Sha256, WorkspaceId};
 use serde::Serialize;
 
 /// One directory entry, as the interface sees it.
@@ -225,6 +434,17 @@ pub enum WorkspaceFailure {
     /// The file changed on the host since it was read (`-32004`). Its own variant because the
     /// interface has to tell a colleague's edit from a dropped link (FR-012).
     Conflict,
+    /// The content is not text, so this editor will not present it (FR-006).
+    ///
+    /// Separate from `Refused` because the remedy is different and nothing about the path is
+    /// wrong: the file is fine, this surface is the wrong one for it, and F017 is the one that
+    /// will render it.
+    NotText,
+    /// Larger than this surface will open, carrying the size so the interface can say how much.
+    ///
+    /// A number rather than a sentence, because "too large" without the size tells a developer
+    /// nothing they can act on.
+    TooLarge(u64),
 }
 
 impl From<ProviderError> for WorkspaceFailure {

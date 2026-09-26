@@ -213,9 +213,15 @@ impl WorkspaceProvider for RemoteWorkspaceProvider {
         // Above the threshold, content leaves the control channel entirely rather than being
         // chunked through it: one pipe is one queue, and a large response would serialise ahead
         // of every interactive request behind it (§4.6, A-BULK).
-        let wants = range.map(|r| r.length).unwrap_or(u64::MAX);
-        if wants > wire::MAX_INLINE_READ {
-            return self.bulk_read(ws, path, range).await;
+        // Only a caller that *named* a length above the cap is pre-routed. An unranged read asks
+        // for the whole file without knowing its size, and treating that as "could be huge" sent
+        // every whole-file read to the bulk path -- which nothing implements -- so reading a
+        // ten-byte file failed. It went unnoticed because no test ever constructed this adapter
+        // and the application never wired it; it surfaced the moment F006 needed a file open.
+        if let Some(r) = range {
+            if r.length > wire::MAX_INLINE_READ {
+                return self.bulk_read(ws, path, range).await;
+            }
         }
 
         let params = wire::ReadFileParams {

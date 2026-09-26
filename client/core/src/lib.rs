@@ -33,6 +33,13 @@ pub fn run() {
             cmd::workspace_read_directory,
             cmd::workspace_open,
             cmd::workspace_delete,
+            // The editor's file surface (F006). Registered here or the webview's `invoke`
+            // resolves to nothing and every open fails as an unknown command -- which is how
+            // these four came to be called by a sink written before they existed.
+            cmd::file_read,
+            cmd::file_read_range,
+            cmd::file_hash,
+            cmd::file_write,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,
             adapters::inbound::task_commands::task_resize,

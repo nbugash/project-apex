@@ -47,8 +47,8 @@ has anywhere to happen.
 requests are issued.
 
 - [ ] T013 [US1] `tests/e2e/editor-local-echo.spec.ts`: open a cached file, type 100 characters, assert all 100 are in the buffer and **zero** requests were issued as a result (SC-001, SC-002). Written first — this is the feature's central claim and §1.4's absolute rule
-- [ ] T014 [US1] In `client/ui/lib/editor/sink.ts`, extend the automation recorder to count requests to log every call, so SC-001 counts what actually left rather than what a component believed it sent. Following `terminal/sink.ts`'s `recordForAutomation`
-- [ ] T015 [US1] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read` returning content and hash for a path, reading through the existing `CachedWorkspace` so a cached file costs no request
+- [X] T014 [US1] In `client/ui/lib/editor/sink.ts`, extend the automation recorder to count requests to log every call, so SC-001 counts what actually left rather than what a component believed it sent. Following `terminal/sink.ts`'s `recordForAutomation`
+- [X] T015 [US1] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read` returning content and hash for a path, reading through the existing `CachedWorkspace` so a cached file costs no request
 - [ ] T016 [US1] `client/ui/lib/editor/buffers.svelte.ts`: `open(path)` populating a buffer from the sink, setting `base` from the returned hash, and returning the existing buffer when one is already open for that path
 - [ ] T017 [US1] `EditorPanel.svelte`: bind Monaco's model to the buffer so an edit updates `text` and sets `dirty`, and confirm by construction that the edit path calls no sink method
 - [ ] T018 [US1] In `client/ui/lib/editor/buffers.svelte.ts`, decline content that is not valid UTF-8 (FR-006), with a message naming F017 as what will render it. The check belongs where the bytes arrive, not in the component
@@ -80,9 +80,9 @@ host, save again, observe the refusal and the host's content unchanged.
 
 - [X] T030 [P] [US2] `client/core/tests/write_file.rs`: `RemoteWorkspaceProvider::write_file` maps a success to the new hash, `-32004` to a conflict, and every other code to its own outcome. Against a scripted transport, so each branch is exercised without an engine
 - [X] T031 [US2] `client/core/src/adapters/outbound/remote_workspace.rs`: implement `write_file`, removing the `Owner::F006Editor` refusal F003 left
-- [ ] T032 [US2] `client/core/src/application/use_cases/edit_file.rs`: map a provider result to `WriteOutcome`'s four variants. `Conflict` and `Unreachable` are never collapsed — one means a colleague edited the file, the other means the link dropped, and the developer's next action differs completely (FR-012)
-- [ ] T033 [US2] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_write`, validating its arguments in the core because the webview is not a trusted caller (Principle VI)
-- [ ] T034 [US2] In `client/core/src/application/use_cases/edit_file.rs`, update the workspace cache after a successful write so a reopen does not show stale content (FR-010)
+- [X] T032 [US2] `client/core/src/application/use_cases/edit_file.rs`: map a provider result to `WriteOutcome`'s four variants. `Conflict` and `Unreachable` are never collapsed — one means a colleague edited the file, the other means the link dropped, and the developer's next action differs completely (FR-012)
+- [X] T033 [US2] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_write`, validating its arguments in the core because the webview is not a trusted caller (Principle VI)
+- [X] T034 [US2] In `client/core/src/application/use_cases/edit_file.rs`, update the workspace cache after a successful write so a reopen does not show stale content (FR-010)
 
 ### The surface
 
@@ -112,7 +112,7 @@ host, save again, observe the refusal and the host's content unchanged.
 **Independent test**: open a file above the threshold, confirm the first window renders before
 the whole file has transferred, and that scrolling fetches more.
 
-- [ ] T048 [P] [US3] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read_range`, passing a byte range through to the provider's existing ranged `read_file`
+- [X] T048 [P] [US3] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read_range`, passing a byte range through to the provider's existing ranged `read_file`
 - [ ] T049 [US3] `client/ui/lib/editor/buffers.svelte.ts`: open a file above the threshold by reading only the range covering the first viewport, recording it in `LoadedRegions`, and leaving the buffer `editable === false`
 - [ ] T050 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, fetch the next range when the viewport moves beyond what is loaded (FR-017), using T004's `missingFor` to ask for exactly what is absent
 - [ ] T051 [US3] In `client/ui/lib/editor/buffers.svelte.ts`, read a file at or below the threshold whole, in one request (FR-018) — a range request for a small file costs the same round trip and delivers less

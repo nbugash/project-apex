@@ -221,3 +221,34 @@ async fn the_budget_is_measured_on_the_encoded_frame_and_not_the_byte_count() {
 
     assert!(matches!(err, ProviderError::TooLarge { .. }), "got {err:?}");
 }
+
+// ---- The read path, reached the moment the provider was wired ----
+
+#[tokio::test]
+async fn an_unranged_read_is_attempted_inline_rather_than_assumed_huge() {
+    // A read with no range does not know the file's size, and treating that as "could be huge"
+    // routed every whole-file read to the bulk path -- which nothing implements -- so opening a
+    // ten-byte file failed. The engine answers an unranged read perfectly well and refuses, with
+    // the size, when it cannot. That refusal is the signal to change strategy; a guess is not.
+    let content = apex_protocol::base64::encode(b"fn main() {}");
+    let digest = Sha256::of(b"fn main() {}");
+    let sender = Scripted::new(RequestOutcome::Answered(format!(
+        r#"{{"result":{{"content":"{content}","encoding":"base64","sha256":"{}","total_size":12}}}}"#,
+        digest.as_str()
+    )));
+
+    let chunk = provider(sender.clone())
+        .read_file(
+            &WorkspaceId("w1".into()),
+            &RelPath::parse("src/main.rs").expect("path"),
+            None,
+        )
+        .await
+        .expect("an unranged read must reach the engine");
+
+    assert_eq!(chunk.bytes, b"fn main() {}");
+    assert_eq!(chunk.sha256, digest);
+    let seen = sender.seen.lock().expect("seen");
+    assert_eq!(seen.len(), 1, "one read is one request");
+    assert_eq!(seen[0].method, "workspace/readFile");
+}
