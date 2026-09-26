@@ -77,11 +77,23 @@ export interface EditorSink {
 /// believes it issued one. SC-001 and SC-002 are counts of what left the process; a counter any
 /// further up would count intentions, and the claim those numbers make — that typing reaches no
 /// network — is worth exactly as much as the thing doing the counting.
-function recordForAutomation(method: string, path: string): void {
+function recordForAutomation(method: string, path: string, bytes?: number): void {
   if (!(import.meta.env.DEV || navigator.webdriver === true)) return;
   const w = window as unknown as { __apexEditorSent?: Array<Record<string, unknown>> };
   w.__apexEditorSent = w.__apexEditorSent ?? [];
-  w.__apexEditorSent.push({ method, path, at: Date.now() });
+  w.__apexEditorSent.push({ method, path, at: Date.now(), bytes: bytes ?? 0 });
+}
+
+/// The size of a response, recorded after it arrives.
+///
+/// Separate from the request record because a request's size is not what §4.1 caps -- the frame
+/// carrying the answer is, and a range that asked for a legal amount can still be answered with
+/// more than fits if anything miscounts.
+function recordResponse(path: string, text: string): void {
+  if (!(import.meta.env.DEV || navigator.webdriver === true)) return;
+  const w = window as unknown as { __apexEditorReceived?: Array<Record<string, unknown>> };
+  w.__apexEditorReceived = w.__apexEditorReceived ?? [];
+  w.__apexEditorReceived.push({ path, bytes: new TextEncoder().encode(text).length });
 }
 
 /// How many requests have left, for a test that asserts a number rather than reads a list.
@@ -94,13 +106,15 @@ const overIpc: EditorSink = {
   async read(path, range) {
     recordForAutomation(range ? 'readRange' : 'read', path);
     try {
-      return range
-        ? ((await invoke('file_read_range', {
+      const chunk = (range
+        ? await invoke('file_read_range', {
             path,
             offset: range[0],
             len: range[1] - range[0],
-          })) as Chunk)
-        : ((await invoke('file_read', { path })) as Chunk);
+          })
+        : await invoke('file_read', { path })) as Chunk;
+      recordResponse(path, chunk.text);
+      return chunk;
     } catch (e) {
       throw new ReadFailed(refusalFrom(e));
     }

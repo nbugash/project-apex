@@ -46,7 +46,7 @@ has anywhere to happen.
 **Independent test**: open a cached file, type a burst, confirm all characters render and zero
 requests are issued.
 
-- [ ] T013 [US1] `tests/e2e/editor-local-echo.spec.ts`: open a cached file, type 100 characters, assert all 100 are in the buffer and **zero** requests were issued as a result (SC-001, SC-002). Written first — this is the feature's central claim and §1.4's absolute rule
+- [X] T013 [US1] `tests/e2e/editor-local-echo.spec.ts`: open a cached file, type 100 characters, assert all 100 are in the buffer and **zero** requests were issued as a result (SC-001, SC-002). Written first — this is the feature's central claim and §1.4's absolute rule
 - [X] T014 [US1] In `client/ui/lib/editor/sink.ts`, extend the automation recorder to count requests to log every call, so SC-001 counts what actually left rather than what a component believed it sent. Following `terminal/sink.ts`'s `recordForAutomation`
 - [X] T015 [US1] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read` returning content and hash for a path, reading through the existing `CachedWorkspace` so a cached file costs no request
 - [X] T016 [US1] `client/ui/lib/editor/buffers.svelte.ts`: `open(path)` populating a buffer from the sink, setting `base` from the returned hash, and returning the existing buffer when one is already open for that path
@@ -94,7 +94,7 @@ host, save again, observe the refusal and the host's content unchanged.
 - [X] T040 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, present a refused save with exactly one way out: discard the local changes and reload the host's content (FR-012a). Explicitly **not** an overwrite — re-reading the hash and writing over it destroys a colleague's work silently, which §11 names as the failure this product cannot afford (FR-012b)
 - [X] T041 [US2] In `client/core/src/domain/session.rs` and `client/ui/lib/editor/buffers.svelte.ts`, autosave: a preference in the session store, **off** when unset, a debounce per plan.md's fixed quantities, and no write for a buffer with no changes (FR-007b, FR-007c). Raise the store's schema version with `serde(default)`, the migration A-STATE2 established
 - [X] T042 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, one control to turn autosave on. Without it the mechanism is unreachable and therefore dead code, which this project does not ship (research.md, last entry)
-- [ ] T043 [US2] `tests/e2e/editor-save.spec.ts`: US2's acceptance scenarios end to end against a real engine — a clean save, a refused save with the host's bytes unchanged, a save with no connection, a reopen showing what was saved, **discarding after a conflict leaving the buffer holding exactly the host's bytes** (SC-015) — the one escape this feature offers, and until now the only one with no test — and autosave issuing zero writes when off (SC-003, SC-004, SC-014, SC-015)
+- [X] T043 [US2] `tests/e2e/editor-save.spec.ts`: US2's acceptance scenarios end to end against a real engine — a clean save, a refused save with the host's bytes unchanged, a save with no connection, a reopen showing what was saved, **discarding after a conflict leaving the buffer holding exactly the host's bytes** (SC-015) — the one escape this feature offers, and until now the only one with no test — and autosave issuing zero writes when off (SC-003, SC-004, SC-014, SC-015)
 
 ### Not hearing our own write
 
@@ -117,7 +117,7 @@ the whole file has transferred, and that scrolling fetches more.
 - [X] T050 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, fetch the next range when the viewport moves beyond what is loaded (FR-017), using T004's `missingFor` to ask for exactly what is absent
 - [X] T051 [US3] In `client/ui/lib/editor/buffers.svelte.ts`, read a file at or below the threshold whole, in one request (FR-018) — a range request for a small file costs the same round trip and delivers less
 - [X] T052 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, refuse edits to a partially loaded buffer, visibly, and load the remainder when the developer asks to edit. A whole-file write of a partial buffer would replace the unloaded regions with nothing (research.md, *Ranges*)
-- [ ] T053 [US3] `client/core/tests/editor_first_paint.rs`: p99 over at least 100 samples from open to the first window being available, **printed** against 250 ms, with the chunk count and the largest response recorded (SC-005, SC-006, SC-007, A-NFR)
+- [X] T053 [US3] `client/core/tests/editor_first_paint.rs`: p99 over at least 100 samples from open to the first window being available, **printed** against 250 ms, with the chunk count and the largest response recorded (SC-005, SC-006, SC-007, A-NFR)
 - [ ] T054 [US3] `tests/e2e/editor-large-file.spec.ts`: US3's acceptance scenarios — the first window renders, scrolling fetches more, no response exceeds the frame limit, and a small file is read whole
 
 ---
@@ -138,11 +138,11 @@ with the second focused and showing its content.
 ## Phase 7: Polish and cross-cutting
 
 - [ ] T058 [P] `tests/e2e/editor-a11y.spec.ts`: the conflict notice and the autosave control are reachable from the keyboard and legible in greyscale, following `rail-greyscale.spec.ts` — comparing what survives desaturation rather than comparing hues, since a test that compared colours would pass for a design that relied on them
-- [ ] T059 [P] Update `docs/app-shell.md` with the editor surface: where the buffer model lives and why it outlives the component, what the palette translates, and the partial-buffer interlock
-- [ ] T060 [P] Update `docs/engine.md` with the write path: containment reused rather than re-implemented, compare-before-open, and rename-over-write with the temp file in the destination's directory
-- [ ] T061 Per `specs/008-editor-integration/quickstart.md` §5, run the seven mutation checks in [quickstart.md](./quickstart.md) §5 and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 4 and 5 matter most: they are each other's failure mode, and a fix for one that breaks the other looks correct from either side
-- [ ] T062 Per `specs/008-editor-integration/quickstart.md` §4, audit the seven negative checks in [quickstart.md](./quickstart.md) §4 and confirm, for each, that the fixture condition which lets it fail is actually present — a real symlink rather than a string with `..` in it, a watcher actually running, a file genuinely changed on disk
-- [ ] T063 In `specs/008-editor-integration/quickstart.md`, record the six measurements from [quickstart.md](./quickstart.md) §3 in its *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
+- [X] T059 [P] Update `docs/app-shell.md` with the editor surface: where the buffer model lives and why it outlives the component, what the palette translates, and the partial-buffer interlock
+- [X] T060 [P] Update `docs/engine.md` with the write path: containment reused rather than re-implemented, compare-before-open, and rename-over-write with the temp file in the destination's directory
+- [X] T061 Per `specs/008-editor-integration/quickstart.md` §5, run the seven mutation checks in [quickstart.md](./quickstart.md) §5 and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 4 and 5 matter most: they are each other's failure mode, and a fix for one that breaks the other looks correct from either side
+- [X] T062 Per `specs/008-editor-integration/quickstart.md` §4, audit the seven negative checks in [quickstart.md](./quickstart.md) §4 and confirm, for each, that the fixture condition which lets it fail is actually present — a real symlink rather than a string with `..` in it, a watcher actually running, a file genuinely changed on disk
+- [X] T063 In `specs/008-editor-integration/quickstart.md`, record the six measurements from [quickstart.md](./quickstart.md) §3 in its *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
 - [ ] T064 Verify `make gate` is green, then update `specs/features-map.md`, then mark F006 complete in `specs/features-map.md` and run `feature_map.py verify`
 
 ---

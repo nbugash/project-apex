@@ -33,6 +33,7 @@
   import { describeOutcome } from './ending';
   import { editorTheme } from './palette';
   import { sessionSetAutosave } from '../ipc';
+  import { shellState } from '../state.svelte';
 
   interface Props {
     /// The path whose buffer to show, or null for no document.
@@ -44,9 +45,13 @@
   let { path = null, autosave = false }: Props = $props();
 
   let host = $state<HTMLDivElement | null>(null);
-  let editor: import('monaco-editor/editor/editor.api').editor.IStandaloneCodeEditor | null =
-    null;
-  let monaco: typeof import('monaco-editor/editor/editor.api') | null = null;
+  // Reactive, so the effect below re-runs once Monaco has finished loading. As plain variables
+  // they were invisible to the effect, which then depended only on what it had read before it
+  // gave up — see the comment on that effect.
+  let editor = $state<
+    import('monaco-editor/editor/editor.api').editor.IStandaloneCodeEditor | null
+  >(null);
+  let monaco = $state<typeof import('monaco-editor/editor/editor.api') | null>(null);
   let applying = false;
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -158,9 +163,17 @@
   /// focused, which is when this component mounts, rather than for every tab at launch —
   /// restoring ten tabs would otherwise be ten reads of files nobody is looking at.
   $effect(() => {
+    // Read first: a workspace arriving is the event that makes a failed read worth retrying.
+    // A restored tab mounts before `workspace_open` has told the engine anything, so its first
+    // read is refused, and without this it would stay refused for the life of the window.
+    const reachable = shellState.workspace?.id ?? null;
     if (!path) return;
     const b = buffers.ensure(path);
-    if (b.base === null && b.notice === null && !b.loading) void load(b);
+    if (b.loading || b.base !== null) return;
+    // Retried only for a refusal that something may have changed. Binary content, a file past
+    // the size limit and a file that is gone are facts about the file, and asking again would
+    // be a loop that never ends and never learns.
+    if (b.notice === null || (b.notice.kind === 'unavailable' && reachable !== null)) void load(b);
   });
 
   /// Follow the buffer when the **host** changes it: a tab switch, a reload, an appended window.
@@ -171,16 +184,24 @@
   let appliedRevision = -1;
   $effect(() => {
     const b = buffer;
+    // **Read before the guard.** Svelte tracks an effect's dependencies per run, so an effect
+    // that returns early has subscribed only to what it read before returning. Monaco loads
+    // asynchronously, so the first run always returned at the guard below — which meant this
+    // never subscribed to `revision` at all. The buffer would hold the host's content, at a
+    // revision two ahead, while the editor showed the old text, and neither of them was wrong.
+    const revision = b?.revision ?? -1;
+    const text = b?.text ?? '';
+    const editable = b?.editable ?? false;
     if (!editor || !monaco || !b) return;
-    if (b.revision !== appliedRevision) {
-      appliedRevision = b.revision;
-      if (editor.getValue() !== b.text) {
+    if (revision !== appliedRevision) {
+      appliedRevision = revision;
+      if (editor.getValue() !== text) {
         applying = true;
-        editor.setValue(b.text);
+        editor.setValue(text);
         applying = false;
       }
     }
-    editor.updateOptions({ readOnly: !b.editable });
+    editor.updateOptions({ readOnly: !editable });
     if (path) {
       const model = editor.getModel();
       if (model) monaco.editor.setModelLanguage(model, languageFor(path));

@@ -257,3 +257,46 @@ them.
 Note that the sibling test `the_anti_starvation_bound_releases_a_yielding_writer` **passes**
 against that same mutation, and should: with the gate disabled a bulk writer never parks, so it
 is trivially released. It guards the bound, not the gate. Two tests, two properties.
+
+## Writing a file (F006)
+
+`workspace/writeFile` is the first method that changes the developer's filesystem with their
+full rights. Everything below exists because of that sentence.
+
+### The order is the design
+
+Size, then containment, then the base comparison, then the write, then a digest taken **from
+disk**. Each step is there to make the next one safe to attempt:
+
+1. **Bounded first.** Content above `MAX_WRITE_BYTES` is refused before anything is resolved, so
+   an absurd write costs no filesystem work at all.
+2. **Contained second, reusing F003's resolver.** The same `ResolvedPath` the read path uses,
+   not a second implementation: two containment checks are two things to keep correct, and the
+   one that is wrong is always the one nobody looked at. It canonicalises, which is what makes a
+   symlink pointing out of the root a refusal rather than an escape — a lexical check sees no
+   `..` in `link.rs` and lets it through.
+3. **Compared third, and before the file is opened for writing.** Opening for writing truncates;
+   a conflict discovered after that has already destroyed the thing it was protecting.
+4. **Written fourth**, to a temporary file in the destination's **own directory**, `sync_all`,
+   then renamed over. The directory matters: `rename` is atomic within a filesystem and fails
+   across one, so a temporary file in `/tmp` turns an atomic replace into a copy — losing
+   atomicity exactly when the destination is on a different mount, which is the case nobody
+   tests. The mode is carried over, or a saved script silently stops being executable.
+5. **Digested fifth, by reading the file back.** The returned `sha256` describes what is *on
+   disk*, never what was sent. A mount that translates line endings is enough to part them, and
+   a client that adopted the request's digest would hold a base describing bytes that are not
+   there — so its next save would be refused for a conflict nobody caused.
+
+### What is not logged
+
+The content, ever. A file being edited may hold a credential, and a conflict is exactly the
+moment somebody wants detail in a log. Conflicts record the path and the two digests; successful
+writes record nothing at all, because the stderr classification buffer is 8 KiB and a log line
+per save would push the startup diagnostics out of it.
+
+### The client checks too, and that is not redundancy
+
+The client refuses a frame it cannot encode and bounds the same content independently. Principle
+VI: a client-side check protects against bugs in our own interface, and the engine's protects
+against a stale or hostile one. Neither substitutes for the other, and the engine's limit is
+deliberately not reachable through a conforming client — it guards the other kind.

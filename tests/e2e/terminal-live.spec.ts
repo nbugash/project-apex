@@ -10,9 +10,18 @@
 // is the same binary speaking the same protocol over the same transport, with a pipe where the
 // network would be -- so what this proves about the joined path holds for the remote one, minus
 // the network itself, which F001's own suite covers against its mock.
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { waitForShell } from './helpers';
 
-const ROOT = process.cwd();
+// A scratch directory, not the checkout.
+//
+// This was `process.cwd()`, which registers the whole repository as a workspace — `target/`,
+// `node_modules/` and all. The terminal needs a directory to run `echo` in; it does not need
+// this one. Its **own** directory, not the editor suite's: two spec files registering the same
+// path, where one of them deletes and recreates it, is a shared fixture pretending to be an
+// isolated one.
+const ROOT = join(process.cwd(), '.e2e-terminal');
 
 /// Everything the terminal is showing, row by row.
 async function screen(): Promise<string> {
@@ -38,6 +47,7 @@ async function screen(): Promise<string> {
 }
 
 async function openWorkspace(): Promise<void> {
+  mkdirSync(ROOT, { recursive: true });
   await browser.execute(
     async (root: string) => {
       const fn = (

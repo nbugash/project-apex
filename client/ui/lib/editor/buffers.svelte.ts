@@ -201,6 +201,12 @@ export class BufferSet {
 
 export const buffers = new BufferSet();
 
+// Readable by the end-to-end suite, on the same terms as the editor and the terminal: only
+// under automation, because what a developer has open is their business.
+if (typeof window !== 'undefined' && (import.meta.env.DEV || navigator.webdriver === true)) {
+  (window as unknown as Record<string, unknown>).__apexBuffers = buffers;
+}
+
 /// Read a file into a buffer, deciding whole against windowed by what the host says.
 ///
 /// Whole is attempted **first**, not decided from a size fetched beforehand. A size-first design

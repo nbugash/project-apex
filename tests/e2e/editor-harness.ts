@@ -5,7 +5,7 @@
 // testable: a colleague's edit is a `writeFileSync` from outside the application, which is
 // exactly what a colleague's edit is.
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /// A directory of our own, never the repository. A test that writes into the checkout can
@@ -22,8 +22,12 @@ export function resetWorkspace(files: Record<string, string | Buffer>): void {
 
 /// What is on disk now, which is the only thing that settles whether a write landed.
 export function onDisk(name: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('node:fs').readFileSync(join(WORKSPACE, name), 'utf8');
+  return readFileSync(join(WORKSPACE, name), 'utf8');
+}
+
+/// Remove a file from outside the application, as a colleague would.
+export function removeOnHost(name: string): void {
+  rmSync(join(WORKSPACE, name), { force: true });
 }
 
 /// Edit a file from outside the application, as a colleague would.
@@ -107,6 +111,16 @@ export async function requestsIssued(): Promise<Array<{ method: string; path: st
       (window as unknown as { __apexEditorSent?: Array<{ method: string; path: string }> })
         .__apexEditorSent ?? [],
   )) as Array<{ method: string; path: string }>;
+}
+
+/// Every response the editor received, with its size, so "no frame exceeded the cap" is a
+/// measurement of what arrived rather than of what was asked for.
+export async function responsesReceived(): Promise<Array<{ path: string; bytes: number }>> {
+  return (await browser.execute(
+    () =>
+      (window as unknown as { __apexEditorReceived?: Array<{ path: string; bytes: number }> })
+        .__apexEditorReceived ?? [],
+  )) as Array<{ path: string; bytes: number }>;
 }
 
 export async function clickSave(): Promise<void> {

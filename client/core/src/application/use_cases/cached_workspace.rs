@@ -205,6 +205,14 @@ impl WorkspaceProvider for CachedWorkspace {
         content: &[u8],
         base: &Sha256,
     ) -> ProviderResult<Sha256> {
+        // Consulted before the write, for the reason the read path consults it: an outage must
+        // cost nothing and produce no timeout. A save that waits for the transport to give up is
+        // a developer watching a spinner for a failure that was knowable before it started, and
+        // FR-013 keeps the buffer dirty for the whole of that wait.
+        if !self.connected() {
+            return Err(ProviderError::Offline);
+        }
+
         // The cache is touched only **after** the engine confirms, and never before. A refused
         // write that had already updated the projection would show the developer their own
         // rejected attempt the next time they opened the file offline, as though it had landed.

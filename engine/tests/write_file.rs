@@ -288,3 +288,41 @@ fn the_returned_hash_describes_the_disk_and_not_the_request() {
         "returning the request's hash would hand the client a base for bytes that are not there"
     );
 }
+
+#[test]
+fn a_write_that_cannot_be_completed_leaves_the_previous_content_whole() {
+    // FR-015, and the test that makes "atomic" mean something. An in-place write opens the
+    // destination and truncates it *before* it knows whether the write will succeed, so a
+    // failure at any point after that leaves the developer with a file that is shorter than it
+    // was -- or empty. Renaming a fully written temporary file over it cannot do that: either
+    // the old inode is still there or the new one is, and never a partial version of either.
+    //
+    // The failure is induced by taking away write permission on the **directory**, which is what
+    // both creating the temporary file and renaming over the target need. An in-place write
+    // needs neither -- it opens an existing file, which the file's own mode still permits -- so
+    // this is also the condition that tells the two implementations apart.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: root ignores the permission this test depends on");
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+
+    let t = Tree::new();
+    t.put("precious.rs", b"the original content\n");
+    let base = t.hash_of("precious.rs");
+
+    let locked = fs::Permissions::from_mode(0o555);
+    fs::set_permissions(&t.root, locked).unwrap();
+    let outcome = t.write("precious.rs", "replacement", &base);
+    fs::set_permissions(&t.root, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        outcome.is_err(),
+        "the write could not have succeeded: the directory allows neither a new file nor a rename"
+    );
+    assert_eq!(
+        t.bytes("precious.rs"),
+        b"the original content\n",
+        "a write that could not be completed must leave the file exactly as it was"
+    );
+}

@@ -492,3 +492,25 @@ describe('a tab restored from a previous session', () => {
     expect(b.base).toBe(null);
   });
 });
+
+describe('autosave with nothing to save', () => {
+  it('issues no write for a buffer nobody has changed', async () => {
+    // FR-007c. The debounce fires on a timer, and a timer that fires after a manual save — or
+    // while the developer is reading rather than typing — must not produce a write. A write
+    // with no changes is not harmless: it is a new mtime, an event for every watcher, and a
+    // chance of a conflict for a save nobody asked for.
+    let writes = 0;
+    use(
+      stubSink({
+        async write() {
+          writes += 1;
+          return { kind: 'written', sha256: 'b'.repeat(64) };
+        },
+      }).sink,
+    );
+    const b = filled('untouched', 'a'.repeat(64));
+    expect(b.dirty).toBe(false);
+    expect(await save(b)).toBe(null);
+    expect(writes).toBe(0);
+  });
+});

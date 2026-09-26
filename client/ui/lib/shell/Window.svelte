@@ -16,6 +16,8 @@
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
   import EditorPanel from '../editor/EditorPanel.svelte';
+  import { onMount } from 'svelte';
+  import { startFileEvents } from '../editor/events';
   import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
@@ -103,6 +105,11 @@
   // then needs the tree to read it. The seeding command it pairs with is
   // `#[cfg(debug_assertions)]`, so on a release build there is nothing to drive this with.
   (window as unknown as Record<string, unknown>).__APEX_TREE__ = workspaceTree;
+
+  // A file changing on the host concerns whichever buffer holds it (FR-024). Started once for
+  // the window, not per editor: the panel is unmounted whenever its tab is not focused, and a
+  // background tab is exactly the case FR-024 is about.
+  onMount(() => startFileEvents());
 
   /// Bind the tree to whichever workspace is open, and fetch its root.
   ///
