@@ -143,7 +143,7 @@ with the second focused and showing its content.
 - [X] T061 Per `specs/008-editor-integration/quickstart.md` §5, run the seven mutation checks in [quickstart.md](./quickstart.md) §5 and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 4 and 5 matter most: they are each other's failure mode, and a fix for one that breaks the other looks correct from either side
 - [X] T062 Per `specs/008-editor-integration/quickstart.md` §4, audit the seven negative checks in [quickstart.md](./quickstart.md) §4 and confirm, for each, that the fixture condition which lets it fail is actually present — a real symlink rather than a string with `..` in it, a watcher actually running, a file genuinely changed on disk
 - [X] T063 In `specs/008-editor-integration/quickstart.md`, record the six measurements from [quickstart.md](./quickstart.md) §3 in its *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
-- [ ] T064 Verify `make gate` is green, then update `specs/features-map.md`, then mark F006 complete in `specs/features-map.md` and run `feature_map.py verify`
+- [X] T064 Verify `make gate` is green, then update `specs/features-map.md`, then mark F006 complete in `specs/features-map.md` and run `feature_map.py verify`
 
 ---
 
