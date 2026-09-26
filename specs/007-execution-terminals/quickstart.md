@@ -559,6 +559,7 @@ Where a check could not be made on this host it is recorded as a **skip**, never
 |---|---|
 | `make test` | **PASS** — 815 Rust assertions across 113 test binaries, plus the webview unit suite |
 | `make gate` | **PASS** — clippy `-D warnings`, `fmt --check`, `lint`, `lint:ds`, build, every suite, 105 end-to-end assertions across 32 spec files plus the live-engine suite's 1, all green with a screenshot filed per test, and `gate:fidelity` reporting three surfaces within 2 px of the prototype at 0.191% of pixels differing |
+| The ended state (FR-029, SC-016) | **PASS** — three channels before colour: presence, shape, and the code or signal name. `terminal-a11y.spec.ts` asserts each without reading a hue, and a colour-only badge fails three of its six cases |
 | The terminal, used (added 2026-09-26) | **PASS** — a real `/bin/bash -l` started from the panel's own control, answering `ls -la` and `echo $((6*7))` with `42`. See *The control path* below |
 | `make no-network` (SC-017) | **SKIP** — unprivileged user namespaces are unavailable here, so the `unshare -rn` mode did not run. The source-scan fallback reported no network literal, which is recorded as a skip and not a pass: it greps for addresses, F010 adds none, and it would report success whatever the code did |
 | The eight printed measurements (§8) | **PASS** — all eight below, each p99 over ≥100 samples, printed |

@@ -59,6 +59,46 @@ Principle I: where this feature renders something the prototype does not specify
 differently, the departure is recorded here with who approved it and when. A deviation without a
 name against it has not been approved; it has only been made.
 
+### How a task's ending is shown (approved by Nico Bugash, 2026-09-26)
+
+**Prototype state it was given against:** `mockups/Apex IDE (standalone).html`, the `isTerminal`
+branch. It renders its transcript as `[text, colour]` pairs — `BUILD SUCCESSFUL in 6s` in the `OK`
+hue — and has **no ended state at all**: nothing in it distinguishes a finished task from a
+running one, because everything in it is a drawing.
+
+**Non-colour channel chosen:** the dock's Terminal tab carries a badge, which is the prototype's
+own affordance (the `1` on its Problems tab) rather than an invented one. Three channels, and
+colour is the last of them:
+
+1. **Presence** — no badge while the task runs.
+2. **Shape** — a check for a clean exit, a cross otherwise. Different glyphs, so the difference
+   survives a greyscale rendering.
+3. **Text** — the exit code, or the signal's name shortened (`TERM`). This is what carries *how*
+   it ended, which FR-029 requires and which a mark alone cannot say.
+
+Colour is the design system's `--vk-term-ansi-green` and `--vk-term-ansi-red`, and it is never
+the only difference. The button's accessible name says the whole thing in words — `Terminal —
+exited 7`, `Terminal — killed by SIGTERM` — because a badge reading `1` is not a sentence.
+
+**Two rules that are easy to get wrong and are tested for:** a signal is never turned into
+`128 + n`, because the protocol spent a field keeping a signalled death apart from an exit status
+and rebuilding the shell's convention on top would throw that away; and a frame carrying both
+fields or neither is reported as unknown rather than as `Exited 0`, because a green tick meaning
+"it worked" is the one thing a developer has to be able to trust.
+
+**Nothing is written into the terminal's buffer.** A native terminal reports an exit in its chrome
+and never injects into the scrollback — bytes in the buffer are what the process wrote, and
+anything else makes a copied transcript a lie. It would also land at whatever cursor position the
+process left: mid-line, inside an alternate screen buffer, or inside a half-written escape
+sequence.
+
+**Tokens used:** `--vk-dock-tab-badge-fs`, `--vk-term-ansi-green`, `--vk-term-ansi-red`, all
+extracted. Nothing invented.
+
+**Absorbed by the design system?** Recommended. The prototype needs an ended state for its dock
+tabs, and this is a reasonable shape for it; until it has one, this is a deviation rather than an
+implementation of the design.
+
 ### Terminal type size and leading (approved by Nico Bugash, 2026-09-26)
 
 **Prototype state it was given against:** `mockups/Apex IDE (standalone).html`, the `isTerminal`

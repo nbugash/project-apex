@@ -16,8 +16,13 @@
     active: string;
     open: boolean;
     onselect: (id: string) => void;
+    /// What to show on the Terminal tab, or null while nothing has ended.
+    ///
+    /// The prototype's tabs carry a badge already -- the `1` on Problems -- so this uses the
+    /// design's own affordance rather than adding one.
+    terminalBadge?: { badge: string; spoken: string; ok: boolean } | null;
   }
-  let { active, open, onselect }: Props = $props();
+  let { active, open, onselect, terminalBadge = null }: Props = $props();
 
   /// The prototype's list. `available` is this application's addition: the prototype has no
   /// notion of a feature that is not built yet, because everything in it is a drawing.
@@ -31,6 +36,16 @@
   /// Selected *and* open. The prototype highlights on both, so a closed dock shows no tab as
   /// current — which is right: nothing is being shown, so nothing is current.
   const isCurrent = (id: string) => open && active === id;
+
+  const badgeFor = (id: string) => (id === 'terminal' ? terminalBadge : null);
+
+  /// What a screen reader hears. The badge is text and survives greyscale, but `1` is not a
+  /// sentence, so the tab says the whole thing (FR-029).
+  function nameFor(tab: { id: string; label: string; available: boolean }): string {
+    const badge = badgeFor(tab.id);
+    if (badge) return `${tab.label} — ${badge.spoken}`;
+    return tab.available ? tab.label : `${tab.label} — not available yet`;
+  }
 </script>
 
 <div class="dock-tabs" role="tablist" aria-label="Dock">
@@ -44,8 +59,20 @@
       tabindex={tab.available ? 0 : -1}
       data-testid={`dock-tab-${tab.id}`}
       onclick={() => tab.available && onselect(tab.id)}
+      aria-label={nameFor(tab)}
+      title={nameFor(tab)}
     >
       <i class={tab.icon} aria-hidden="true"></i>{tab.label}
+      {#if badgeFor(tab.id)}
+        {@const badge = badgeFor(tab.id)!}
+        <!-- The mark and the text are both non-colour channels: a check against a cross is a
+             difference in shape, and `0` against `1` a difference in glyph. The hue is the third
+             channel and never the only one (FR-029). `aria-hidden` because the button's own
+             accessible name already says all of this in words. -->
+        <span class="badge" class:ok={badge.ok} class:bad={!badge.ok} aria-hidden="true">
+          <i class={badge.ok ? 'ph ph-check' : 'ph ph-x'}></i>{badge.badge}
+        </span>
+      {/if}
     </button>
   {/each}
 </div>
@@ -76,6 +103,22 @@
   }
   .tab i {
     font-size: var(--vk-dock-tab-icon-fs);
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--vk-dock-tab-gap) / 2);
+    font-size: var(--vk-dock-tab-badge-fs);
+  }
+  .badge i {
+    font-size: var(--vk-dock-tab-badge-fs);
+  }
+  /* The design system's own two hues, and the third channel rather than the only one. */
+  .badge.ok {
+    color: var(--vk-term-ansi-green);
+  }
+  .badge.bad {
+    color: var(--vk-term-ansi-red);
   }
   .tab.current {
     background: var(--color-neutral-900);

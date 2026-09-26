@@ -14,6 +14,7 @@
   import { installTerminalHarness } from '../terminal/harness';
   import { listenToEngine } from '../terminal/engine';
   import { revealTerminal } from '../terminal/start';
+  import { describeEnding } from '../terminal/ending';
   import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
@@ -123,6 +124,19 @@
     layout = { ...layout, [region]: { ...layout[region], visible } };
     void persist(() => ipc.layoutSetRegion(region, visible, layout[region].extent));
   }
+
+  /// How the terminal on screen ended, or null while it is running.
+  ///
+  /// Read from the panel the dock is showing rather than from the task set, because the tab
+  /// describes what is in front of the developer. A second task ending elsewhere is that task's
+  /// news, and overwriting the badge with it would tell them about a terminal they are not
+  /// looking at.
+  const terminalBadge = $derived.by(() => {
+    const id = terminals.active;
+    if (!id || !terminals.has(id)) return null;
+    const ending = terminals.panel(id).ending;
+    return ending ? describeEnding(ending) : null;
+  });
 
   /// Which dock tab is selected, or `''` for none.
   ///
@@ -241,7 +255,12 @@
       {/if}
       <!-- Below the dock, and outside the `visible` branch: the strip is how the dock is
            opened, so it cannot be inside the thing it opens. The prototype puts it here too. -->
-      <DockTabs active={dockTab} open={layout.output.visible} onselect={selectDockTab} />
+      <DockTabs
+        active={dockTab}
+        open={layout.output.visible}
+        onselect={selectDockTab}
+        {terminalBadge}
+      />
     </main>
   </div>
 
