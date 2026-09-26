@@ -243,7 +243,7 @@ here. Two properties that belong to the design rather than the model:
 | What goes wrong | What happens | Where it is seen |
 |---|---|---|
 | Base hash differs | Engine replies `-32004` without opening the file | A conflict notice with one action: discard and reload |
-| Path escapes the root | Engine replies `-32003` | A refusal naming the path |
+| Path escapes the root | Engine replies `-32002` | A refusal naming the path |
 | Content above the bound | Engine refuses before writing | A refusal naming the limit |
 | Write fails part-way | Rename never happens; previous content intact | A refusal; the buffer stays dirty |
 | Connection drops mid-save | No outcome arrives | `Unreachable`; explicitly not a conflict |

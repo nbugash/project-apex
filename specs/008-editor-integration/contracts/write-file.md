@@ -42,7 +42,7 @@ divergence and how counting spellings led to the wrong conclusion once.
    lose the property.
 
 3. **The path is canonicalised and contained, by the engine, independently.** The same
-   `resolve_request` the read methods use. A path escaping the workspace root is `-32003`,
+   `resolve_request` the read methods use. A path escaping the workspace root is `-32002`,
    including by symlink, because canonicalisation resolves links before the comparison
    (Principle VI).
 
@@ -66,7 +66,8 @@ divergence and how counting spellings led to the wrong conclusion once.
 | Code | When | §4.4 |
 |---|---|---|
 | `-32004` | `baseSha256` does not match current content | Write conflict |
-| `-32003` | Path escapes the workspace root | Path refused |
+| `-32002` | Path escapes the workspace root | Path refused |
+| `-32003` | The file does not exist | Not found |
 | `-32001` | Workspace not registered | |
 | `-32009` | Workspace root has vanished | |
 | `-32602` | Malformed params | Invalid params |

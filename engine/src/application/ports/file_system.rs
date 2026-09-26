@@ -34,4 +34,17 @@ pub trait FileSystem: Send + Sync {
     /// Read at most `len` bytes from `offset`. A range past the end yields no bytes rather than
     /// an error, which is what lets a caller scroll toward the end without a size race.
     fn read_range(&self, p: &Path, offset: u64, len: u64) -> io::Result<Vec<u8>>;
+
+    /// Every byte of the file.
+    ///
+    /// Separate from `read_range` rather than expressed as one: a write compares the whole
+    /// file's hash, and assembling it from ranges would race a file being changed between them.
+    fn read_all(&self, p: &Path) -> io::Result<Vec<u8>>;
+
+    /// Replace the file's contents so that a failure leaves the previous contents intact.
+    ///
+    /// A capability, not a technique: the port says what must be true afterwards, and the
+    /// adapter chooses how. What must be true is that no reader ever observes a partial write --
+    /// truncating and writing in place fails that at every point after the truncate.
+    fn write_atomic(&self, p: &Path, bytes: &[u8]) -> io::Result<()>;
 }

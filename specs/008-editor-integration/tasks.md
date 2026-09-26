@@ -66,15 +66,15 @@ host, save again, observe the refusal and the host's content unchanged.
 
 ### The protocol and the engine
 
-- [ ] T021 [P] [US2] `protocol/src/wire.rs`: `WriteFileParams` (`workspace_id`, `relative_path`, `content`, `base_sha256`) and `WriteFileResult` (`sha256`), matching contracts/write-file.md and §4.8
-- [ ] T022 [P] [US2] `protocol/src/lib.rs`: `codes::WRITE_CONFLICT = -32004`, which §4.4 specifies and the crate does not yet define
-- [ ] T023 [P] [US2] `protocol/tests/write_wire.rs`: the params and result round-trip, and the wire spelling is snake_case per §4.8 and A-WIRECASE. A hand-written frame, so the test would catch a rename the structs made silently
-- [ ] T024 [US2] `engine/tests/write_file.rs`: the integration suite, written before the implementation. A matching base writes and returns the hash of what landed; a mismatched base returns `-32004` **and the file on disk is byte-for-byte what it was**; a path escaping the root returns `-32003`; content above the bound is refused. Assert on the filesystem, not only on the reply — a test that reads the reply passes for an engine that refuses and writes anyway
-- [ ] T025 [US2] `engine/src/application/ports/file_system.rs`: add `write_atomic` and `hash_file` to the port. Capabilities, not technologies (Principle VIII)
-- [ ] T026 [US2] `engine/src/adapters/outbound/std_fs.rs`: implement `write_atomic` as write-to-temp-then-rename, with the temp file in the **destination's own directory** so the rename cannot cross a filesystem and degrade into a copy, and the target's mode preserved so saving does not strip an executable bit (contracts/write-file.md, guarantees 2 and 6)
-- [ ] T027 [US2] `engine/src/application/use_cases/workspace.rs`: `write_file` — resolve and contain the path through the existing `resolve_request`, bound the content, hash the current file, compare with `base_sha256`, refuse `Conflict` on mismatch **before opening anything for writing**, otherwise write and return the hash of what was written
-- [ ] T028 [US2] `engine/src/adapters/inbound/rpc.rs`: the `workspace/writeFile` dispatch arm, replacing the `METHOD_NOT_FOUND` the test at line 902 currently asserts — and update that test, which exists precisely to say the method is not implemented yet
-- [ ] T029 [US2] In `engine/src/application/use_cases/workspace.rs`, log each write and each conflict with the path and both hashes. A conflict a developer disputes afterwards is a support call with nothing to look at
+- [X] T021 [P] [US2] `protocol/src/wire.rs`: `WriteFileParams` (`workspace_id`, `relative_path`, `content`, `base_sha256`) and `WriteFileResult` (`sha256`), matching contracts/write-file.md and §4.8
+- [X] T022 [P] [US2] `protocol/src/lib.rs`: `codes::WRITE_CONFLICT = -32004`, which §4.4 specifies and the crate does not yet define
+- [X] T023 [P] [US2] `protocol/tests/write_wire.rs`: the params and result round-trip, and the wire spelling is snake_case per §4.8 and A-WIRECASE. A hand-written frame, so the test would catch a rename the structs made silently
+- [X] T024 [US2] `engine/tests/write_file.rs`: the integration suite, written before the implementation. A matching base writes and returns the hash of what landed; a mismatched base returns `-32004` **and the file on disk is byte-for-byte what it was**; a path escaping the root returns `-32003`; content above the bound is refused. Assert on the filesystem, not only on the reply — a test that reads the reply passes for an engine that refuses and writes anyway
+- [X] T025 [US2] `engine/src/application/ports/file_system.rs`: add `write_atomic` and `hash_file` to the port. Capabilities, not technologies (Principle VIII)
+- [X] T026 [US2] `engine/src/adapters/outbound/std_fs.rs`: implement `write_atomic` as write-to-temp-then-rename, with the temp file in the **destination's own directory** so the rename cannot cross a filesystem and degrade into a copy, and the target's mode preserved so saving does not strip an executable bit (contracts/write-file.md, guarantees 2 and 6)
+- [X] T027 [US2] `engine/src/application/use_cases/workspace.rs`: `write_file` — resolve and contain the path through the existing `resolve_request`, bound the content, hash the current file, compare with `base_sha256`, refuse `Conflict` on mismatch **before opening anything for writing**, otherwise write and return the hash of what was written
+- [X] T028 [US2] `engine/src/adapters/inbound/rpc.rs`: the `workspace/writeFile` dispatch arm, replacing the `METHOD_NOT_FOUND` the test at line 902 currently asserts — and update that test, which exists precisely to say the method is not implemented yet
+- [X] T029 [US2] In `engine/src/application/use_cases/workspace.rs`, log each write and each conflict with the path and both hashes. A conflict a developer disputes afterwards is a support call with nothing to look at
 
 ### The client
 

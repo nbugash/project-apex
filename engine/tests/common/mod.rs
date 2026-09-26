@@ -169,4 +169,38 @@ impl FileSystem for FakeFileSystem {
             None => Err(io::Error::new(io::ErrorKind::NotFound, "no such path")),
         }
     }
+
+    fn read_all(&self, p: &Path) -> io::Result<Vec<u8>> {
+        self.guard()?;
+        match self.nodes.lock().unwrap().get(&Self::norm(p)) {
+            Some(Some(c)) => Ok(c.clone()),
+            Some(None) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "is a directory",
+            )),
+            None => Err(io::Error::new(io::ErrorKind::NotFound, "no such path")),
+        }
+    }
+
+    /// Replaces the contents in one step, which is all the fake can meaningfully promise.
+    ///
+    /// **The atomicity this method's name claims is not testable here**, and that is why
+    /// `engine/tests/write_file.rs` runs against a real temp tree instead: whether a failure
+    /// leaves the previous bytes intact, whether a rename crosses a filesystem, and whether the
+    /// mode survives are all properties of the filesystem rather than of this map.
+    fn write_atomic(&self, p: &Path, bytes: &[u8]) -> io::Result<()> {
+        self.guard()?;
+        let key = Self::norm(p);
+        let mut nodes = self.nodes.lock().unwrap();
+        match nodes.get(&key) {
+            Some(None) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "is a directory",
+            )),
+            _ => {
+                nodes.insert(key, Some(bytes.to_vec()));
+                Ok(())
+            }
+        }
+    }
 }
