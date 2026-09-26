@@ -67,7 +67,7 @@ an intention to do it.
   - [ ] Security group and provisioning verification
   - [ ] Wake progress and cost state surfaced in the UI
 - [ ] **F006 editor-integration** (depends: F000, F003)
-  - Spec: not yet specified
+  - Spec: specs/008-editor-integration
   - [ ] Monaco text model bound to cached content with local echo
   - [ ] Write path with baseSha256 conflict rejection
   - [ ] Large-file chunked loading on scroll
