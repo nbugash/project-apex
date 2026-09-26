@@ -95,7 +95,7 @@ an intention to do it.
   - [ ] Zig: zls
   - [ ] Elixir: Lexical with mix project resolution
 - [ ] **F011 git-integration** [P] (depends: F000, F003)
-  - Spec: not yet specified
+  - Spec: specs/009-git-integration
   - [ ] Engine-side porcelain v2 parsing and watch triggers
   - [ ] git_status projection with transactional merge
   - [ ] File tree colouring from cached status
