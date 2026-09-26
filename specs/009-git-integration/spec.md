@@ -57,7 +57,23 @@ Where this document fixes something the system specification leaves open, it say
 - Q: A path can be staged **and** modified again; §4.8 carries one status per path. Which? → A:
   The unstaged state wins, and `CONFLICT` overrides everything. A staged file with further edits
   still holds work that is recorded nowhere, and `MODIFIED` says so; reporting `STAGED` would
-  tell the developer their work is safe when part of it is not. Revisited in clarify.
+  tell the developer their work is safe when part of it is not. **Confirmed in clarify.**
+- Q: Where should git state live for a file the client has no tree row for? → A: Keyed by
+  workspace and path, independent of the file tree. F003 built the store for this feature keyed
+  on the tree's own identity for a file, and nothing has ever written to it — so changing that
+  costs nothing now and costs a data migration later. Keying on the tree would silently drop
+  every untracked file in a folder nobody has expanded, and every deleted file, whose tree entry
+  the indexer removes: two of the five states this feature exists to show.
+- Q: What happens when a repository reports more changed files than one message can carry? → A:
+  Paged, on the same terms as `workspace/readDirectory` — `limit` capped at 1000, `nextCursor`
+  when more remain. Recorded as A-GITPAGE, which also amends §4.8, because a notification cannot
+  be answered and so carries only the first page. A cap with a "partial" marker was the other
+  candidate and was rejected: it makes the tree quietly wrong about an arbitrary subset with no
+  way for the developer to tell which.
+- Q: How should a burst of rapid index changes be handled? → A: Coalesced, reported once the
+  burst settles, following A-COALESCE which F004 already established for file events. A rebase or
+  `git add -A` rewrites the index many times per second, and a full-repository status computation
+  per write presents as the client hanging during precisely the operations that touch most files.
 
 ## Design deviations
 
@@ -191,7 +207,13 @@ bulk invalidation rather than one event per file, and that stale git state is go
   whatever workspace now holds that identity.
 - **Two status updates arrive close together.** The later one wins, and the projection never
   shows a mixture of the two.
-- **An enormous status.** A repository where most files differ must not make the tree unusable.
+- **An enormous status.** A repository where most files differ reports its status across several
+  pages rather than in one message that cannot be framed at all.
+- **A pull that breaks partway through a paged status.** The pages gathered so far are discarded
+  rather than committed, because a fragment applied as a whole replacement would mark the rest of
+  the repository clean.
+- **A burst of index changes** — a rebase, an interactive rebase, `git add -A` on a large tree.
+  One status report once the burst settles, not one per index write.
 - **The connection drops.** The last known git state remains visible on the same terms as other
   cached content, rather than silently clearing and implying everything is unchanged.
 
@@ -211,6 +233,10 @@ bulk invalidation rather than one event per file, and that stale git state is go
 - **FR-005**: The two watched paths MUST NOT be reported as workspace file events (A-GITWATCH).
 - **FR-006**: The engine MUST report the current branch and the set of changed paths, both when
   status changes and on demand for a client that has just connected (§4.8).
+- **FR-006a**: Reported status MUST be paged, so that a repository with more changed paths than
+  one message can carry is reported completely rather than refused (§4.8, A-GITPAGE).
+- **FR-006b**: A burst of index changes MUST produce one status report once the burst settles,
+  not one per change (A-COALESCE).
 - **FR-007**: Each reported path MUST carry exactly one state, drawn from the set §4.8 defines.
 - **FR-008**: Where a path has both a staged and an unstaged state, the unstaged state MUST be
   the one reported; a conflicted state MUST override every other.
@@ -219,6 +245,12 @@ bulk invalidation rather than one event per file, and that stale git state is go
 
 - **FR-009**: A status update MUST be applied as a single transaction: the workspace's previous
   status is replaced by the new set, with no observable state in which both or neither is present.
+- **FR-009a**: Where an update spans several pages, the replacement MUST commit only once the
+  final page has arrived. A partially pulled update MUST be discarded rather than applied, so
+  that the tree never shows the first page's files as the only ones changed (A-GITPAGE).
+- **FR-009b**: Git state MUST be held per workspace and path, independent of whether the file
+  tree has a row for that path, so that an untracked file in an unexpanded folder and a deleted
+  file both carry state.
 - **FR-010**: Applying a status update MUST NOT alter which files are cached, nor any cached
   content (§5.3).
 - **FR-011**: A status update for one workspace MUST NOT alter another workspace's status.
@@ -265,8 +297,10 @@ bulk invalidation rather than one event per file, and that stale git state is go
 
 ### Key Entities
 
-- **Git status entry**: one changed path and its single state, belonging to one workspace. The
-  set of entries for a workspace is replaced wholesale, never merged row by row.
+- **Git status entry**: one changed path and its single state, belonging to one workspace and
+  identified by that pair — not by any file the tree happens to know about, because an untracked
+  or deleted path may have no tree row at all. The set of entries for a workspace is replaced
+  wholesale, never merged row by row, and the replacement spans every page of an update.
 - **Branch**: what the repository currently has checked out, or the absence of one.
 - **File diff**: for one file, the line coordinates that were added, deleted and modified. Holds
   no file content.
@@ -292,6 +326,13 @@ bulk invalidation rather than one event per file, and that stale git state is go
 - **SC-010**: No file content is transmitted for diff purposes — measured as **zero** bytes of
   file content in diff responses.
 - **SC-011**: After a branch switch, **zero** files remain marked from the previous branch.
+- **SC-012**: A repository reporting 5,000 changed paths shows **all 5,000** marked, with no path
+  missing because it fell beyond the first page.
+- **SC-013**: A burst of 50 index changes within one second produces **one** status report, not 50.
+- **SC-014**: An untracked file in a folder the developer has never expanded is marked correctly
+  the first time that folder is opened — the state was held without a tree row existing for it.
+- **SC-015**: A paged status whose pull is interrupted leaves the previously applied status
+  intact: **zero** files change state as a result of the failed pull.
 
 ## Assumptions
 
@@ -305,8 +346,12 @@ bulk invalidation rather than one event per file, and that stale git state is go
 - **`git` on the host is current enough to report status in a machine-readable form.** Where it
   is not, FR-028 applies and the workspace degrades as a non-repository. The precise mechanism is
   a planning decision, not a requirement.
-- **The cache schema already holds git status.** F003 created the table and index deliberately
-  for this feature, so no migration is required — which is why no requirement here mentions one.
+- **The client already has somewhere to keep git status, but not in the shape this feature
+  needs.** F003 built it deliberately for this feature and keyed it on the tree's identity for a
+  file. Clarify established that it must be keyed by workspace and path instead, because
+  untracked and deleted paths have no tree entry. Nothing has ever written to it, so this costs a
+  schema edit and no data migration — but it *is* a change, and an earlier draft of this
+  assumption claimed none was needed, which was wrong.
 - **Two seconds is the right freshness bound** for SC-001 and SC-002. Nobody waits on a git
   status the way they wait on a keystroke; the bound exists so "eventually" cannot pass as a
   result, not because two seconds is perceptible.

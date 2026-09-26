@@ -46,5 +46,19 @@ product's contract rather than an implementation choice, and the house style set
 the same way; a reader who cannot follow `git/getFileDiff` can still follow every requirement,
 because each states the observable behaviour and cites the section only as provenance.
 
-Counts at the time of writing: 29 functional requirements, 11 success criteria, 4 user stories,
-11 edge cases, zero `[NEEDS CLARIFICATION]` markers.
+Counts after specify: 29 functional requirements, 11 success criteria, 4 user stories, 11 edge
+cases, zero `[NEEDS CLARIFICATION]` markers.
+
+## Re-validation after clarify (2026-09-26)
+
+16/16 → 16/16. One item regressed during integration and was fixed rather than re-ticked:
+
+- **No implementation details / no implementation leak** — recording the storage decision had
+  pulled the internal table and column names into Clarifications and Assumptions. Protocol names
+  from §4.8 stay, because the wire is this product's contract; internal storage schema is an
+  implementation choice and now reads as "the tree's identity for a file" instead. The one
+  remaining occurrence is inside the verbatim `Input` field, which quotes the feature map entry
+  and should not be edited to suit a checklist.
+
+Counts after clarify: 33 functional requirements, 15 success criteria, 4 user stories, 13 edge
+cases, zero `[NEEDS CLARIFICATION]` markers.

@@ -749,13 +749,23 @@ request would leave it diverged. Principle VI puts the check on both sides of th
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `git/getStatus` | request | `workspaceId` | `{currentBranch, changes[]}` |
-| `git/onStatusUpdate` | notification | `workspaceId`, `currentBranch`, `changes[]` | — |
+| `git/getStatus` | request | `workspaceId`, `cursor?`, `limit?` | `{currentBranch, changes[], nextCursor?}` |
+| `git/onStatusUpdate` | notification | `workspaceId`, `currentBranch`, `changes[]`, `nextCursor?` | — |
 | `git/getFileDiff` | request | `workspaceId`, `relativePath` | `{added[], deleted[], modified[]}` |
 
 `changes[]` entries are `{path, status}` where status is `MODIFIED`, `UNTRACKED`, `STAGED`,
 `DELETED` or `CONFLICT`. Diffs return line coordinates only, never file contents — the client
 already holds the text and only needs gutter decorations.
+
+Status is **paged**, on the same terms as `workspace/readDirectory`: `limit` defaults to and is
+capped at 1000 entries, and `nextCursor` is present exactly when more remain. A repository in the
+middle of a rebase, or one just reformatted wholesale, reports far more changed paths than §4.1's
+frame cap can carry, and an unbounded list would be refused at the codec — leaving the tree
+showing nothing changed, which is the most misleading answer available.
+
+`git/onStatusUpdate` is a notification and cannot be answered, so it carries the branch and the
+**first** page. When it sets `nextCursor`, the remaining pages are pulled with `git/getStatus`.
+See A-GITPAGE for what this means for applying an update, which is not what it first appears.
 
 ---
 
@@ -1261,7 +1271,9 @@ The engine watches `.git/HEAD` and `.git/index`. On change it runs
 branch and a list of changed paths.
 
 The client applies the update in one transaction: clear the workspace's `git_status` rows,
-insert the new set, done.
+insert the new set, done. Status is paged (§4.8), so "the new set" means every page: the
+replacement commits when the page with no `nextCursor` arrives, and a pull that breaks partway
+discards what it had rather than committing a fragment. See A-GITPAGE.
 
 It does **not** touch `is_cached`. See §5.3 — the file the user just saved is `MODIFIED`, and
 invalidating on that signal destroys the cache for exactly the files in active use.
@@ -3588,3 +3600,42 @@ discover the precedent by accident.
 
 **Reversal condition.** A host where two extra inotify watches per workspace are material, or a
 git version that offers a cheaper change signal than the files themselves.
+
+---
+
+## A-GITPAGE — Paged status, and what that does to the "single transaction" (2026-09-26)
+
+**Decision.** Git status is paged like `workspace/readDirectory`: `limit` defaults to and is
+capped at 1000 entries, `nextCursor` is present exactly when more remain, and
+`git/onStatusUpdate` carries the first page because a notification cannot be answered. The
+client replaces a workspace's status **when the last page has arrived**, not when the first has.
+
+**Rationale.** §4.1 caps a frame at 1 MiB. A repository mid-rebase, or one just reformatted
+wholesale, reports far more changed paths than that. An unbounded list is refused at the codec,
+so the failure is not a truncated tree but *no status at all* — the tree shows nothing changed,
+which is the most misleading answer the feature could give. Paging was chosen over a cap with a
+"partial" flag because a partial status is a tree that is quietly wrong about specific files,
+and there is no way for the developer to tell which.
+
+**What it does to the transaction, which is the part worth recording.** §12.2 says the client
+applies an update in one transaction: clear the workspace's rows, insert the new set. Read
+naively against a paged source, that becomes "clear, insert page one" — and the tree then shows
+the first thousand changed files and swears the rest are clean. The correct reading is that the
+transaction spans the *whole* update: pages accumulate, and the replacement commits once the
+page with no `nextCursor` has arrived. Until then the previously applied status stays visible,
+because a stale complete picture is more useful than a fresh fragment.
+
+A page that never arrives — the connection drops mid-pull — must therefore discard the partial
+accumulation rather than commit it.
+
+**Alternatives rejected.** A cap with a "partial" marker: one round trip and bounded memory, and
+it makes the tree silently wrong for an arbitrary subset. Unbounded: no decision and no code, and
+it fails totally and silently at exactly the moment a developer most wants to see what changed.
+
+**Why this binds beyond F011.** Any later feature that carries a list whose length is a property
+of the user's data rather than of the protocol inherits the same three-way choice, and the same
+trap: the transaction boundary is the whole sequence, not the first message. F013's search
+results are the next instance.
+
+**Reversal condition.** A frame cap large enough that the biggest plausible status fits, or a
+transport that streams a single logical response across frames.
