@@ -68,6 +68,33 @@ time. `open` builds the terminal's DOM and is not meant to run twice; calling it
 rows unrendered — a correct buffer with nothing drawn, which any assertion on `buffer.active`
 passes against.
 
+## What the terminal is drawn in
+
+Two things decide this, and they have to agree.
+
+**xterm measures its own grid.** It sizes cells from its `fontFamily` and `fontSize` options,
+which default to Courier at 15px. Leaving them unset while the stylesheet paints something else
+lays every cell out to one font's metrics and draws it in another's -- and the resulting `cols`
+is what the shell is told, so a prompt that right-aligns anything lands in the wrong place. The
+options are read from the element's computed style, so the stylesheet is the single place the
+terminal's type is decided.
+
+**A terminal's font is not a UI font.** It renders whatever a program emits, and a developer's
+shell prompt is routinely built from Powerline separators and Nerd Font icons in the private use
+area (U+E000-U+F8FF) that no text font carries. The panel's stack therefore starts with
+`--vk-mono-primary` -- the prototype's own family, so everything the design covers is unchanged --
+and then names the patched families developers install.
+
+`--vk-mono-primary` exists because `--vk-mono` is the prototype's whole stack and ends in the
+`monospace` generic. A generic matches every character, so nothing appended after it is ever
+reached; the terminal could not extend the token, only rebuild it, and rebuilding would mean
+restating a value the prototype owns.
+
+Where none of the fallbacks is installed the characters are blank boxes, and that is a font that
+is absent rather than a defect. Shipping a patched font is a design-system decision with a real
+size cost; a user-settable terminal font is what VS Code and IntelliJ provide, and needs a
+settings surface that does not exist yet.
+
 ## Reaching the engine
 
 Until F010 the application never sent a request to an engine for any feature. The transport was

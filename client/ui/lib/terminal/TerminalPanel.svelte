@@ -99,7 +99,35 @@
     flex: 1;
     overflow: auto;
     padding: var(--vk-term-pad);
-    font-family: var(--vk-mono);
+    /* The design system's monospace family first, so everything the prototype could show looks
+       exactly as it does there -- then a tail of families for the characters it never had to
+       consider.
+
+       A terminal is not a label. It renders whatever a program emits, and a developer's shell
+       prompt is routinely built from Powerline separators and Nerd Font icons in the private use
+       area (U+E000-U+F8FF), which no text font carries. `--vk-mono` cannot be extended because it
+       ends in the `monospace` generic, and a generic matches every character: nothing after it is
+       ever reached. Hence `--vk-mono-primary`.
+
+       Every name below is a fallback for a codepoint that would otherwise be a blank box, so this
+       cannot change how anything the prototype specifies is drawn. The families are the ones
+       developers actually install; none is shipped, and where none is present the result is what
+       it is today. Shipping a patched font is a design-system decision with a real size cost, and
+       a user-settable terminal font is what VS Code and IntelliJ both provide -- neither belongs
+       to this feature. */
+    font-family:
+      var(--vk-mono-primary),
+      'Symbols Nerd Font Mono',
+      'Symbols Nerd Font',
+      'JetBrainsMono Nerd Font',
+      'MesloLGS NF',
+      'Hack Nerd Font',
+      'FiraCode Nerd Font',
+      'DejaVu Sans Mono',
+      'Noto Color Emoji',
+      ui-monospace,
+      Menlo,
+      monospace;
     font-size: var(--vk-term-fs);
     line-height: var(--vk-term-line-height);
     min-block-size: 0;

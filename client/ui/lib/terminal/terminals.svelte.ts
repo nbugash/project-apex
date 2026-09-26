@@ -200,11 +200,23 @@ export class TerminalPanel {
       import('@xterm/addon-fit'),
       import('@xterm/xterm/css/xterm.css'),
     ]);
+    // **Measured and drawn must be the same font.** xterm sizes its cell grid from its own
+    // `fontFamily` and `fontSize` options, which default to Courier at 15px -- while the
+    // stylesheet draws the design system's monospace at `--vk-term-fs`. Left unset, every cell
+    // is laid out to one font's metrics and painted in another's, which is a terminal that
+    // renders and does not line up.
+    //
+    // Read from the element rather than restated here, so the stylesheet stays the single place
+    // the terminal's type is decided and xterm agrees with it by construction. The same reason
+    // `theme` is resolved by the caller (see `palette.ts`).
+    const measured = getComputedStyle(el);
     const terminal = new XTerm({
       scrollback: SCROLLBACK_LINES,
       cursorStyle: 'block',
       cursorBlink: true,
       theme,
+      fontFamily: measured.fontFamily || undefined,
+      fontSize: Number.parseFloat(measured.fontSize) || undefined,
       cols: this.cols,
       rows: this.rows,
     });

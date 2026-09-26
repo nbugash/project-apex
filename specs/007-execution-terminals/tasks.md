@@ -448,3 +448,20 @@ developer's whole profile, and whatever that does — for somebody who never ope
 - [X] T148 Wire the strip into `client/ui/lib/shell/Window.svelte`: the tab is outside the `visible` branch, because it is how the dock is opened and cannot live inside the thing it opens. No tab is selected on launch — the dock defaults to visible (F000's layout), so a tab selected up front would mean a login shell running before anyone asked
 - [X] T149 Keep a terminal alive across a detach in `client/ui/lib/terminal/terminals.svelte.ts`. `detach` disposed the instance, so closing the dock discarded everything printed before the close — while the method's own comment claimed hiding and showing a tab was lossless. It was never noticed because until the dock had tabs there was no way to hide a terminal and show it again. **Detach takes the element out of the document and keeps the instance; `dispose` ends it.** Both halves matter: leaving the element in place stacks one terminal's DOM on the next, since the host is shared by every panel the dock shows
 - [X] T150 `tests/e2e/terminal-live.spec.ts` gains the reuse case: one `run` for two reveals, and the scrollback still present. It asserts on the **rendered rows** as well as the buffer, because the first fix re-opened the terminal into the new element and left the rows undrawn — a correct buffer with nothing painted, which an assertion on `buffer.active` passes against. That is the same miss as the absent stylesheet earlier in this feature
+
+---
+
+## Phase 10: What the terminal is drawn in (added 2026-09-26)
+
+Reported as "not supporting certain characters". It was two things, and only one of them was a
+defect in this application.
+
+The bytes were never wrong. Feeding a precomposed `é`, an `e` plus combining acute, box-drawing,
+a Powerline separator (U+E0B0), a Nerd Font icon (U+F09B), CJK and an emoji through the real path
+and comparing codepoints in and out gives an exact match, so nothing on the way corrupts
+anything.
+
+- [X] T151 Set xterm's own `fontFamily` and `fontSize` in `client/ui/lib/terminal/terminals.svelte.ts`. They were unset, so xterm sized its cell grid with its defaults -- Courier at 15px -- while the stylesheet painted the design system's monospace at 12.5px: every cell laid out to one font's metrics and drawn in another's. The visible symptom is not a missing character but a terminal that does not line up, **and a `cols` count the shell is then told**, so a prompt that right-aligns anything lands in the wrong place. Read from the element rather than restated, so the stylesheet stays the single place the terminal's type is decided and xterm follows it by construction
+- [X] T152 Derive `--vk-mono-primary` in `scripts/ds-sync.mjs`. `--vk-mono` is the prototype's whole stack and ends in the `monospace` generic; a generic matches every character, so nothing appended after it is ever reached. Splitting the first family out lets the terminal build a stack **around** the prototype's choice instead of restating it, which is what keeps the value the prototype's
+- [X] T153 Give the terminal its own font stack in `client/ui/lib/terminal/TerminalPanel.svelte`: the design system's family first, then the Nerd Font families developers actually install, for the private-use-area codepoints a shell prompt is built from and no text font carries. Every added name is a fallback for a character that would otherwise be a blank box, so nothing the prototype specifies can be drawn differently -- confirmed by the fidelity gate at 0.000%. **Not fixed here, and deliberately:** shipping a patched font is a design-system decision with a real size cost, and a user-settable terminal font is what VS Code and IntelliJ both provide. Neither belongs to this feature
+- [X] T154 `tests/e2e/terminal-tokens.spec.ts` asserts xterm's options equal the element's computed font, as an equality between the two rather than against a value -- the claim is that they agree, whatever the stylesheet says. Mutation-checked: restoring xterm's defaults fails it

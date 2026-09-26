@@ -97,6 +97,43 @@ describe('the panel paints the design system (SC-016)', () => {
     }
   });
 
+  it('measures its cell grid in the font it draws in', async () => {
+    // xterm sizes the grid from its **own** `fontFamily` and `fontSize` options, which default
+    // to Courier at 15px. Left unset -- as they were -- every cell is laid out to one font's
+    // metrics and painted in another's. The visible result is not a missing character but a
+    // terminal that does not line up, and a `cols` count the shell is then told, so a prompt
+    // that right-aligns anything lands in the wrong place.
+    //
+    // Asserted as an equality between the two rather than against a value, because the point is
+    // that they agree: the stylesheet decides the type and xterm has to follow it, whatever it
+    // says.
+    const measured = await browser.execute(() => {
+      const term = (
+        window as unknown as { __apexTerminal?: { options: { fontFamily?: string; fontSize?: number } } }
+      ).__apexTerminal;
+      const el = document.querySelector('.xterm') as HTMLElement | null;
+      if (!term || !el) return null;
+      const css = getComputedStyle(el);
+      return {
+        optionFamily: term.options.fontFamily ?? '',
+        optionSize: term.options.fontSize ?? 0,
+        cssFamily: css.fontFamily,
+        cssSize: Number.parseFloat(css.fontSize),
+      };
+    });
+    expect(measured).not.toBeNull();
+    expect(measured!.optionFamily).toBe(measured!.cssFamily);
+    expect(measured!.optionSize).toBe(measured!.cssSize);
+    // And the family it draws in begins with the one the prototype chose, so everything the
+    // design covers is unaffected by the fallbacks appended for everything it does not.
+    //
+    // Quotes are normalised on both sides: the prototype writes `'JetBrains Mono'` and the
+    // browser reports `"JetBrains Mono"`, which is the same family and a different string.
+    const unquote = (s: string) => s.replace(/['"]/g, '').trim();
+    const first = unquote(measured!.cssFamily.split(',')[0] ?? '');
+    expect(first).toBe(unquote(token('--vk-mono-primary')));
+  });
+
   it('paints no colour the design system did not give it', async () => {
     // The whole of SC-016 in one assertion: every value in the theme must be one the design
     // system holds. A slot with a value from nowhere is a colour somebody invented.
