@@ -58,9 +58,20 @@ impl PersistSession {
         self.mutate(|s| s.layout.set_region(id, visible, extent).map_err(Into::into))
     }
 
-    pub fn open_document(&self, display_name: &str) -> Result<DocumentId, ShellError> {
+    /// Turn autosave on or off (FR-007b).
+    ///
+    /// Persisted rather than held in the webview, so the answer survives a restart. Off is the
+    /// state a profile starts in, and it stays off until somebody says otherwise.
+    pub fn set_autosave(&self, on: bool) -> Result<(), ShellError> {
+        self.mutate(|s| {
+            s.autosave = on;
+            Ok(())
+        })
+    }
+
+    pub fn open_document(&self, display_name: &str, path: &str) -> Result<DocumentId, ShellError> {
         let mut guard = self.state.lock().expect("session state lock");
-        let id = guard.open_document(display_name)?;
+        let id = guard.open_document(display_name, path)?;
         let copy = guard.clone();
         drop(guard);
         self.schedule(copy);

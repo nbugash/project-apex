@@ -22,6 +22,7 @@ pub fn run() {
             cmd::shell_ready,
             cmd::session_get,
             cmd::layout_set_region,
+            cmd::session_set_autosave,
             cmd::documents_open,
             cmd::documents_close,
             cmd::documents_reorder,

@@ -159,6 +159,7 @@ export async function openDocuments(count: number): Promise<void> {
       // @ts-expect-error __TAURI_INTERNALS__ is the v2 invoke bridge
       await window.__TAURI_INTERNALS__.invoke('documents_open', {
         displayName: `untitled-${i + 1}`,
+        path: `/untitled-${i + 1}`,
       });
     }
   }, count);

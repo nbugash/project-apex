@@ -3,7 +3,7 @@ import { inOrder, neighbour } from '../../client/ui/lib/tabs/ordering';
 import type { OpenDocumentReference } from '../../client/ui/lib/ipc';
 
 const docs = (n: number): OpenDocumentReference[] =>
-  Array.from({ length: n }, (_, i) => ({ id: `d${i}`, display_name: `doc${i}`, order: i }));
+  Array.from({ length: n }, (_, i) => ({ id: `d${i}`, display_name: `doc${i}`, path: `doc${i}`, order: i }));
 
 describe('tab ordering', () => {
   it('renders in declared order regardless of array order', () => {

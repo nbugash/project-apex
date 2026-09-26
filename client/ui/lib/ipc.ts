@@ -35,6 +35,9 @@ export interface Layout {
 }
 
 export interface OpenDocumentReference {
+  /// Which file the tab is of. Separate from `display_name`, which is what a person reads: a
+  /// tab that remembered only its name could be restored as a label with nothing behind it.
+  path: string;
   id: string;
   display_name: string;
   order: number;
@@ -47,6 +50,9 @@ export interface WorkspaceReference {
 
 /** Deliberately carries no schema_version: storage format is not the interface's concern. */
 export interface SessionSnapshot {
+  /// Whether saves happen without being asked (FR-007b). Off for a profile that never set it:
+  /// autosave writes the developer's file on its own, and never having answered is not consent.
+  autosave: boolean;
   workspace: WorkspaceReference | null;
   window: WindowGeometry;
   layout: Layout;
@@ -72,14 +78,17 @@ export interface ToolWindowState {
 export const shellReady = (): Promise<void> => invoke('shell_ready');
 export const sessionGet = (): Promise<SessionSnapshot> => invoke('session_get');
 
+export const sessionSetAutosave = (on: boolean): Promise<void> =>
+  invoke('session_set_autosave', { on });
+
 export const layoutSetRegion = (
   region: RegionId,
   visible: boolean,
   extent: number,
 ): Promise<void> => invoke('layout_set_region', { region, visible, extent });
 
-export const documentsOpen = (displayName: string): Promise<string> =>
-  invoke('documents_open', { displayName });
+export const documentsOpen = (displayName: string, path: string): Promise<string> =>
+  invoke('documents_open', { displayName, path });
 export const documentsClose = (id: string): Promise<void> => invoke('documents_close', { id });
 export const documentsReorder = (id: string, toOrder: number): Promise<void> =>
   invoke('documents_reorder', { id, toOrder });

@@ -21,27 +21,43 @@
    * its dirty flag live in `buffers.svelte.ts` for that reason.
    */
   import { onMount } from 'svelte';
-  import { buffers, type Buffer } from './buffers.svelte';
+  import {
+    AUTOSAVE_DEBOUNCE_MS,
+    buffers,
+    load,
+    loadRest,
+    loadWindow,
+    save,
+    type Buffer,
+  } from './buffers.svelte';
+  import { describeOutcome } from './ending';
   import { editorTheme } from './palette';
-  import { editorSink } from './sink';
+  import { sessionSetAutosave } from '../ipc';
 
   interface Props {
     /// The path whose buffer to show, or null for no document.
     path?: string | null;
+    /// Whether saves happen without being asked. Owned by the session store, passed in, so this
+    /// component never becomes a second place the preference lives (FR-007b).
+    autosave?: boolean;
   }
-  let { path = null }: Props = $props();
+  let { path = null, autosave = false }: Props = $props();
 
   let host = $state<HTMLDivElement | null>(null);
   let editor: import('monaco-editor/editor/editor.api').editor.IStandaloneCodeEditor | null =
     null;
   let monaco: typeof import('monaco-editor/editor/editor.api') | null = null;
   let applying = false;
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const THEME = 'apex';
 
   /// The buffer on screen, or null. Derived so the component follows the model rather than
   /// holding a copy of it.
-  const buffer = $derived<Buffer | null>(path ? (buffers.get(path) ?? null) : null);
+  const buffer = $derived<Buffer | null>(path ? (buffers.ensure(path) ?? null) : null);
+
+  /// What the last save produced, in the developer's terms.
+  const ending = $derived(buffer?.ending ? describeOutcome(buffer.ending) : null);
 
   /// Monaco's own id for a language, from the file's suffix. Only the languages whose
   /// contributions are imported below are worth naming; anything else renders as plain text,
@@ -102,12 +118,34 @@
           applying = true;
           editor.setValue(buffer.text);
           applying = false;
+          return;
         }
+        scheduleAutosave();
       });
+
+      // Fetch the next window when the viewport reaches the end of what is held (FR-017).
+      // Anchored on the bottom of the scrollable area rather than on a line number: the buffer
+      // grows by appending windows, so what is loaded is always a prefix, and "near the end of
+      // the text" is exactly "near the end of what has been fetched".
+      editor.onDidScrollChange(() => {
+        if (!editor || !buffer || buffer.editable) return;
+        const layout = editor.getLayoutInfo();
+        const remaining = editor.getScrollHeight() - editor.getScrollTop() - layout.height;
+        if (remaining > layout.height) return;
+        const missing = buffer.loaded.missingFor(0, buffer.loaded.total);
+        if (missing.length === 0) return;
+        void loadWindow(buffer, buffer.loaded.total, missing[0]![0]);
+      });
+
       publishForAutomation(editor);
+      // A restored tab has a buffer before it has content (FR-021). Fetched when the tab is
+      // focused, which is when this component mounts, rather than for every tab at launch --
+      // restoring ten tabs would otherwise be ten reads of files nobody is looking at.
+      if (buffer && buffer.base === null && buffer.notice === null) void load(buffer);
     })();
     return () => {
       disposed = true;
+      if (autosaveTimer !== null) clearTimeout(autosaveTimer);
       editor?.dispose();
       editor = null;
     };
@@ -138,25 +176,111 @@
     (window as unknown as Record<string, unknown>).__apexEditor = e;
   }
 
-  /// Save what is in the buffer. Explicit, because every save is a chance for a conflict and a
-  /// deliberate save keeps refusals meaningful (spec.md, *Clarifications*).
-  export async function save(): Promise<void> {
-    const b = buffer;
-    if (!b || !b.base || b.saving || !b.dirty) return;
-    b.saving = true;
-    try {
-      const outcome = await editorSink().write(b.path, b.text, b.base);
-      if (outcome.kind === 'written') b.adopt(outcome.sha256);
-      else b.failed(outcome);
-    } finally {
-      b.saving = false;
+  /// Save what is in the buffer. Explicit by default, because every save is a chance for a
+  /// conflict and a deliberate save keeps refusals meaningful (spec.md, *Clarifications*).
+  export async function saveNow(): Promise<void> {
+    if (buffer) await save(buffer);
+  }
+
+  /// Start the clock again on every keystroke (FR-007c).
+  ///
+  /// Restarted rather than left running, so a write happens once after typing stops instead of
+  /// every two seconds while it continues. `save` itself declines a buffer with no changes, so
+  /// a timer that fires after a manual save costs nothing.
+  function scheduleAutosave(): void {
+    if (!autosave) return;
+    if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      if (buffer) void save(buffer);
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  async function toggleAutosave(event: Event): Promise<void> {
+    const on = (event.currentTarget as HTMLInputElement).checked;
+    await sessionSetAutosave(on);
+    if (!on && autosaveTimer !== null) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
     }
+  }
+
+  /// Discard local changes and take the host's content. The one escape from a conflict this
+  /// feature offers (FR-012a); there is deliberately no counterpart that overwrites (FR-012b).
+  async function discardAndReload(): Promise<void> {
+    if (!buffer) return;
+    buffer.dirty = false;
+    await load(buffer);
   }
 </script>
 
-<div class="editor" bind:this={host} data-testid="editor" data-path={path ?? ''}></div>
+<div class="panel">
+  {#if buffer?.notice}
+    <p class="notice" role="status" data-testid="editor-notice" data-kind={buffer.notice.kind}>
+      {#if buffer.notice.kind === 'binary'}
+        This file is not text, so it cannot be shown here. Viewing it is F017's job.
+      {:else if buffer.notice.kind === 'tooLarge'}
+        This file is {Math.round(buffer.notice.total / (1024 * 1024))} MB, past the {Math.round(
+          buffer.notice.limit / (1024 * 1024),
+        )} MB this editor opens.
+      {:else if buffer.notice.kind === 'missing'}
+        This file no longer exists on the host. Your changes are still here.
+      {:else if buffer.notice.kind === 'diverged'}
+        This file changed on the host while you were editing it. Your changes are still here.
+      {:else}
+        This file could not be read: {buffer.notice.message}
+      {/if}
+    </p>
+  {/if}
+
+  {#if ending}
+    <p class="notice" role="status" data-testid="editor-ending" data-tone={ending.tone}>
+      <span>{ending.title}</span>
+      {#if ending.detail}<span class="detail">{ending.detail}</span>{/if}
+      {#if ending.offersReload}
+        <button type="button" onclick={discardAndReload} data-testid="editor-discard">
+          Discard my changes and load the host's version
+        </button>
+      {/if}
+    </p>
+  {/if}
+
+  {#if buffer && !buffer.editable && buffer.base !== null}
+    <p class="notice" role="status" data-testid="editor-partial">
+      <span>Only part of this file is loaded, so it cannot be edited yet.</span>
+      <button type="button" onclick={() => buffer && loadRest(buffer)} data-testid="editor-load-rest">
+        Load the rest
+      </button>
+    </p>
+  {/if}
+
+  <div class="editor" bind:this={host} data-testid="editor" data-path={path ?? ''}></div>
+
+  <div class="bar">
+    <label>
+      <input
+        type="checkbox"
+        checked={autosave}
+        onchange={toggleAutosave}
+        data-testid="editor-autosave"
+      />
+      Save automatically
+    </label>
+    <button type="button" onclick={saveNow} data-testid="editor-save" disabled={!buffer?.dirty}>
+      Save
+    </button>
+  </div>
+</div>
 
 <style>
+  .panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-block-size: 0;
+    min-inline-size: 0;
+  }
+
   .editor {
     flex: 1;
     min-block-size: 0;
@@ -164,5 +288,39 @@
     font-family: var(--vk-mono);
     font-size: var(--vk-code);
     line-height: var(--vk-line);
+  }
+
+  /* Spacing and colour from the design system's own tokens rather than from numbers measured
+     off an adjacent surface. `lint:ds` refused an earlier version of this block that invented
+     `--vk-gap-*` names, which is the check working: FR-022 wants a gap resolved with the
+     designer, not improvised from whatever was nearby. Nothing here is a new value -- the
+     status bar's own size token is reused for text that sits at the same level of the
+     hierarchy. */
+  .notice {
+    display: flex;
+    gap: var(--space-2);
+    align-items: baseline;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: var(--space-2);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: var(--vk-status-size);
+  }
+
+  .detail {
+    color: var(--color-neutral-300);
+  }
+
+  .bar {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+    justify-content: flex-end;
+    padding: var(--space-1) var(--space-2);
+    border-block-start: 1px solid var(--color-divider);
+    font-family: var(--font-body);
+    font-size: var(--vk-status-size);
   }
 </style>

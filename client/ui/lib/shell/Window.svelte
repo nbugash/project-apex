@@ -100,6 +100,9 @@
   // `#[cfg(debug_assertions)]`, so on a release build there is nothing to drive this with.
   (window as unknown as Record<string, unknown>).__APEX_TREE__ = workspaceTree;
   let focusedId = $state(session.focused_document_id);
+  /// The session's autosave preference, held here because the editor is remounted per tab and a
+  /// component that read it itself would re-read it on every tab switch (FR-007b).
+  let autosave = $state(session.autosave);
   let persistenceFailed = $state(false);
 
   async function persist(fn: () => Promise<unknown>) {
@@ -175,6 +178,7 @@
     const s = await ipc.sessionGet();
     documents = s.documents;
     focusedId = s.focused_document_id;
+    autosave = s.autosave;
   }
 
   let activeDocument = $derived(documents.find((d) => d.id === focusedId) ?? null);
@@ -204,7 +208,11 @@
            destination whose panel said it was "not available" contradicted the rail, which
            shows it as open and active. -->
       {#if activeDestination?.id === 'project'}
-        <FileTree tree={workspaceTree} />
+        <FileTree
+          tree={workspaceTree}
+          selected={activeDocument?.path ?? ''}
+          onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
+        />
       {:else}
         <p class="pending">No workspace open.</p>
       {/if}
@@ -234,7 +242,7 @@
                model swapped underneath it. The buffer behind it is not remounted: it lives in
                `buffers.svelte.ts` precisely so a tab switch cannot lose it. -->
           {#key activeDocument.id}
-            <EditorPanel path={activeDocument.display_name} />
+            <EditorPanel path={activeDocument.path} {autosave} />
           {/key}
         {:else}
           <p class="empty">No document open</p>

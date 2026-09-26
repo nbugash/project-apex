@@ -16,12 +16,19 @@
     tree,
     selected = '',
     onWatchedChanged,
+    onOpenFile,
   }: {
     tree: WorkspaceTree;
     selected?: string;
     /// Called with every expanded folder whenever expansion changes. The parent combines it
     /// with the open tabs and asks the engine; this component does not know the protocol.
     onWatchedChanged?: (expanded: string[]) => void;
+    /// Called when a **file** row is activated. Directories expand; files open.
+    ///
+    /// Until F006 a file row called `toggle`, which does nothing for a file, so clicking a file
+    /// in the tree did nothing at all. The component had no way to say a file had been chosen,
+    /// and nothing was listening for it.
+    onOpenFile?: (path: string, name: string) => void;
   } = $props();
 
   /// The prototype's glyph per kind. Directories carry a caret so expansion state is legible
@@ -31,18 +38,22 @@
     return expanded ? 'ph-folder-open' : 'ph-folder';
   }
 
-  function onKey(event: KeyboardEvent, path: string) {
+  function onKey(event: KeyboardEvent, node: { path: string; name: string; kind: string }) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      void toggle(path);
+      void activate(node);
     }
   }
 
   /// Expanding starts watching and collapsing releases it; freshness follows attention
   /// (FR-003a). The set is declared after the toggle rather than computed from it, so the
   /// request is a statement of what is open rather than a diff somebody has to keep correct.
-  async function toggle(path: string) {
-    await tree.toggle(path);
+  async function activate(node: { path: string; name: string; kind: string }) {
+    if (node.kind !== 'directory') {
+      onOpenFile?.(node.path, node.name);
+      return;
+    }
+    await tree.toggle(node.path);
     onWatchedChanged?.(tree.expandedFolders());
   }
 </script>
@@ -86,8 +97,8 @@
       data-testid="tree-row"
       data-path={node.path}
       style={`padding-left: calc(var(--vk-tree-pad-left) + var(--vk-tree-indent) * ${node.depth})`}
-      onclick={() => toggle(node.path)}
-      onkeydown={(e) => onKey(e, node.path)}
+      onclick={() => activate(node)}
+      onkeydown={(e) => onKey(e, node)}
     >
       <i class="ph {glyph(node.kind, node.expanded)}" aria-hidden="true"></i>
       <span class="name">{node.name}</span>

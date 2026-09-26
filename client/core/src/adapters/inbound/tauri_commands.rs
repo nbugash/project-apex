@@ -60,12 +60,19 @@ pub fn layout_set_region(
         .set_region(parse_region(&region)?, visible, extent)
 }
 
+/// Turn autosave on or off (FR-007b, FR-042).
+#[tauri::command]
+pub fn session_set_autosave(on: bool, shell: State<'_, Shell>) -> Result<(), ShellError> {
+    shell.persist.set_autosave(on)
+}
+
 #[tauri::command]
 pub fn documents_open(
     display_name: String,
+    path: String,
     shell: State<'_, Shell>,
 ) -> Result<DocumentId, ShellError> {
-    shell.persist.open_document(&display_name)
+    shell.persist.open_document(&display_name, &path)
 }
 
 #[tauri::command]

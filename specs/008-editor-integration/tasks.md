@@ -49,10 +49,10 @@ requests are issued.
 - [ ] T013 [US1] `tests/e2e/editor-local-echo.spec.ts`: open a cached file, type 100 characters, assert all 100 are in the buffer and **zero** requests were issued as a result (SC-001, SC-002). Written first — this is the feature's central claim and §1.4's absolute rule
 - [X] T014 [US1] In `client/ui/lib/editor/sink.ts`, extend the automation recorder to count requests to log every call, so SC-001 counts what actually left rather than what a component believed it sent. Following `terminal/sink.ts`'s `recordForAutomation`
 - [X] T015 [US1] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read` returning content and hash for a path, reading through the existing `CachedWorkspace` so a cached file costs no request
-- [ ] T016 [US1] `client/ui/lib/editor/buffers.svelte.ts`: `open(path)` populating a buffer from the sink, setting `base` from the returned hash, and returning the existing buffer when one is already open for that path
-- [ ] T017 [US1] `EditorPanel.svelte`: bind Monaco's model to the buffer so an edit updates `text` and sets `dirty`, and confirm by construction that the edit path calls no sink method
-- [ ] T018 [US1] In `client/ui/lib/editor/buffers.svelte.ts`, decline content that is not valid UTF-8 (FR-006), with a message naming F017 as what will render it. The check belongs where the bytes arrive, not in the component
-- [ ] T019 [US1] Decline a file above the maximum opened as text (plan.md, *Fixed Quantities*), naming the limit. A window that stops responding is worse than a refusal
+- [X] T016 [US1] `client/ui/lib/editor/buffers.svelte.ts`: `open(path)` populating a buffer from the sink, setting `base` from the returned hash, and returning the existing buffer when one is already open for that path
+- [X] T017 [US1] `EditorPanel.svelte`: bind Monaco's model to the buffer so an edit updates `text` and sets `dirty`, and confirm by construction that the edit path calls no sink method
+- [X] T018 [US1] In `client/ui/lib/editor/buffers.svelte.ts`, decline content that is not valid UTF-8 (FR-006), with a message naming F017 as what will render it. The check belongs where the bytes arrive, not in the component
+- [X] T019 [US1] Decline a file above the maximum opened as text (plan.md, *Fixed Quantities*), naming the limit. A window that stops responding is worse than a refusal
 - [ ] T020 [US1] `tests/e2e/editor-open.spec.ts`: US1's remaining acceptance scenarios — an uncached file is fetched once; a binary file is declined; the buffer survives the connection dropping and typing continues (FR-003); **syntax highlighting is still applied while disconnected** (FR-005), because it is local by design and a requirement satisfied only by accident is one a later change removes unnoticed; and **every character typed while disconnected is still present when the connection returns** (SC-009)
 
 ---
@@ -86,21 +86,21 @@ host, save again, observe the refusal and the host's content unchanged.
 
 ### The surface
 
-- [ ] T035 [P] [US2] `client/ui/lib/editor/ending.ts`: `describeOutcome` turning a `WriteOutcome` into what the developer is told. Pure, so the wording and the distinctions are testable without a window
-- [ ] T036 [P] [US2] `tests/unit/editor-ending.test.ts`: a conflict reads as somebody else's edit, an unreachable engine reads as the link, and neither is ever rendered as the other
-- [ ] T037 [US2] `EditorPanel.svelte`: an explicit save action (FR-007a) sending the buffer's text and base through the sink, and adopting the returned hash on success
-- [ ] T038 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, refuse a second save while one is in flight for the same buffer (FR-014), so two writes cannot race into a wrong base
-- [ ] T039 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, keep the buffer `dirty` until a write's response arrives, and leave it dirty **with its text untouched** on any outcome that is not `Written` (FR-013, FR-011). **The failing case is an optimistic clear**: marking the buffer saved when the request goes out satisfies every other task in this phase and tells the developer their work is on the host when it is in flight, or lost. Asserted in `tests/unit/editor-buffers.test.ts` against an outcome that never resolves and against `Unreachable`
-- [ ] T040 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, present a refused save with exactly one way out: discard the local changes and reload the host's content (FR-012a). Explicitly **not** an overwrite — re-reading the hash and writing over it destroys a colleague's work silently, which §11 names as the failure this product cannot afford (FR-012b)
-- [ ] T041 [US2] In `client/core/src/domain/session.rs` and `client/ui/lib/editor/buffers.svelte.ts`, autosave: a preference in the session store, **off** when unset, a debounce per plan.md's fixed quantities, and no write for a buffer with no changes (FR-007b, FR-007c). Raise the store's schema version with `serde(default)`, the migration A-STATE2 established
-- [ ] T042 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, one control to turn autosave on. Without it the mechanism is unreachable and therefore dead code, which this project does not ship (research.md, last entry)
+- [X] T035 [P] [US2] `client/ui/lib/editor/ending.ts`: `describeOutcome` turning a `WriteOutcome` into what the developer is told. Pure, so the wording and the distinctions are testable without a window
+- [X] T036 [P] [US2] `tests/unit/editor-ending.test.ts`: a conflict reads as somebody else's edit, an unreachable engine reads as the link, and neither is ever rendered as the other
+- [X] T037 [US2] `EditorPanel.svelte`: an explicit save action (FR-007a) sending the buffer's text and base through the sink, and adopting the returned hash on success
+- [X] T038 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, refuse a second save while one is in flight for the same buffer (FR-014), so two writes cannot race into a wrong base
+- [X] T039 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, keep the buffer `dirty` until a write's response arrives, and leave it dirty **with its text untouched** on any outcome that is not `Written` (FR-013, FR-011). **The failing case is an optimistic clear**: marking the buffer saved when the request goes out satisfies every other task in this phase and tells the developer their work is on the host when it is in flight, or lost. Asserted in `tests/unit/editor-buffers.test.ts` against an outcome that never resolves and against `Unreachable`
+- [X] T040 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, present a refused save with exactly one way out: discard the local changes and reload the host's content (FR-012a). Explicitly **not** an overwrite — re-reading the hash and writing over it destroys a colleague's work silently, which §11 names as the failure this product cannot afford (FR-012b)
+- [X] T041 [US2] In `client/core/src/domain/session.rs` and `client/ui/lib/editor/buffers.svelte.ts`, autosave: a preference in the session store, **off** when unset, a debounce per plan.md's fixed quantities, and no write for a buffer with no changes (FR-007b, FR-007c). Raise the store's schema version with `serde(default)`, the migration A-STATE2 established
+- [X] T042 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, one control to turn autosave on. Without it the mechanism is unreachable and therefore dead code, which this project does not ship (research.md, last entry)
 - [ ] T043 [US2] `tests/e2e/editor-save.spec.ts`: US2's acceptance scenarios end to end against a real engine — a clean save, a refused save with the host's bytes unchanged, a save with no connection, a reopen showing what was saved, **discarding after a conflict leaving the buffer holding exactly the host's bytes** (SC-015) — the one escape this feature offers, and until now the only one with no test — and autosave issuing zero writes when off (SC-003, SC-004, SC-014, SC-015)
 
 ### Not hearing our own write
 
-- [ ] T044 [US2] `client/ui/lib/editor/buffers.svelte.ts`: on a file event for an open file, ask for the file's current hash and compare with the buffer's base before treating it as a change (A-WRITEECHO, FR-024, FR-024a)
-- [ ] T045 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, a genuinely diverged file with a **clean** buffer may refresh; with a **dirty** buffer it must not be replaced and the unsaved changes must survive (FR-024b)
-- [ ] T046 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, report a deletion of an open file without discarding the buffer (FR-025)
+- [X] T044 [US2] `client/ui/lib/editor/buffers.svelte.ts`: on a file event for an open file, ask for the file's current hash and compare with the buffer's base before treating it as a change (A-WRITEECHO, FR-024, FR-024a)
+- [X] T045 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, a genuinely diverged file with a **clean** buffer may refresh; with a **dirty** buffer it must not be replaced and the unsaved changes must survive (FR-024b)
+- [X] T046 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, report a deletion of an open file without discarding the buffer (FR-025)
 - [ ] T047 [US2] `tests/e2e/editor-echo.spec.ts`: saving produces **zero** "changed on the host" notices (SC-012), and a change made by something other than the client **is** reported (SC-013). Both, because each is the other's failure mode — a fix for one that breaks the other looks correct from whichever side you are standing on
 
 ---
@@ -113,10 +113,10 @@ host, save again, observe the refusal and the host's content unchanged.
 the whole file has transferred, and that scrolling fetches more.
 
 - [X] T048 [P] [US3] `client/core/src/adapters/inbound/tauri_commands.rs`: `file_read_range`, passing a byte range through to the provider's existing ranged `read_file`
-- [ ] T049 [US3] `client/ui/lib/editor/buffers.svelte.ts`: open a file above the threshold by reading only the range covering the first viewport, recording it in `LoadedRegions`, and leaving the buffer `editable === false`
-- [ ] T050 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, fetch the next range when the viewport moves beyond what is loaded (FR-017), using T004's `missingFor` to ask for exactly what is absent
-- [ ] T051 [US3] In `client/ui/lib/editor/buffers.svelte.ts`, read a file at or below the threshold whole, in one request (FR-018) — a range request for a small file costs the same round trip and delivers less
-- [ ] T052 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, refuse edits to a partially loaded buffer, visibly, and load the remainder when the developer asks to edit. A whole-file write of a partial buffer would replace the unloaded regions with nothing (research.md, *Ranges*)
+- [X] T049 [US3] `client/ui/lib/editor/buffers.svelte.ts`: open a file above the threshold by reading only the range covering the first viewport, recording it in `LoadedRegions`, and leaving the buffer `editable === false`
+- [X] T050 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, fetch the next range when the viewport moves beyond what is loaded (FR-017), using T004's `missingFor` to ask for exactly what is absent
+- [X] T051 [US3] In `client/ui/lib/editor/buffers.svelte.ts`, read a file at or below the threshold whole, in one request (FR-018) — a range request for a small file costs the same round trip and delivers less
+- [X] T052 [US3] In `client/ui/lib/editor/EditorPanel.svelte`, refuse edits to a partially loaded buffer, visibly, and load the remainder when the developer asks to edit. A whole-file write of a partial buffer would replace the unloaded regions with nothing (research.md, *Ranges*)
 - [ ] T053 [US3] `client/core/tests/editor_first_paint.rs`: p99 over at least 100 samples from open to the first window being available, **printed** against 250 ms, with the chunk count and the largest response recorded (SC-005, SC-006, SC-007, A-NFR)
 - [ ] T054 [US3] `tests/e2e/editor-large-file.spec.ts`: US3's acceptance scenarios — the first window renders, scrolling fetches more, no response exceeds the frame limit, and a small file is read whole
 
@@ -129,8 +129,8 @@ the whole file has transferred, and that scrolling fetches more.
 **Independent test**: open three files, focus the second, relaunch, confirm three tabs in order
 with the second focused and showing its content.
 
-- [ ] T055 [US4] In `client/ui/lib/editor/EditorPanel.svelte`, restore a focused tab's content on relaunch, from the cache where valid and from the engine otherwise (FR-021). The tab list itself is already restored by F000; this gives it something behind it
-- [ ] T056 [US4] In `client/ui/lib/editor/buffers.svelte.ts`, report a restored tab whose file no longer exists rather than presenting an empty buffer (FR-022)
+- [X] T055 [US4] In `client/ui/lib/editor/EditorPanel.svelte`, restore a focused tab's content on relaunch, from the cache where valid and from the engine otherwise (FR-021). The tab list itself is already restored by F000; this gives it something behind it
+- [X] T056 [US4] In `client/ui/lib/editor/buffers.svelte.ts`, report a restored tab whose file no longer exists rather than presenting an empty buffer (FR-022)
 - [ ] T057 [US4] `tests/e2e/editor-session.spec.ts`: US4's acceptance scenarios — tab count, order and focus identical after a relaunch (SC-008), content shown when focused, and a vanished file reported
 
 ---
