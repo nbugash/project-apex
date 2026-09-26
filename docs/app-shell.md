@@ -35,6 +35,26 @@ capability rather than the technology — `SessionStore`, not `JsonFileStore`. I
 `ConnectionStatusSource`. Swap the binding in `composition.rs`; nothing else changes. That
 one-line swap is the property the port structure exists to buy.
 
+## Components are type-checked
+
+`npm run lint` runs `svelte-check` after ESLint, and `make gate` runs that.
+
+It is worth knowing why this was added rather than assumed. Nothing checked `.svelte` files at
+all: the build compiles components without type-checking them, `tsc` does not read them, and
+ESLint parses them without following types. A deleted `$props()` call therefore reached a running
+window as an empty `<body>` with every gate green. `svelte-check` catches it at lint time --
+`Cannot find name 'taskId'`.
+
+It needs `svelte.config.js`. That file exists only because `svelte-check` reads it; the build
+takes its configuration from `vite.config.ts`, which is why the absence went unnoticed.
+
+**The threshold is `error`, not `warning`**, and that is a deliberate compromise. Seven warnings
+remain, in components this feature did not touch. Four are false positives: `$state(session.layout)`
+seeds local state the component then owns, and Svelte cannot tell that from forgetting to make a
+prop reactive. Three are real accessibility warnings in F000 and F018 -- a `<nav>` carrying
+`role="tablist"`, and a splitter that takes focus and key events without an interactive role.
+Raising the threshold means fixing those first, which belongs to the features that own them.
+
 ## The dock, and when a terminal starts
 
 The bottom dock carries the prototype's four tabs — Terminal, Debug, Problems, Resources. Three

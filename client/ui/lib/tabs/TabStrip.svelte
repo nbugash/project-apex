@@ -79,8 +79,8 @@
         title={changedOnHost.includes(doc.id)
           ? 'Changed on the host since it was read'
           : undefined}
-        aria-description={changedOnHost.includes(doc.id)
-          ? 'Changed on the host since it was read'
+        aria-label={changedOnHost.includes(doc.id)
+          ? `${doc.display_name} — changed on the host since it was read`
           : undefined}
         role="tab"
         tabindex={doc.id === focusedId ? 0 : -1}

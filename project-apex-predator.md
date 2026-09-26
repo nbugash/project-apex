@@ -3402,7 +3402,7 @@ the method.
 3. **The frame crosses uninterpreted.** The interface already parses `data`; a second parser in
    the core would be a second place that has to agree with the wire. Two parsers obliged to stay
    in step is how a client and an engine come to disagree about a field name while each remains
-   correct alone — which this project has one live instance of already (see A-WIRECASE).
+   correct alone.
 
 **What this binds.** F007's diagnostics and F020's reconnection notices arrive by this route; so
 does F004's `workspace/onFileEvent`, whose receiving end has been waiting for it. None of them
@@ -3436,22 +3436,30 @@ already there.
 
 ---
 
-## A-WIRECASE — The wire is snake_case; the catalogue says otherwise (2026-09-26)
+## A-WIRECASE — The wire is snake_case, and that is the design (2026-09-26, corrected)
 
-**Unresolved, and recorded so it is not rediscovered as a surprise.** §4.8 and
-`contracts/task-methods.md` specify `workspaceId`, `taskId` and `exitCode`. The implementation
-emits and accepts `workspace_id`, `task_id` and `exit_code`: there is no
-`serde(rename_all = "camelCase")` anywhere in `protocol/src/wire.rs`. Confirmed by writing frames
-by hand against a running engine — snake_case is accepted and camelCase is not.
+**There is no divergence. This record exists so the next person does not rediscover one.**
 
-Nothing is currently broken, because the client and the engine share the same Rust structs and so
-agree with each other. What is wrong is that the documented protocol and the implemented one are
-different protocols, and the contract names §4.8 as its source of truth. Any client that does not
-share the crate — a third-party tool, a script, a future non-Rust component — would be written
-against the catalogue and would fail on every execution method.
+It was first written as a defect: §4.8's tables say `workspaceId`, `taskId` and `exitCode`, the
+wire carries `workspace_id`, `task_id` and `exit_code`, and `protocol/src/wire.rs` has no
+`rename_all = "camelCase"` anywhere. All of that is true, and none of it is a fault — §4.8 says so
+itself, three paragraphs below the tables:
 
-**Left open deliberately.** Choosing a direction is cheap; the change is not. It touches F001
-through F004 as well as F010, and either the catalogue moves to snake_case or the crate gains a
-rename and every recorded frame in four features' tests changes with it. That is a decision about
-four shipped features, not one, and it should be taken as such rather than inside whichever
-feature happened to notice.
+> Field names in the tables above are written camelCase for readability; the wire carries
+> snake_case.
+
+`contracts/task-methods.md` repeats it. F002 established the convention with `clientVersion` as
+`client_version`, and the spec states the mapping rather than leaving it to be inferred precisely
+so that a third party implementing from the tables alone does not send names the engine will
+reject.
+
+**How the mistake was made, since the method is the part worth avoiding:** by counting spellings
+across the document — 38 `workspaceId` against 14 `workspace_id` — and concluding the majority was
+the rule. The minority were SQL columns and Rust fields. Counting occurrences of a name is not
+reading the paragraph that governs it, and a grep across a specification will always find both
+sides of a convention that has to state both sides to be useful.
+
+**What to do if this looks wrong again:** read §4.8's prose, not its tables. Changing it would
+touch 42 structs in `protocol/src/wire.rs` and hand-written frames in sixteen test files across
+four shipped features, all to move away from what the specification asks for.
+
