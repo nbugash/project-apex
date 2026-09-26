@@ -27,7 +27,7 @@ use apex_engine::domain::task::TaskSignal;
 use apex_engine::session::{unpreserved_to_env, SessionRegistry, UNPRESERVED_ENV};
 use apex_protocol::wire::{RunTaskParams, TaskId, WorkspaceId};
 use common::frames::Sink;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 fn fixture(name: &str) -> String {
@@ -157,8 +157,27 @@ fn a_restart_names_every_task_it_stopped_and_leaves_none_running() {
     );
 }
 
+/// Serialises the tests that reach for the environment.
+///
+/// `UNPRESERVED_ENV` is process-global and cargo runs a binary's tests on several threads, so
+/// two tests setting it are racing: one sets three ids, the other sets none, and whichever calls
+/// `SessionRegistry::new()` second reads whatever the other left. It failed about one run in
+/// five, always in the test asserting the list is **empty** -- the one with nothing of its own to
+/// see.
+///
+/// A mutex rather than `--test-threads=1`, because the constraint belongs to these two tests and
+/// not to the binary: the rest of this file spawns real processes and is worth running in
+/// parallel. A poisoned lock is taken anyway; a panic in one of these leaves the environment
+/// untidy, and refusing to run the others would turn one failure into three.
+static ENVIRONMENT: Mutex<()> = Mutex::new(());
+
+fn exclusive() -> MutexGuard<'static, ()> {
+    ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn the_ids_cross_the_re_execution_in_the_environment() {
+    let _guard = exclusive();
     // `session/onRestart` is emitted by the **new** image and the list is built in the old one,
     // so the environment is the only thing that crosses. A round trip through it is what says
     // the new image will have something to report.
@@ -184,6 +203,7 @@ fn the_ids_cross_the_re_execution_in_the_environment() {
 
 #[test]
 fn a_restart_with_no_tasks_reports_an_empty_list_rather_than_nothing() {
+    let _guard = exclusive();
     // The ordinary case, and it has to be distinguishable. An empty `unpreserved` asserts that
     // nothing was lost; an absent one asserts only that nobody looked.
     std::env::set_var(UNPRESERVED_ENV, "");
