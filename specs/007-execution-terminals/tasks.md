@@ -428,3 +428,23 @@ either side of a seam tests the seam.**
 - [X] T142 A way to start one: the idle panel's `Start a terminal` control in `client/ui/lib/terminal/TerminalPanel.svelte`, running the developer's own login shell as an argv vector (§7.3 interposes no `sh -c`)
 - [X] T143 `tests/e2e/terminal-live.spec.ts` — start a real process from the interface and assert on output it did not write. `echo apex-live-terminal-$((6*7))` and assert on `42`, so a harness replaying what the panel sent, or an engine echoing input, both fail where a shell passes
 - [X] T144 `client/core/tests/engine_notifications.rs` — the same join at the core boundary, against the real engine binary rather than a double, because the thing under test is whether two correct halves are connected
+
+---
+
+## Phase 9: The terminal starts when you ask for it (added 2026-09-26)
+
+The first version of Phase 8 put a `Start a terminal` button in the idle panel, which was an
+invented control and so a Principle I deviation of its own. The prototype already has the
+affordance: a dock tab strip carrying Terminal, Debug, Problems and Resources. Using it removes
+the deviation rather than adding a second one.
+
+The behaviour is VS Code's and IntelliJ's: the tool window has no shell until you look at it, and
+looking again shows you the one you already have. Starting eagerly would run a login shell — the
+developer's whole profile, and whatever that does — for somebody who never opened the panel.
+
+- [X] T145 Extract the dock tab strip's dimensions in `scripts/ds-sync.mjs` — height, padding, gap, label, icon and badge sizes. The prototype has **two** strips with the same flex shape (editor tabs above the document area, dock tabs below), differing only in which edge carries the hairline, so the anchor is the `inset 0 1px 0` shadow rather than the height: an anchor that matches on the value being read cannot report that the value changed
+- [X] T146 `client/ui/lib/chrome/DockTabs.svelte` — the prototype's four tabs in its order, with the three whose features do not exist rendered present-and-unavailable, following the activity rail's treatment of the same situation. A strip with one tab in it is a different picture from the one that was designed
+- [X] T147 `client/ui/lib/terminal/start.ts` — start at most one terminal, with the guard held at module scope rather than in the component. The panel is unmounted and remounted as the dock opens and closes, so a component-held guard resets on the second open and starts a second shell
+- [X] T148 Wire the strip into `client/ui/lib/shell/Window.svelte`: the tab is outside the `visible` branch, because it is how the dock is opened and cannot live inside the thing it opens. No tab is selected on launch — the dock defaults to visible (F000's layout), so a tab selected up front would mean a login shell running before anyone asked
+- [X] T149 Keep a terminal alive across a detach in `client/ui/lib/terminal/terminals.svelte.ts`. `detach` disposed the instance, so closing the dock discarded everything printed before the close — while the method's own comment claimed hiding and showing a tab was lossless. It was never noticed because until the dock had tabs there was no way to hide a terminal and show it again. **Detach takes the element out of the document and keeps the instance; `dispose` ends it.** Both halves matter: leaving the element in place stacks one terminal's DOM on the next, since the host is shared by every panel the dock shows
+- [X] T150 `tests/e2e/terminal-live.spec.ts` gains the reuse case: one `run` for two reveals, and the scrollback still present. It asserts on the **rendered rows** as well as the buffer, because the first fix re-opened the terminal into the new element and left the rows undrawn — a correct buffer with nothing painted, which an assertion on `buffer.active` passes against. That is the same miss as the absent stylesheet earlier in this feature

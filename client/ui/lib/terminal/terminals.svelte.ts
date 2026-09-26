@@ -165,7 +165,30 @@ export class TerminalPanel {
   /// strings and the tokens they come from live on the mounted element -- see `palette.ts`, which
   /// is the one place any of this application's terminal colours is decided.
   async attach(el: HTMLElement, theme: ITheme): Promise<void> {
-    if (this.#terminal) return;
+    if (this.#terminal) {
+      // Already built, and being mounted somewhere new: the dock was closed and reopened, which
+      // unmounts the component and hands back a different element. Re-opening moves the existing
+      // instance, scrollback and all. Building a second one here would give the developer a
+      // blank terminal for a shell that is still running and has already printed things.
+      // **Re-parent rather than re-open.** `Terminal.open` is documented as the call that
+      // builds the terminal's DOM, and calling it a second time leaves the rows unrendered --
+      // the buffer is intact and nothing is drawn, which an assertion on `buffer.active` passes
+      // against. Moving the element xterm already built is plain DOM, so the rendered rows come
+      // with it and xterm is never asked to do something it does not support.
+      const existing = this.#terminal.element;
+      if (existing) {
+        el.appendChild(existing);
+        this.fit();
+        publishForAutomation(this.#terminal);
+        return;
+      }
+      // No element means `open` never ran -- an attach that was torn down before it resolved.
+      // Fall through and build it.
+      this.#terminal.open(el);
+      this.fit();
+      publishForAutomation(this.#terminal);
+      return;
+    }
     // The stylesheet travels with the library, on the same terms and for the same reason. It is
     // not decoration: without it the rows are unpositioned and the hidden input the terminal uses
     // to receive keystrokes is drawn as a white box over the panel. A terminal whose buffer is
@@ -226,9 +249,28 @@ export class TerminalPanel {
     return { cols: this.cols, rows: this.rows };
   }
 
-  /// Release the library instance. The panel stays usable: further output buffers again, which is
-  /// what makes hiding a dock tab and showing it later lossless.
+  /// Let go of the element without letting go of the terminal.
+  ///
+  /// **The instance is deliberately kept.** An earlier version disposed it here, on the reasoning
+  /// that later output would buffer again and a reattach would replay it -- which is true of
+  /// output arriving *after* the detach and false of everything before it, because that had
+  /// already been written into the terminal being disposed. Nothing caught it, because until the
+  /// dock had tabs there was no way to hide a terminal and show it again.
+  ///
+  /// So this drops the listeners, which belong to the element that is going away, and keeps the
+  /// buffer, which belongs to the task. `dispose` is what actually ends it.
+  ///
+  /// The terminal's own element is taken **out of the document**, which is what "detached" has
+  /// to mean. Leaving it in place looks harmless and is not: the host element is shared by every
+  /// panel the dock shows, so switching tasks would stack one terminal's DOM on top of the
+  /// next's, and `.xterm-rows` would then find the wrong one.
   detach(): void {
+    for (const dispose of this.#disposers.splice(0)) dispose();
+    this.#terminal?.element?.remove();
+  }
+
+  /// Dispose the library instance for good. The panel is being discarded with it.
+  dispose(): void {
     for (const dispose of this.#disposers.splice(0)) dispose();
     this.#terminal?.dispose();
     this.#terminal = null;
@@ -397,7 +439,7 @@ export class Terminals {
     const at = this.panels.findIndex((p) => p.taskId === taskId);
     const going = this.panels[at];
     if (!going) return;
-    going.detach();
+    going.dispose();
     this.panels.splice(at, 1);
     if (this.active === taskId) {
       // Fall back to whatever is left rather than to the idle prompt, so releasing one of several

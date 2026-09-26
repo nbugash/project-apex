@@ -13,6 +13,8 @@
   import { terminals } from '../terminal/terminals.svelte';
   import { installTerminalHarness } from '../terminal/harness';
   import { listenToEngine } from '../terminal/engine';
+  import { revealTerminal } from '../terminal/start';
+  import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
   import { shellState } from '../state.svelte';
@@ -116,10 +118,42 @@
     void persist(() => ipc.layoutSetRegion(region, layout[region].visible, extent));
   }
 
-  function toggleRegion(region: 'output') {
-    const visible = !layout[region].visible;
+  function setRegionVisible(region: 'output', visible: boolean) {
+    if (layout[region].visible === visible) return;
     layout = { ...layout, [region]: { ...layout[region], visible } };
     void persist(() => ipc.layoutSetRegion(region, visible, layout[region].extent));
+  }
+
+  /// Which dock tab is selected, or `''` for none.
+  ///
+  /// Presentation, like `terminals.active`, so it lives here rather than in the session: the core
+  /// owns what a task *is*, not which of four tabs is on top.
+  ///
+  /// **Empty on launch, and not persisted, which is what makes the click meaningful.** The dock
+  /// itself defaults to visible (F000's layout), so a tab selected up front would mean a login
+  /// shell running before anyone asked -- and a login shell runs the developer's whole profile.
+  /// VS Code reaches the same behaviour by defaulting its panel closed; the dock here is open, so
+  /// the distinction moves to the tab. Until one is clicked the panel shows its idle prompt,
+  /// which is the prototype's own empty state.
+  let dockTab = $state('');
+
+  /// Clicking a dock tab, which is the only way the terminal starts.
+  ///
+  /// VS Code and IntelliJ both behave this way and the reason is worth stating: a login shell
+  /// runs the developer's profile, and running it for somebody who never opened the panel is a
+  /// side effect nobody asked for. Clicking the tab a second time shows the shell already
+  /// running, because `revealTerminal` starts at most one.
+  ///
+  /// Clicking the current tab while the dock is open closes it, which is what both editors do
+  /// and what makes the strip a control rather than a label.
+  function selectDockTab(id: string) {
+    if (dockTab === id && layout.output.visible) {
+      setRegionVisible('output', false);
+      return;
+    }
+    dockTab = id;
+    setRegionVisible('output', true);
+    if (id === 'terminal') void revealTerminal();
   }
 
   async function reload() {
@@ -205,6 +239,9 @@
           <TerminalPanel taskId={terminals.active} workspace={shellState.workspace} />
         </Region>
       {/if}
+      <!-- Below the dock, and outside the `visible` branch: the strip is how the dock is
+           opened, so it cannot be inside the thing it opens. The prototype puts it here too. -->
+      <DockTabs active={dockTab} open={layout.output.visible} onselect={selectDockTab} />
     </main>
   </div>
 

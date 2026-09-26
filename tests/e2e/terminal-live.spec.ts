@@ -58,9 +58,12 @@ describe('a live terminal', () => {
     await waitForShell();
     await openWorkspace();
 
-    const start = await $('button.start');
-    await start.waitForDisplayed({ timeout: 15_000 });
-    await start.click();
+    // The click is the whole point: nothing has started a shell before this, and nothing
+    // should have. Clicking the tab is how a person starts one, in this application and in the
+    // two it is imitating.
+    const tab = await $('[data-testid="dock-tab-terminal"]');
+    await tab.waitForDisplayed({ timeout: 15_000 });
+    await tab.click();
 
     await browser.waitUntil(
       async () =>
@@ -85,5 +88,41 @@ describe('a live terminal', () => {
     });
 
     expect(await screen()).toContain('apex-live-terminal-42');
+  });
+
+  it('starts one shell on the first click and reuses it afterwards', async () => {
+    // What VS Code and IntelliJ do, and the reason this is a tab rather than a button: the
+    // panel is a place you go back to, and going back to it must not leave a process behind
+    // each time. A login shell runs the developer's whole profile, so a second one is not a
+    // harmless duplicate.
+    const runs = async () =>
+      (
+        (await browser.execute(
+          () => (window as unknown as { __apexSent?: Array<{ method: string }> }).__apexSent ?? [],
+        )) as Array<{ method: string }>
+      ).filter((s) => s.method === 'run').length;
+
+    // One start from the first test's click, and nothing since.
+    expect(await runs()).toBe(1);
+
+    const tab = await $('[data-testid="dock-tab-terminal"]');
+    // Closes the dock, as clicking the current tab does in both editors.
+    await tab.click();
+    await browser.pause(300);
+    // And opens it again on the terminal already running.
+    await tab.click();
+    await browser.pause(800);
+
+    expect(await runs()).toBe(1);
+    // The scrollback survived, which is what makes it the same terminal rather than a new one
+    // that happens to look alike.
+    expect(await screen()).toContain('apex-live-terminal-42');
+    // And it is **drawn**, not merely held. `buffer.active` is the model, and reading only the
+    // model passes for a terminal that moved into the new element without repainting -- which
+    // is exactly what happened the first time this test was written.
+    const painted = await browser.execute(
+      () => document.querySelector('.xterm-rows')?.textContent ?? '',
+    );
+    expect(painted).toContain('apex-live-terminal-42');
   });
 });

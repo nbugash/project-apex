@@ -254,6 +254,40 @@ const SURFACES = [
     ],
   },
   {
+    name: 'dock tabs',
+    // The strip that carries Terminal, Debug, Problems and Resources. Anchored on the loop that
+    // emits them rather than on the strip itself, so a prototype change breaks here loudly
+    // instead of silently matching another flex row with the same numbers.
+    //
+    // Two styles follow: the button, and the badge inside it. The strip's own height sits on the
+    // element *before* the loop, so it is read from the container anchor below.
+    anchor: /<sc-for list=\\?"\{\{ dockTabs \}\}\\?"/,
+    count: 3,
+    read: [
+      [0, 'gap', '--vk-dock-tab-gap', 'dock tab gap'],
+      [0, 'padding', '--vk-dock-tab-pad', 'dock tab padding'],
+      [0, 'font-size', '--vk-dock-tab-fs', 'dock tab font size'],
+      [1, 'font-size', '--vk-dock-tab-icon-fs', 'dock tab icon font size'],
+      [2, 'font-size', '--vk-dock-tab-badge-fs', 'dock tab badge font size'],
+    ],
+  },
+  {
+    name: 'dock tab strip',
+    // The container, immediately before the loop. Its height is the prototype's to own; a
+    // component writing it would be the application asserting a value read off a screenshot.
+    //
+    // The prototype has **two** strips with this flex shape -- the editor tabs above the
+    // document area and the dock tabs below it -- differing only in which edge carries the
+    // hairline. `inset 0 1px 0` is the dock's (the line is on top); the editor's is
+    // `inset 0 -1px 0`. Anchoring on the shadow rather than on the height keeps the anchor
+    // independent of the value being read, so a changed height is extracted rather than
+    // silently missed.
+    anchor: /box-shadow:inset 0 1px 0 color-mix\(in srgb,var\(--color-text\) 9%/,
+    offsetAnchor: /<div (?=style=\\?"flex:none;display:flex;align-items:stretch;height:\d+px;background:var\(--color-surface\);box-shadow:inset 0 1px 0)/,
+    count: 1,
+    read: [[0, 'height', '--vk-dock-tabs-height', 'dock tab strip height']],
+  },
+  {
     name: 'file tree row',
     // Anchored on the loop that emits the rows, so a prototype change breaks here loudly
     // rather than silently matching some other element with the same numbers.

@@ -35,6 +35,39 @@ capability rather than the technology — `SessionStore`, not `JsonFileStore`. I
 `ConnectionStatusSource`. Swap the binding in `composition.rs`; nothing else changes. That
 one-line swap is the property the port structure exists to buy.
 
+## The dock, and when a terminal starts
+
+The bottom dock carries the prototype's four tabs — Terminal, Debug, Problems, Resources. Three
+of them belong to features that do not exist and are rendered present-and-unavailable, on the
+same rule the activity rail follows: the strip's proportions are part of the design, and a strip
+with one tab in it is a different picture.
+
+**A terminal starts when its tab is first clicked, and not before.** This is VS Code's and
+IntelliJ's behaviour, and the reason is worth keeping: a login shell runs the developer's whole
+profile, so starting one for somebody who never opened the panel is a side effect nobody asked
+for. Clicking again closes the dock; clicking a third time shows the same shell, because
+`revealTerminal` starts at most one.
+
+No tab is selected on launch. The dock itself defaults to visible (F000's layout), so a tab
+selected up front would mean a shell running at startup. VS Code reaches the same behaviour by
+defaulting its panel closed; here the distinction moves to the tab, and until one is clicked the
+panel shows the prototype's idle prompt.
+
+**Detached is not disposed.** `TerminalPanel.detach()` takes the terminal's element out of the
+document and keeps the instance; `dispose()` ends it. Both halves are load-bearing and each was
+wrong once:
+
+- Disposing on detach discarded the scrollback every time the dock closed, while the method's own
+  comment claimed the opposite. Nothing caught it because until the dock had tabs there was no
+  way to hide a terminal and show it again.
+- Keeping the element in the document stacked one terminal's DOM on the next, because the host
+  element is shared by every panel the dock shows.
+
+Re-showing **re-parents** the element xterm built rather than calling `Terminal.open` a second
+time. `open` builds the terminal's DOM and is not meant to run twice; calling it again leaves the
+rows unrendered — a correct buffer with nothing drawn, which any assertion on `buffer.active`
+passes against.
+
 ## Reaching the engine
 
 Until F010 the application never sent a request to an engine for any feature. The transport was
