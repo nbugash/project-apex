@@ -63,6 +63,28 @@ settings screen, which belongs to whichever feature eventually owns preferences.
 
 ---
 
+## Design deviations
+
+Recorded because Principle I makes the signed-off prototype the authority on what this
+application looks like, and three surfaces here have no counterpart in it. Searching the
+prototype for a save control, an autosave switch or a conflict notice returns nothing — the
+only matches for "save" are inside base64 payloads.
+
+| Surface | Why it exists anyway | What was not improvised |
+|---|---|---|
+| A **Save** control | FR-007a requires saving to be an explicit action. A feature that can only autosave is not what was specified, and a keyboard shortcut alone is a control a developer cannot find | Spacing from `--space-*`, text at the status bar's own size token, colours from `--color-surface`, `--color-text` and `--color-divider`. No new value |
+| An **autosave** switch | FR-007b requires autosave to be available and off until somebody says otherwise. Without a control the mechanism is unreachable and therefore dead code, which this project does not ship | Same tokens. It is a plain checkbox with a label, so it is nameable by a screen reader without inventing a control type |
+| A **notice** strip above the editor | FR-012a requires a refused save to offer exactly one way out, FR-022 requires a vanished file to be reported rather than shown as an empty document, and FR-024b requires a diverged file to be reported without replacing the buffer. All three are things a developer must be told | Same tokens, `role="status"` so it is announced rather than only drawn, and its legibility is asserted on luminance rather than hue |
+
+The deviation is between the prototype and this specification, and the specification won: each
+surface exists because a requirement here demands a control the prototype does not show. What
+was **not** done is invent values — `lint:ds` refused an earlier version of these styles that
+carried made-up `--vk-gap-*` names, which is the check working as intended. A designer reviewing
+this should expect to move these controls and restyle them; they should not have to unpick a
+colour or a spacing that came from nowhere.
+
+---
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Open a file and type into it (Priority: P1)
