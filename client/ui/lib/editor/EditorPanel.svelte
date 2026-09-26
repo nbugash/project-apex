@@ -163,14 +163,22 @@
     if (b.base === null && b.notice === null && !b.loading) void load(b);
   });
 
-  /// Follow the buffer when the tab changes or the content is reloaded from the host.
+  /// Follow the buffer when the **host** changes it: a tab switch, a reload, an appended window.
+  ///
+  /// Keyed on the revision rather than on whether the two texts differ. Typing makes them differ
+  /// constantly and momentarily, so an effect that corrected the model whenever it noticed would
+  /// throw away keystrokes and move the caret.
+  let appliedRevision = -1;
   $effect(() => {
     const b = buffer;
     if (!editor || !monaco || !b) return;
-    if (editor.getValue() !== b.text) {
-      applying = true;
-      editor.setValue(b.text);
-      applying = false;
+    if (b.revision !== appliedRevision) {
+      appliedRevision = b.revision;
+      if (editor.getValue() !== b.text) {
+        applying = true;
+        editor.setValue(b.text);
+        applying = false;
+      }
     }
     editor.updateOptions({ readOnly: !b.editable });
     if (path) {
@@ -288,7 +296,7 @@
   .panel {
     display: flex;
     flex-direction: column;
-    flex: 1;
+    flex: 1 1 auto;
     min-block-size: 0;
     min-inline-size: 0;
   }

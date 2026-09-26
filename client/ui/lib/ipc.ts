@@ -44,6 +44,9 @@ export interface OpenDocumentReference {
 }
 
 export interface WorkspaceReference {
+  /// The identity the tree and the file commands key on. Empty for a session written before
+  /// schema version 4, where it was never recorded.
+  id: string;
   name: string;
   location_type: LocationType;
 }

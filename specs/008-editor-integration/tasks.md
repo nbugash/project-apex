@@ -53,7 +53,7 @@ requests are issued.
 - [X] T017 [US1] `EditorPanel.svelte`: bind Monaco's model to the buffer so an edit updates `text` and sets `dirty`, and confirm by construction that the edit path calls no sink method
 - [X] T018 [US1] In `client/ui/lib/editor/buffers.svelte.ts`, decline content that is not valid UTF-8 (FR-006), with a message naming F017 as what will render it. The check belongs where the bytes arrive, not in the component
 - [X] T019 [US1] Decline a file above the maximum opened as text (plan.md, *Fixed Quantities*), naming the limit. A window that stops responding is worse than a refusal
-- [ ] T020 [US1] `tests/e2e/editor-open.spec.ts`: US1's remaining acceptance scenarios — an uncached file is fetched once; a binary file is declined; the buffer survives the connection dropping and typing continues (FR-003); **syntax highlighting is still applied while disconnected** (FR-005), because it is local by design and a requirement satisfied only by accident is one a later change removes unnoticed; and **every character typed while disconnected is still present when the connection returns** (SC-009)
+- [X] T020 [US1] `tests/e2e/editor-open.spec.ts`: US1's remaining acceptance scenarios — an uncached file is fetched once; a binary file is declined; the buffer survives the connection dropping and typing continues (FR-003); **syntax highlighting is still applied while disconnected** (FR-005), because it is local by design and a requirement satisfied only by accident is one a later change removes unnoticed; and **every character typed while disconnected is still present when the connection returns** (SC-009)
 
 ---
 

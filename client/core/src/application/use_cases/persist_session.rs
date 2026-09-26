@@ -69,6 +69,19 @@ impl PersistSession {
         })
     }
 
+    /// Record the open workspace (FR-021's precondition: a tab is meaningless without one).
+    pub fn set_workspace(
+        &self,
+        id: &str,
+        name: &str,
+        location_type: crate::domain::session::LocationType,
+    ) -> Result<(), ShellError> {
+        self.mutate(|s| {
+            s.set_workspace(id, name, location_type);
+            Ok(())
+        })
+    }
+
     pub fn open_document(&self, display_name: &str, path: &str) -> Result<DocumentId, ShellError> {
         let mut guard = self.state.lock().expect("session state lock");
         let id = guard.open_document(display_name, path)?;

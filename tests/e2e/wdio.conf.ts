@@ -123,8 +123,18 @@ export const config: WebdriverIO.Config = {
   runner: 'local',
   // `terminal-live.spec.ts` is excluded here and run by `npm run e2e:live`, which sets
   // `APEX_E2E_LIVE`. See onPrepare: an engine in scope changes what the status bar observes.
-  specs: process.env.APEX_E2E_LIVE ? ['./terminal-live.spec.ts'] : ['./*.spec.ts'],
-  exclude: process.env.APEX_E2E_LIVE ? [] : ['./terminal-live.spec.ts'],
+  //
+  // Every editor spec is live for the same reason `terminal-live` is: the editor reads and
+  // writes files on an engine, and a spec for it without one would assert that saving reports
+  // an outage -- which is true, and is not the feature.
+  specs: process.env.APEX_E2E_LIVE
+    ? ['./terminal-live.spec.ts', './editor-*.spec.ts']
+    : ['./*.spec.ts'],
+  exclude: process.env.APEX_E2E_LIVE
+    ? []
+    : ['./terminal-live.spec.ts', './editor-local-echo.spec.ts', './editor-open.spec.ts',
+       './editor-save.spec.ts', './editor-echo.spec.ts', './editor-large-file.spec.ts',
+       './editor-session.spec.ts', './editor-a11y.spec.ts'],
   // The app is a singleton desktop process and there is one driver on one port.
   maxInstances: 1,
   // Point at the driver started in onPrepare. Without an explicit hostname and port, WDIO

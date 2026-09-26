@@ -41,6 +41,14 @@ pub enum LocationType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceReference {
+    /// The identity the engine and the cache both key on, added at schema version 4.
+    ///
+    /// Without it the interface could open a workspace and then had no way to name it again:
+    /// the tree, which asks for a listing *by workspace id*, was constructed with a literal
+    /// `"e2e"` and could only ever show what the debug seeding command had put in the cache.
+    /// Restoring one after a restart was impossible for the same reason.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub location_type: LocationType,
 }
@@ -255,6 +263,15 @@ impl PersistedSession {
         });
         self.focused_document_id = Some(id.clone());
         Ok(id)
+    }
+
+    /// Record which workspace is open, so the interface can name it again after a restart.
+    pub fn set_workspace(&mut self, id: &str, name: &str, location_type: LocationType) {
+        self.workspace = Some(WorkspaceReference {
+            id: id.to_string(),
+            name: name.to_string(),
+            location_type,
+        });
     }
 
     pub fn close_document(&mut self, id: &DocumentId) -> Result<(), SessionError> {

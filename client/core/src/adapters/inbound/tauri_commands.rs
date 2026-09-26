@@ -13,7 +13,7 @@ use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use crate::domain::session::{DocumentId, SessionSnapshot};
 use crate::window::controller::WindowController;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, State};
 
 pub struct Shell {
     pub persist: Arc<PersistSession>,
@@ -535,6 +535,8 @@ pub async fn workspace_open(
     name: String,
     host: String,
     base_path: String,
+    app: tauri::AppHandle,
+    shell: State<'_, Shell>,
     access: State<'_, WorkspaceAccess>,
     tasks: State<'_, crate::adapters::inbound::task_commands::Tasks>,
 ) -> Result<WorkspaceDto, WorkspaceFailure> {
@@ -570,6 +572,16 @@ pub async fn workspace_open(
         .await;
         *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
     }
+    // Recorded in the session, and announced, before the id is given back. Until F006 nothing
+    // ever constructed a `WorkspaceReference`, so `workspace:changed` announced `None` forever
+    // and the interface had no way to learn which workspace it had just opened -- which is why
+    // the file tree was built with a literal id and could only show seeded content.
+    shell
+        .persist
+        .set_workspace(&ws.id.0, &ws.name, crate::domain::session::LocationType::Remote)
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?;
+    let _ = app.emit("workspace:changed", shell.persist.snapshot().workspace);
+
     Ok(WorkspaceDto {
         id: ws.id.0,
         name: ws.name,

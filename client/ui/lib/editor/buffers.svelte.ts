@@ -85,6 +85,16 @@ export class Buffer {
   /// second read of the same file. Without it a reactive effect issues one request per
   /// re-evaluation, and SC-002 counts requests.
   loading = $state(false);
+  /// Bumped only when the **host** changed the content: a fresh read, a reload, an appended
+  /// window. Never by the developer's own typing.
+  ///
+  /// The editor pushes text into Monaco when this moves, and only then. Comparing values
+  /// instead — "the model and the buffer differ, so correct the model" — looks equivalent and
+  /// is not: that comparison re-runs on every keystroke, and the instant it observes Monaco
+  /// holding character n+1 while the buffer still holds n it "corrects" the editor by deleting
+  /// what was just typed and moving the caret. The question is not whether the two differ but
+  /// which side changed, and only a host change should be pushed.
+  revision = $state(0);
 
   constructor(path: string) {
     this.path = path;
@@ -107,6 +117,7 @@ export class Buffer {
     this.dirty = false;
     this.ending = null;
     this.notice = null;
+    this.revision += 1;
   }
 
   /// An edit from the editor. Refused while regions are missing, rather than accepted and
@@ -257,6 +268,7 @@ export async function loadWindow(b: Buffer, total: number, offset: number): Prom
     }
     b.text += chunk.text;
     b.loaded.add(from, to);
+    b.revision += 1;
   } catch (e) {
     const refusal: ReadRefusal = e instanceof ReadFailed ? e.refusal : refusalFrom(e);
     b.notice = { kind: 'unavailable', message: refusal.message };
