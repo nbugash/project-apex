@@ -3463,3 +3463,67 @@ sides of a convention that has to state both sides to be useful.
 touch 42 structs in `protocol/src/wire.rs` and hand-written frames in sixteen test files across
 four shipped features, all to move away from what the specification asks for.
 
+---
+
+## A-EDITPALETTE — The editor's syntax colours are five, extracted, and the rest deferred (2026-09-26)
+
+**Decision.** `ds-sync` extracts the five colours the prototype's `Editor` screen distinguishes —
+punctuation, function name, keyword, type, comment — as `--vk-code-*` tokens. Monaco's theme is
+built from those plus the existing surface tokens. Every other role in Monaco's token set falls
+back to the editor's foreground colour, and a **complete syntax theme is owed by the design
+system**, not by this feature.
+
+**Rationale.** The prototype writes its code colours as raw hex — `#9397ab` punctuation,
+`#e4e7f5` names, `#b5abfc` keywords, `#d2cefd` types, `#75798c` comments. None is a design-system
+token. Principle I makes those hexes the specification of appearance, so they bind; and the same
+principle forbids a component writing them, so they are extracted rather than transcribed.
+
+Five is a count, not a target: it is what the prototype actually distinguishes. Inventing colours
+for the other forty-odd roles Monaco knows would be this feature deciding what the design system
+looks like, which is exactly the drift Principle I exists to prevent. Falling back to the
+foreground leaves those roles unstyled, which is honest, rather than mis-styled, which is not.
+
+**Alternatives rejected.** A built-in Monaco theme — immediate, complete, and a different visual
+language from the rest of the application. Inventing the missing tokens — a prettier editor and
+an unapproved design. Shipping no syntax colour at all — a regression from a signed-off artifact
+that does colour code.
+
+**This is A-TERMPALETTE's shape, one surface over.** That record mapped three hues and deferred
+eleven for the terminal on the same grounds. Two surfaces now defer a palette to the design
+system; a third should prompt the design system to define one rather than a third deferral.
+
+**Reversal condition.** The design system defining a syntax palette. At that point the extraction
+narrows to a mapping and the deferral is discharged.
+
+---
+
+## A-WRITEECHO — A watched file's writer must not hear its own write as news (2026-09-26)
+
+**Decision.** When a client receives `workspace/onFileEvent` for a file it has open, it
+establishes whether the content actually diverged — by comparing the file's current hash against
+the base it holds — before treating the event as a change made elsewhere. A file event is not by
+itself evidence of divergence.
+
+**Rationale.** The engine's own writes trip its own watcher. The inotify mask includes `MODIFY`
+and `CLOSE_WRITE`, so every successful `workspace/writeFile` produces an event for the file just
+written. A client that took events at face value would tell the developer their file had changed
+underneath them on every single save.
+
+The event cannot answer the question itself: `FileEvent` carries kind, path, and optionally type,
+size and modified time — **no hash** (§4.8). Size is not sufficient, because an edit that changes
+a character changes no size. `workspace/stat` already returns a hash, so the question is asked
+with a method that exists, at a cost bounded by how many files are open and entirely off the
+keystroke path.
+
+**Alternatives rejected.** Suppressing events for a path for a window after writing it — free,
+and it silently discards a colleague's edit that lands inside the window, which is the failure
+the base-hash design exists to prevent. Comparing the size in the event — cheap and blind to any
+edit that preserves length. Having the engine tag events it caused — correct in principle, a
+protocol change, and unnecessary for a question the client can already ask.
+
+**Why this binds beyond F006.** Every future feature that writes a watched file inherits it:
+F011 git operations, F012's offline reconciliation, F017's artifact writes. The rule is a
+property of watching plus writing, not of editing.
+
+**Reversal condition.** A measurement showing the per-event `stat` is material, or a protocol
+change that lets the engine mark the events its own request caused.
