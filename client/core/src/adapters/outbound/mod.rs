@@ -3,6 +3,7 @@ pub mod bulk;
 pub mod deploy;
 pub mod handshake;
 pub mod json_session_store;
+pub mod local_engine;
 pub mod local_tasks;
 pub mod local_workspace;
 pub mod openssh;
