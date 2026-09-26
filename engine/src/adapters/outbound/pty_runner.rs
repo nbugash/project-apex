@@ -22,7 +22,7 @@ use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::poll::{PollFd, PollFlags, PollTimeout};
 use nix::pty::{openpty, Winsize};
-use nix::sys::resource::{setrlimit, Resource};
+use nix::sys::resource::{getrlimit, setrlimit, Resource};
 use nix::sys::signal::{killpg, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{
@@ -46,6 +46,12 @@ struct ChildPlan {
     envp: Vec<CString>,
     cwd: CString,
     limits: ResourceLimits,
+    /// The highest descriptor the child might have inherited, read **before** the fork.
+    ///
+    /// Only used by the fallback sweep, on a kernel without `close_range`. Read here rather
+    /// than in the child because the child may call only async-signal-safe functions, and a
+    /// bound obtained before the fork is one less thing to argue about.
+    max_fd: RawFd,
 }
 
 fn to_c(s: &str) -> Result<CString, SpawnFailure> {
@@ -107,6 +113,7 @@ impl TaskRunner for PtyRunner {
                 .collect::<Result<Vec<_>, _>>()?,
             cwd: to_c(&request.cwd.as_path().display().to_string())?,
             limits: request.limits,
+            max_fd: highest_possible_fd(),
         };
 
         match request.shape {
@@ -124,6 +131,21 @@ unsafe fn become_the_child(plan: &ChildPlan, status: RawFd) -> ! {
     // `setsid` has already run in both callers, before the descriptors were arranged. It belongs
     // there rather than here because the terminal path has to acquire its controlling terminal
     // between the two, and that acquisition only works for a session leader.
+
+    // Everything the child was not given, closed before `exec`.
+    //
+    // Marking each descriptor as it is created -- which `spawn_with_terminal` and
+    // `spawn_with_pipes` both do -- only ever covered the descriptors *this crate* opens, and
+    // bound nothing else in the process. A library, a logger, the runtime or whatever launched
+    // the engine can hold an unmarked descriptor, and a task forked afterwards keeps it across
+    // `exec` for its whole life. §4.8 grants a task three descriptors, so a fourth is a
+    // trust-boundary failure no matter who opened it (Principle VI).
+    //
+    // Found by CI, which showed a task holding two pipes that nothing here had created: Cargo
+    // passes its jobserver to child processes as a pipe pair that is deliberately *not*
+    // close-on-exec, so every task the engine started under `cargo test` inherited it. Marking
+    // could never have fixed that, because the engine never opened it.
+    close_inherited(status, plan.max_fd);
 
     // Both the soft and the hard limit. A child may raise its own soft limit up to its hard one,
     // so a soft-only ceiling is one the bounded process can simply remove.
@@ -150,6 +172,62 @@ unsafe fn become_the_child(plan: &ChildPlan, status: RawFd) -> ! {
     // such command" from "the command ran and chose to exit 127" -- and the two lead to opposite
     // things being said to the developer (SC-015, §4.4's -32011).
     report_and_exit(status, *nix::libc::__errno_location());
+}
+
+/// The highest descriptor a child could have inherited.
+///
+/// The soft `RLIMIT_NOFILE`, which is the ceiling on descriptor numbers this process can hold.
+/// Falls back to a large-but-finite bound if the limit cannot be read or is unbounded, because
+/// the sweep below must terminate.
+fn highest_possible_fd() -> RawFd {
+    const FALLBACK: RawFd = 65_536;
+    match getrlimit(Resource::RLIMIT_NOFILE) {
+        Ok((soft, _)) if soft > 0 && soft < FALLBACK as u64 => soft as RawFd,
+        _ => FALLBACK,
+    }
+}
+
+/// Close every descriptor above the three a task is given, sparing the status pipe.
+///
+/// # Safety
+/// Called only in the child of a `fork`, after 0, 1 and 2 have been arranged and before `exec`.
+/// `close_range` and `close` are async-signal-safe; nothing here allocates or takes a lock.
+unsafe fn close_inherited(status: RawFd, max_fd: RawFd) {
+    // In two ranges, so the status pipe survives to report a failed `exec`. It is close-on-exec,
+    // so a *successful* `exec` closes it and the parent reads end of file -- which is the whole
+    // mechanism `spawn_with_terminal` describes.
+    if status > 3 {
+        close_range_or_loop(3, status - 1);
+    }
+    if status < max_fd {
+        close_range_or_loop(status + 1, max_fd);
+    }
+}
+
+/// One syscall where the kernel has it, a bounded loop where it does not.
+///
+/// # Safety
+/// As `close_inherited`.
+unsafe fn close_range_or_loop(from: RawFd, to: RawFd) {
+    if from > to {
+        return;
+    }
+    // Linux 5.9 and later. Closing a range the process does not hold is not an error, so no
+    // check of what is open is needed -- which is what makes this safe after a fork.
+    if nix::libc::syscall(
+        nix::libc::SYS_close_range,
+        from as nix::libc::c_uint,
+        to as nix::libc::c_uint,
+        0 as nix::libc::c_uint,
+    ) == 0
+    {
+        return;
+    }
+    let mut fd = from;
+    while fd <= to {
+        let _ = nix::libc::close(fd);
+        fd += 1;
+    }
 }
 
 /// Tell the parent why `exec` did not happen, then leave.

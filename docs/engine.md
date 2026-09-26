@@ -258,6 +258,37 @@ Note that the sibling test `the_anti_starvation_bound_releases_a_yielding_writer
 against that same mutation, and should: with the gate disabled a bulk writer never parks, so it
 is trivially released. It guards the bound, not the gate. Two tests, two properties.
 
+### What a task inherits, and why marking was not enough
+
+`fork` copies the whole descriptor table and `exec` keeps everything not marked close-on-exec.
+`spawn_with_terminal` and `spawn_with_pipes` mark every descriptor they create, under a lock
+that makes creation and forking indivisible — and that was still not enough, because **it only
+ever bound the descriptors this crate opens.**
+
+A library, a logger, the async runtime, or whatever launched the engine can hold an unmarked
+descriptor on any thread at any moment. A task forked afterwards keeps it across `exec` for its
+whole life. §4.8 grants a task three descriptors, so a fourth is a trust-boundary failure
+regardless of who opened it.
+
+Found by CI, not by review: a task was holding two pipes that nothing in `pty_runner` had
+created. They were **Cargo's jobserver**, which is passed to child processes as a pipe pair that
+is deliberately *not* close-on-exec so that sub-makes inherit it. No amount of marking could
+have fixed that, because the engine never opened it.
+
+So the child now closes everything above 2 before `exec`, sparing only the status pipe it needs
+to report a failed `exec`. `close_range` where the kernel has it (Linux 5.9+), a bounded loop to
+the soft `RLIMIT_NOFILE` where it does not — with the limit read *before* the fork, because the
+child may call only async-signal-safe functions.
+
+The rule changed shape: from "every descriptor must be marked", which every future creation site
+has to remember and which binds nothing outside this crate, to "the child closes what it was not
+given", which is true by construction.
+
+The test that proves it opens an unmarked pipe the engine has never heard of and asserts the
+child does not have it. Its first version opened a **file** and passed, proving nothing — Rust's
+standard library sets `O_CLOEXEC` on everything it opens, so the descriptor was already marked
+and the test agreed with itself.
+
 ## Writing a file (F006)
 
 `workspace/writeFile` is the first method that changes the developer's filesystem with their

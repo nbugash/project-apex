@@ -278,3 +278,46 @@ fn spawning_tasks_does_not_close_another_threads_descriptors() {
         failed.unwrap_or_default()
     );
 }
+
+/// A task inherits nothing the engine never marked, either.
+///
+/// The failure this was written for: CI showed a child holding two pipes that nothing in
+/// `pty_runner` had created, and it could not be reproduced by running the engine's own spawn
+/// paths against each other. Both of those facts point the same way -- the descriptor did not
+/// come from a creation site the engine controls.
+///
+/// Marking each descriptor as it is created is a rule that every future creation site has to
+/// remember, and it binds nothing outside this crate: a library, a logger, a test harness or the
+/// runtime can open a descriptor at any moment on any thread, and a task forked after it keeps
+/// it across `exec` for its whole life. §4.8 gives a task three descriptors, so a task holding a
+/// fourth is a trust-boundary failure regardless of who opened it (Principle VI).
+///
+/// This opens one the engine has never heard of and asserts the child does not have it.
+#[test]
+fn a_task_inherits_nothing_the_engine_never_marked() {
+    use std::os::fd::AsRawFd;
+
+    // A **pipe**, and deliberately not a file. The first version of this test opened a file with
+    // `File::open` and passed, proving nothing: Rust's standard library sets `O_CLOEXEC` on
+    // every file it opens, so the descriptor was already marked and the test agreed with itself.
+    // The raw `pipe` syscall sets no such flag, which is why `pty_runner` marks its own pipes by
+    // hand -- and why an unmarked one is the honest stand-in for whatever CI's child inherited.
+    let (stray_r, stray_w) = nix::unistd::pipe().expect("pipe");
+    let stray_fd = stray_r.as_raw_fd();
+    let _keep_open = (&stray_r, &stray_w);
+
+    let two = start_two(Shape::Pipes);
+    let held = open_descriptors(two.second_pid);
+
+    assert!(
+        !held.iter().any(|(n, _)| *n == stray_fd),
+        "the task inherited descriptor {stray_fd}, which the engine never created and therefore \
+         never marked: {held:?}"
+    );
+    let extra: Vec<&(i32, String)> = held.iter().filter(|(n, _)| *n > 2).collect();
+    assert!(
+        extra.is_empty(),
+        "a task holds {} descriptor(s) beyond its own three: {extra:?}",
+        extra.len()
+    );
+}
