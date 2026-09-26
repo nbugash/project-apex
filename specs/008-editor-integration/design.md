@@ -23,8 +23,9 @@ protocol/src/lib.rs                         codes::WRITE_CONFLICT = -32004
 
 client/core/src/
   adapters/outbound/remote_workspace.rs     write_file implemented, refusal removed
-  adapters/inbound/tauri_commands.rs        file_write, file_read_range
+  adapters/inbound/tauri_commands.rs        file_write, file_read, file_read_range
   application/use_cases/edit_file.rs        base-hash rules, outcome mapping
+  domain/session.rs                         autosave preference; schema version raised
 
 client/ui/lib/editor/
   EditorPanel.svelte                        inbound adapter; mounts Monaco
@@ -36,9 +37,16 @@ client/ui/lib/editor/
 
 scripts/ds-sync.mjs                         editor surface: five code colours
 
-tests/unit/                                 ranges, palette, buffer rules, outcome mapping
-tests/e2e/                                  editor-local-echo, editor-save, editor-large-file,
-                                            editor-session, editor-a11y
+protocol/tests/write_wire.rs                params and result round-trip, snake_case on the wire
+engine/tests/write_file.rs                  the write path against a real filesystem
+client/core/tests/write_file.rs             provider outcome mapping against a scripted transport
+client/core/tests/editor_first_paint.rs     SC-005's printed p99
+
+tests/unit/                                 editor-ranges, editor-palette, editor-buffers,
+                                            editor-ending
+tests/e2e/                                  editor-local-echo, editor-open, editor-save,
+                                            editor-echo, editor-large-file, editor-session,
+                                            editor-a11y
 ```
 
 The webview directory mirrors `terminal/` deliberately: same split between a component, a model
