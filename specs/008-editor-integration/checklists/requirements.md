@@ -51,3 +51,19 @@ whether the editor stalls.
 One number is this feature's own: the 1 MiB chunk threshold, recorded under *Assumptions* with
 its reasoning, because the system specification requires ranged reads for large files without
 defining large.
+
+## Re-validation after clarification (2026-09-26)
+
+Three questions asked and integrated; 16/16 → 16/16, no regressions and nothing newly passing,
+because the spec was complete before and the clarifications added decisions rather than filled
+holes.
+
+The clarifications grew the spec from 25 functional requirements to 32 and from 11 success
+criteria to 15. Two of the three closed gaps that would have surfaced as defects rather than as
+questions: the engine's own write echoing back as a file event, which without handling would
+announce a change on every save; and what a developer may do about a refused write, which
+without an answer would have been decided by whoever implemented it.
+
+One assumption was rewritten rather than left to contradict a new requirement: editor state that
+persists now includes the autosave preference, since a preference that forgets itself each launch
+is not one.

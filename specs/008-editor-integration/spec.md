@@ -42,6 +42,27 @@ gives the reasoning, so a reviewer can tell a derived constraint from an invente
 
 ---
 
+## Clarifications
+
+### Session 2026-09-26
+
+- Q: What should trigger a save — an explicit action, or automatically after typing stops? → A:
+  Both, with autosave **off by default**.
+- Q: The engine's own write fires a change event back to the client for the file it just saved.
+  How should the editor tell its own save from someone else's edit? → A: Ask the host for the
+  file's current hash and compare it with the buffer's base.
+- Q: What can a developer do about a refused save, given the merge interface belongs to F012? →
+  A: Offer to discard the local changes and reload the host's content. Never offer to overwrite
+  the host.
+
+**One consequence worth stating, because it was raised when the first was asked.** Autosave needs
+somewhere to be turned on, and no settings surface exists. Building the mechanism without a way
+to reach it would be dead code, which this project does not ship. So the preference lives in the
+durable session store A-STATE already defines, and the editor carries one control for it — not a
+settings screen, which belongs to whichever feature eventually owns preferences.
+
+---
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Open a file and type into it (Priority: P1)
@@ -187,6 +208,11 @@ the same order with the second focused and showing its content.
 
 - **FR-007**: A save MUST carry the content and the `baseSha256` the client held when the buffer
   was last known to match the host.
+- **FR-007a**: Saving MUST be available as an explicit action.
+- **FR-007b**: Autosave MUST be available, MUST be **off** on a profile that has never set it,
+  and its setting MUST survive a restart.
+- **FR-007c**: Autosave, when on, MUST save only after typing has stopped, and MUST NOT issue a
+  write for a buffer with no unsaved changes.
 - **FR-008**: The engine MUST compare `baseSha256` against the file's current content and MUST
   refuse a mismatch with `-32004` **without writing**.
 - **FR-009**: A successful write MUST return the new `sha256`, and the client MUST adopt it as
@@ -196,6 +222,12 @@ the same order with the second focused and showing its content.
 - **FR-011**: A refused write MUST leave the developer's buffer intact and unmarked as saved.
 - **FR-012**: A write conflict MUST be distinguishable, to the developer, from a transport
   failure and from a permission failure.
+- **FR-012a**: A refused write MUST offer the developer one way out: discard the local changes
+  and reload the host's content. Taking it MUST leave the buffer holding exactly the host's
+  bytes.
+- **FR-012b**: A refused write MUST NOT offer to overwrite the host. Re-reading the current hash
+  and writing over it would destroy a colleague's work silently, which is the failure §11 names
+  as the one this product cannot afford. Resolving a conflict by merging is F012's.
 - **FR-013**: A write MUST NOT be reported as saved until its response has arrived.
 - **FR-014**: Two saves of one file MUST NOT be in flight at once.
 - **FR-015**: A write that fails MUST leave the file's previous content byte-for-byte intact.
@@ -221,10 +253,18 @@ the same order with the second focused and showing its content.
 
 **Reacting to the host**
 
-- **FR-024**: When a file event reports that an open file changed on the host, a **modified**
-  buffer MUST NOT be replaced and its unsaved changes MUST survive the event. An **unmodified**
-  buffer MAY be refreshed; that half is a permission rather than an obligation, so the checkable
-  requirement is stated on the side that can be violated.
+- **FR-024**: When a file event reports that an open file changed on the host, the client MUST
+  establish whether the content actually diverged, by comparing the file's current hash with the
+  buffer's base, before treating it as a change. A file event is not by itself evidence of
+  divergence.
+- **FR-024a**: The client MUST NOT report its own write as a change made on the host. The
+  engine's write trips its own watcher, so every save echoes back as an event for the file just
+  saved; an editor that took events at face value would announce that the file changed underneath
+  the developer every single time they saved.
+- **FR-024b**: Where the content has genuinely diverged, a **modified** buffer MUST NOT be
+  replaced and its unsaved changes MUST survive the event. An **unmodified** buffer MAY be
+  refreshed; that half is a permission rather than an obligation, so the checkable requirement is
+  stated on the side that can be violated.
 - **FR-025**: When a file event reports that an open file was deleted, the developer MUST be
   told and the buffer MUST NOT be discarded.
 
@@ -263,6 +303,15 @@ the same order with the second focused and showing its content.
 - **SC-010**: A file opened twice yields one buffer, in 100% of exercised cases.
 - **SC-011**: Content that is not valid UTF-8 is never rendered as text; the refusal names what
   will render it.
+- **SC-012**: Saving an open file produces **zero** "changed on the host" notices for that file,
+  in 100% of exercised cases. This is the echo, and it is the one the developer would see on
+  every save.
+- **SC-013**: A genuine change made on the host to an open file is still reported, in 100% of
+  exercised cases — so SC-012 is met by distinguishing the two, not by ignoring events.
+- **SC-014**: On a profile that has never set it, autosave is off; typing and pausing issues zero
+  writes.
+- **SC-015**: Discarding local changes after a refused save leaves the buffer holding exactly the
+  host's bytes, in 100% of exercised cases.
 
 ---
 
@@ -273,8 +322,10 @@ the same order with the second focused and showing its content.
   the natural boundary: a file that fits in a frame costs one round trip whole, and a range
   request for it would cost the same round trip and deliver less. Recorded here because it is
   this feature fixing a number the system left open; `plan.md` will state it as a fixed quantity.
-- **Editor state beyond tabs, order and focus does not persist.** A-STATE names window geometry,
-  region layout, open document references and focus. Cursor position and scroll offset are not
+- **Editor state beyond tabs, order, focus and the autosave preference does not persist.**
+  A-STATE names window geometry, region layout, open document references and focus; the autosave
+  setting joins them, because a preference that forgets itself every launch is not a preference.
+  Cursor position and scroll offset are not
   named, and no requirement asks for them, so they are not built. Adding them is cheap later and
   inventing them now would be building what nothing asked for.
 - **Unsaved edits do not survive a restart.** A-OFFLINE makes locally persisted edits F012's,
