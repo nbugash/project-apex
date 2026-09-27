@@ -703,3 +703,83 @@ mod workspace_tests {
         );
     }
 }
+
+// ---- Git (F011) ----
+
+/// One changed path, as the tree reads it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChangeDto {
+    pub path: String,
+    /// One of `modified`, `untracked`, `staged`, `deleted`, `conflict`. Lowercase here and
+    /// UPPERCASE on the wire, because these are two different boundaries with two different
+    /// conventions and pretending otherwise would put a wire spelling in a CSS class name.
+    pub status: String,
+}
+
+/// Where the repository is, as three cases rather than an optional name.
+///
+/// A detached head is reported by git as the literal `(detached)` where a name goes, so an
+/// optional string would put that text on the status bar as though it were a branch (FR-019).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum GitBranchDto {
+    Branch { name: String },
+    Detached { commit: String },
+    None,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusDto {
+    pub branch: GitBranchDto,
+    pub changes: Vec<GitChangeDto>,
+}
+
+/// The git state this client has for the current workspace.
+///
+/// **Reads the projection; never the engine.** An outage therefore costs nothing and times out
+/// never, and the last state the client knew stays on screen rather than clearing (FR-029).
+///
+/// The workspace is resolved in the core, not accepted from the webview. A workspace identity
+/// arriving from the view is an identity the view could choose, which is the shape F010 and
+/// F006 both refused for the same reason (Principle VI).
+#[tauri::command]
+pub async fn git_status(
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<GitStatusDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let git = access
+        .cache
+        .git_status(&ws)
+        .map_err(|_| WorkspaceFailure::UnknownWorkspace)?;
+    Ok(GitStatusDto {
+        branch: match git.branch {
+            apex_protocol::wire::BranchPosition::Branch(name) => GitBranchDto::Branch { name },
+            apex_protocol::wire::BranchPosition::Detached(commit) => {
+                GitBranchDto::Detached { commit }
+            }
+            apex_protocol::wire::BranchPosition::None => GitBranchDto::None,
+        },
+        changes: git
+            .changes
+            .into_iter()
+            .map(|c| GitChangeDto {
+                path: c.path,
+                status: status_slug(&c.status).to_string(),
+            })
+            .collect(),
+    })
+}
+
+fn status_slug(status: &apex_protocol::wire::GitStatusKind) -> &'static str {
+    use apex_protocol::wire::GitStatusKind::*;
+    match status {
+        Modified => "modified",
+        Untracked => "untracked",
+        Staged => "staged",
+        Deleted => "deleted",
+        Conflict => "conflict",
+    }
+}

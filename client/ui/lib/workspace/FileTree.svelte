@@ -11,12 +11,15 @@
   /// absent.
   import type { WorkspaceTree } from './tree.svelte';
   import { presentContent } from '../statusbar/presentation';
+  import { markerFor } from '../git/marker';
+  import type { GitState } from '../git/marker';
 
   let {
     tree,
     selected = '',
     onWatchedChanged,
     onOpenFile,
+    gitStatus,
   }: {
     tree: WorkspaceTree;
     selected?: string;
@@ -29,6 +32,9 @@
     /// in the tree did nothing at all. The component had no way to say a file had been chosen,
     /// and nothing was listening for it.
     onOpenFile?: (path: string, name: string) => void;
+    /// This workspace's git state, by path. A plain lookup rather than a store, so the tree
+    /// stays a view: what it shows is decided by whoever owns the projection (F011).
+    gitStatus?: (path: string) => GitState | undefined;
   } = $props();
 
   /// The prototype's glyph per kind. Directories carry a caret so expansion state is legible
@@ -86,6 +92,8 @@
   {/if}
 
   {#each tree.nodes as node (node.path)}
+    {@const git = gitStatus?.(node.path)}
+    {@const mark = markerFor(git)}
     <div
       class="row"
       class:selected={node.path === selected}
@@ -102,9 +110,15 @@
     >
       <i class="ph {glyph(node.kind, node.expanded)}" aria-hidden="true"></i>
       <span class="name">{node.name}</span>
-      <!-- The prototype's VCS marker column. F011 fills it; the column exists here so adding it
-           later does not reflow every row. -->
-      <span class="vcs" aria-hidden="true"></span>
+      <!-- The prototype's VCS marker column, filled by F011. The column was reserved with a
+           fixed size, so a file git says nothing about keeps exactly the row it had before this
+           feature existed (FR-016). -->
+      <span
+        class="vcs"
+        style={mark ? `color: var(${mark.token})` : undefined}
+        aria-hidden={mark ? undefined : 'true'}
+        aria-label={mark ? mark.label : undefined}
+        data-git={git}>{mark ? mark.glyph : ''}</span>
     </div>
   {/each}
 </div>

@@ -13,6 +13,7 @@
   import { terminals } from '../terminal/terminals.svelte';
   import { installTerminalHarness } from '../terminal/harness';
   import { listenToEngine } from '../terminal/engine';
+  import { GitStatusStore } from '../git/status.svelte';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
   import EditorPanel from '../editor/EditorPanel.svelte';
@@ -110,6 +111,20 @@
   // the window, not per editor: the panel is unmounted whenever its tab is not focused, and a
   // background tab is exactly the case FR-024 is about.
   onMount(() => startFileEvents());
+
+  /// The window's git state, subscribed once, for the same reason as the line above.
+  ///
+  /// The project panel is unmounted whenever another rail destination is selected, so a
+  /// subscription owned by the tree would stop hearing about changes the moment the developer
+  /// looked at something else -- and the marks would be silently stale on return (F011,
+  /// FR-002).
+  const git = new GitStatusStore();
+  $effect(() => {
+    const started = git.start();
+    return () => {
+      void started.then(() => git.stop()).catch(() => {});
+    };
+  });
 
   /// Bind the tree to whichever workspace is open, and fetch its root.
   ///
@@ -235,6 +250,7 @@
         <FileTree
           tree={workspaceTree}
           selected={activeDocument?.path ?? ''}
+          gitStatus={(path) => git.stateOf(path)}
           onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
         />
       {:else}

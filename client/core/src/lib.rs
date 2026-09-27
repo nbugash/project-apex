@@ -41,6 +41,9 @@ pub fn run() {
             cmd::file_read_range,
             cmd::file_hash,
             cmd::file_write,
+            // F011's read surface. Registered here for the reason the four above record: an
+            // unregistered command is an unknown command, and the webview finds out at runtime.
+            cmd::git_status,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,
             adapters::inbound::task_commands::task_resize,
