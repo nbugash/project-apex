@@ -19,6 +19,13 @@ File Layout* and must match it; where they disagree, one of the two documents is
 
 ---
 
+**Every new file must appear in a list somewhere.** In this codebase that is
+`generate_handler!` for a Tauri command, the enclosing `mod.rs` for a Rust module,
+`wdio.conf.ts`'s spec arrays for an end-to-end spec, and `Cargo.toml` for a dependency. Analyze
+runs 10 and 11 each found one of these missing, and F011 shipped four instances of the same shape
+— an artifact that exists with nothing pointing at it. The tasks below name the registration
+explicitly wherever they create something.
+
 ## Phase 1: Setup (Shared Infrastructure)
 
 - [ ] T001 Add `diffy = "0.4"` to `client/core/Cargo.toml` with a comment recording why 0.4 rather than 0.5: 0.5 requires rustc 1.85 and this workspace's MSRV is 1.75, which `cargo add` reports and a reader would otherwise rediscover
@@ -68,6 +75,7 @@ opened file reads, and no action hangs waiting for a reply that is not coming.
 - [ ] T018 [US1] `client/ui/lib/offline/state.svelte.ts`: `OfflineStore`, taking `connected` from the connection state F001 already publishes and **never re-detecting it** (FR-001). A second detector of a state already known is the defect A-RECONNECT records
 - [ ] T018a [US1] In `client/core/src/adapters/inbound/tauri_commands.rs` and `client/core/src/composition.rs`, add `connection: Arc<ObserveConnection>` to `WorkspaceAccess` and wire it. Needed because `CachedWorkspace::connected()` is private and is not on the `WorkspaceProvider` trait, so no command can reach it — without this, `offline_status` and the offline routing of `file_write` have nowhere to get the answer from. Rejected alternative: routing inside `CachedWorkspace::write_file`, which already checks it, but that widens the caching layer's job and hides the offline branch from where the `HeldLocally` outcome is produced
 - [ ] T019 [US1] In `client/core/src/adapters/inbound/tauri_commands.rs`, `offline_status` per `contracts/offline-commands.md`: the workspace resolved in the core, never accepted from the view, and no engine contact on this path
+- [ ] T019a [US1] In `client/core/src/lib.rs`, add `cmd::offline_status` to `generate_handler!`. `lib.rs` already carries the warning from the feature that learned this: "Registered here or the webview's `invoke` resolves to nothing and every open fails as an unknown command." F006 hit it with four commands and F011 with four more; the failure is a runtime unknown-command error, so it surfaces only when the interface calls it
 - [ ] T020 [US1] In `client/ui/lib/statusbar/StatusBar.svelte`, the offline indicator built from design-system tokens only, carrying an icon and a word so the state is not held in colour alone (FR-002, FR-004)
 - [ ] T021 [US1] In `client/ui/lib/workspace/FileTree.svelte`, mark a folder that was never listed as unavailable rather than rendering it empty (FR-006)
 - [ ] T022 [US1] In `client/ui/lib/shell/Window.svelte`, subscribe `OfflineStore` once for the window, on the same terms as the git store and the file-event router: a background tab must not be the reason a state stops being reported
@@ -98,7 +106,7 @@ offline, and confirm every saved edit is present.
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] `client/core/src/application/use_cases/retain_edit.rs`: `RetainEdit::save` per design.md — on a path that already has offline work it replaces the **content** and leaves the **base untouched** (FR-011c), and it returns the store's error rather than absorbing it
+- [ ] T029 [US2] `client/core/src/application/use_cases/retain_edit.rs` (declared in `use_cases/mod.rs`): `RetainEdit::save` per design.md — on a path that already has offline work it replaces the **content** and leaves the **base untouched** (FR-011c), and it returns the store's error rather than absorbing it
 - [ ] T030 [US2] In `client/core/src/adapters/inbound/tauri_commands.rs`, route `file_write` to `RetainEdit` when `access.connection` reports anything other than connected (T018a added the field), returning a `HeldLocally` outcome in the **success** channel beside F006's existing four. F006 established why: these are outcomes the interface must branch on, and splitting them across `Ok` and `Err` pushes the caller back to inspecting an error to find out which it was
 - [ ] T031 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, keep the editor writable while offline — no `readOnly` — including for a file the client cannot merge (FR-010, FR-017a) — and show that the file's work is held locally
 - [ ] T032 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, serve a reopened buffer from the pending edit rather than from the cached content when one exists (FR-013)
@@ -130,10 +138,10 @@ reconnect, and confirm everything lands with no prompt.
 
 ### Implementation for User Story 3
 
-- [ ] T042 [P] [US3] `client/core/src/application/ports/text_merge.rs`: the `TextMerge` port and `MergeOutcome`, with `Conflict` carrying nothing — a partially merged file is not a thing this feature may produce
+- [ ] T042 [P] [US3] `client/core/src/application/ports/text_merge.rs`: the `TextMerge` port and `MergeOutcome`, declared in `application/ports/mod.rs`, with `Conflict` carrying nothing — a partially merged file is not a thing this feature may produce
 - [ ] T042a [P] [US3] `client/core/tests/merge_confinement.rs`: assert `diffy` is named in exactly one source file, `adapters/outbound/text_merge.rs`. The same rule and reason as `engine/tests/inotify_confinement.rs`: if the merge library may be named anywhere then anywhere may decide what a conflict is, and the conflict boundary is what SC-006b pins down. Strip comments before checking, because F011's first separation guard fired on its own rationale. **Here rather than in Phase 1**: before `text_merge.rs` exists the assertion is trivially true, and a test that cannot fail for four phases is the pattern quickstart §4 exists to catch
-- [ ] T043 [US3] `client/core/src/adapters/outbound/text_merge.rs`: `DiffyMerge`, the only file naming `diffy` (T042a enforces it)
-- [ ] T044 [US3] `client/core/src/application/use_cases/reconcile.rs`: `Reconcile::run` per design.md's sequence — read the host, compare against the base, write or merge or conflict, and delete the row only inside the transaction that commits the write. The base is the write protocol's existing `baseSha256` and no new protocol field is introduced (FR-027)
+- [ ] T043 [US3] `client/core/src/adapters/outbound/text_merge.rs`: `DiffyMerge`, declared in `adapters/outbound/mod.rs`, the only file naming `diffy` (T042a enforces it)
+- [ ] T044 [US3] `client/core/src/application/use_cases/reconcile.rs` (declared in `use_cases/mod.rs`): `Reconcile::run` per design.md's sequence — read the host, compare against the base, write or merge or conflict, and delete the row only inside the transaction that commits the write. The base is the write protocol's existing `baseSha256` and no new protocol field is introduced (FR-027)
 - [ ] T045 [US3] In `client/core/src/application/use_cases/reconcile.rs`, `ReconcileReport` and `Outcome`, returned rather than raised: a reconciliation that returned `Err` would lose the per-file detail FR-024 requires
 - [ ] T046 [US3] In `client/core/src/composition.rs`, wire `Reconcile` to run once per transition into `Connected`, from the connection state already published (A-RECONNECT). Not a timer, not the first successful request
 - [ ] T047 [US3] In `client/core/src/adapters/inbound/tauri_commands.rs` and `client/ui/lib/offline/state.svelte.ts`, surface the reconciliation report to the interface (FR-024)
@@ -166,6 +174,7 @@ developer is asked and neither version is written until they answer.
 
 - [ ] T055 [US4] In `client/core/src/adapters/inbound/tauri_commands.rs`, `conflicts_list` per contract — the remote side read when the list is built, never stored, so it cannot go stale while the developer decides
 - [ ] T056 [US4] In `client/core/src/adapters/inbound/tauri_commands.rs`, `conflict_resolve` — write and forget in one transaction, and a stale refusal becomes a fresh conflict
+- [ ] T056a [US4] In `client/core/src/lib.rs`, add `cmd::conflicts_list` and `cmd::conflict_resolve` to `generate_handler!`, for the reason T019a records
 - [ ] T057 [P] [US4] `client/ui/lib/offline/conflicts.svelte.ts`: `ConflictStore`, refreshed rather than cached, for the same staleness reason
 - [ ] T058 [US4] `client/ui/lib/offline/ConflictPanel.svelte`: the three sides and the choice, from design-system tokens only. **Recorded as a deviation** in spec.md and plan.md: the prototype has no conflict screen, the same shape as F011's branch indicator
 - [ ] T059 [US4] In `client/ui/lib/shell/Window.svelte`, surface outstanding conflicts where the developer will see them without hunting
@@ -202,7 +211,7 @@ offline, and confirm they are readable.
 - [ ] T069 [US5] In `engine/src/adapters/outbound/git_cli.rs`, implement it with `git log --name-only --pretty=format: -n <commits> -- .`, honouring the prefix re-rooting FR-003a established and the config pinning already there. **All three flags matter and were verified against git 2.43**: without `--pretty=format:` the parser meets commit headers; without `-- .` the walk covers the whole repository's history, and while the prefix strip would still drop the outsiders, the work is wasted on exactly the monorepo the scoping exists for; paths come back repository-root-relative, so the same prefix machinery as `status` applies unchanged
 - [ ] T070 [US5] In `engine/src/adapters/inbound/rpc.rs`, dispatch `git/recentlyChanged`, refusing an unregistered workspace with `-32001` and a non-positive `commits` with `-32602`
 - [ ] T071 [P] [US5] In `client/core/src/application/ports/git_provider.rs` and `client/core/src/adapters/outbound/remote_git.rs`, add `recently_changed` through the transport
-- [ ] T072 [US5] `client/core/src/application/use_cases/prefetch.rs`: `Prefetch::run` — manifests first, then recent-commit paths, checking the budget before each fetch and stopping rather than evicting
+- [ ] T072 [US5] `client/core/src/application/use_cases/prefetch.rs` (declared in `use_cases/mod.rs`): `Prefetch::run` — manifests first, then recent-commit paths, checking the budget before each fetch and stopping rather than evicting
 - [ ] T073 [US5] In `client/core/src/composition.rs`, run prefetch at background priority (§4.6) so it cannot delay interactive traffic (FR-030)
 
 **Checkpoint**: all five subfeatures delivered.
