@@ -929,3 +929,48 @@ pub async fn workspace_resume(
     }
     Ok(true)
 }
+
+/// Line coordinates only, for one file.
+///
+/// **There is no field here for content and there must never be one** (§12.3, FR-021). The
+/// guarantee is asserted on the payload in `git_diff.rs`, because a caller that discards text
+/// and a result that carries it look identical from the caller's side.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffDto {
+    pub added: Vec<[u32; 2]>,
+    pub modified: Vec<[u32; 2]>,
+    /// Positions where lines were removed. A position, not a range: the removed lines are not
+    /// in this file, so there is nothing to draw a range over.
+    pub deleted: Vec<u32>,
+}
+
+/// Which lines of one file differ.
+///
+/// Goes to the engine rather than to the projection, unlike `git_status`: a diff is per file
+/// and per open editor, so caching every one would hold the whole repository's diffs for the
+/// sake of the one file on screen. An outage therefore makes this unavailable, which is the
+/// truth -- and the gutter shows nothing rather than stale marks.
+#[tauri::command]
+pub async fn git_file_diff(
+    path: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<GitDiffDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    // Contained here as well as on the engine. A path from the webview is untrusted exactly as
+    // a path from the wire is (Principle VI).
+    let rel = editor_path(&path)?;
+    let Some(git) = access.git.as_ref() else {
+        // No engine configured. An empty diff rather than an error: a gutter with no marks is
+        // the correct rendering of "nothing is known", and a failure would put an error beside
+        // a file the developer can read perfectly well.
+        return Ok(GitDiffDto::default());
+    };
+    let diff = git.file_diff(&ws, rel.as_str()).await?;
+    Ok(GitDiffDto {
+        added: diff.added,
+        modified: diff.modified,
+        deleted: diff.deleted,
+    })
+}

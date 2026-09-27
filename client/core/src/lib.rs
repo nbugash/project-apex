@@ -48,6 +48,7 @@ pub fn run() {
             // could ask the engine to watch anything. F011's FR-002a depends on it.
             cmd::workspace_watch,
             cmd::workspace_resume,
+            cmd::git_file_diff,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,
             adapters::inbound::task_commands::task_resize,

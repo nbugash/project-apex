@@ -135,20 +135,20 @@ deleted lines; open an unmodified one and confirm it marks none.
 
 ### Tests for User Story 3
 
-- [ ] T050 [P] [US3] `engine/tests/git_diff.rs`: parse `--unified=0` hunk headers, including **`@@ -2 +2 @@` where the counts are elided** and `@@ -4,0 +5 @@` where a zero count means an insertion. A parser assuming two numbers per side mishandles the first (research.md) (FR-020)
-- [ ] T051 [P] [US3] In `engine/tests/git_diff.rs`, assert the result carries **no file content** — inspected on the payload, not on the parser, because a parser that discards text and a result that carries it look identical from the parser's side (FR-021, SC-010)
-- [ ] T052 [P] [US3] In `engine/tests/git_diff.rs`, an unmodified file returns three empty lists rather than an error, and an untracked file returns every line as added (FR-022)
-- [ ] T053 [P] [US3] `tests/unit/git-gutter.test.ts`: coordinates become decorations, a deletion becomes a position rather than a zero-length range, and an empty diff produces no decorations (FR-020, FR-023)
-- [ ] T054 [US3] `client/core/tests/git_gutter_budget.rs`: p99 over at least 100 samples from opening a modified file to its coordinates being available, **printed** against 250 ms with the measured value shown (SC-004, A-NFR) (SC-004)
+- [X] T050 [P] [US3] `engine/tests/git_diff.rs`: parse `--unified=0` hunk headers, including **`@@ -2 +2 @@` where the counts are elided** and `@@ -4,0 +5 @@` where a zero count means an insertion. A parser assuming two numbers per side mishandles the first (research.md) (FR-020)
+- [X] T051 [P] [US3] In `engine/tests/git_diff.rs`, assert the result carries **no file content** — inspected on the payload, not on the parser, because a parser that discards text and a result that carries it look identical from the parser's side (FR-021, SC-010)
+- [X] T052 [P] [US3] In `engine/tests/git_diff.rs`, an unmodified file returns three empty lists rather than an error, and an untracked file returns every line as added (FR-022)
+- [X] T053 [P] [US3] `tests/unit/git-gutter.test.ts`: coordinates become decorations, a deletion becomes a position rather than a zero-length range, and an empty diff produces no decorations (FR-020, FR-023)
+- [X] T054 [US3] `client/core/tests/git_gutter_budget.rs`: p99 over at least 100 samples from opening a modified file to its coordinates being available, **printed** against 250 ms with the measured value shown (SC-004, A-NFR) (SC-004)
 
 ### Implementation for User Story 3
 
-- [ ] T055 [US3] In `engine/src/adapters/outbound/git_cli.rs`, `file_diff` via `--unified=0`, taking only the hunk headers
-- [ ] T056 [US3] In `engine/src/adapters/inbound/rpc.rs`, dispatch `git/getFileDiff`, refusing an escaping path with `-32002` and a missing one with `-32003`
-- [ ] T057 [US3] In `client/core/src/adapters/outbound/remote_git.rs` and `tauri_commands.rs`, `file_diff` through to a `git_file_diff` command
-- [ ] T058 [P] [US3] `client/ui/lib/git/gutter.ts`: coordinates to Monaco decorations, pure, so the mapping is testable without a window
-- [ ] T059 [US3] `client/ui/lib/editor/EditorPanel.svelte`: apply the decorations on open, and follow a change to the file's git state
-- [ ] T060 [US3] `tests/e2e/git-gutter.spec.ts`: US3's acceptance scenarios — marks for each kind, none on an unmodified file, marks following a host change, and zero file content in the diff payload
+- [X] T055 [US3] In `engine/src/adapters/outbound/git_cli.rs`, `file_diff` via `--unified=0`, taking only the hunk headers
+- [X] T056 [US3] In `engine/src/adapters/inbound/rpc.rs`, dispatch `git/getFileDiff`, refusing an escaping path with `-32002` and a missing one with `-32003`
+- [X] T057 [US3] In `client/core/src/adapters/outbound/remote_git.rs` and `tauri_commands.rs`, `file_diff` through to a `git_file_diff` command
+- [X] T058 [P] [US3] `client/ui/lib/git/gutter.ts`: coordinates to Monaco decorations, pure, so the mapping is testable without a window
+- [X] T059 [US3] `client/ui/lib/editor/EditorPanel.svelte`: apply the decorations on open, and follow a change to the file's git state
+- [X] T060 [US3] `tests/e2e/git-gutter.spec.ts`: US3's acceptance scenarios — marks for each kind, none on an unmodified file, marks following a host change, and zero file content in the diff payload
 
 ---
 

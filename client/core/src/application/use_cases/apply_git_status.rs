@@ -71,6 +71,20 @@ impl ApplyGitStatus {
         .await
     }
 
+    /// Which lines of one file differ.
+    ///
+    /// Not applied to anything: a diff belongs to the editor showing that file, and storing it
+    /// would hold the whole repository's diffs for the sake of the one on screen.
+    pub async fn file_diff(
+        &self,
+        workspace: &WorkspaceId,
+        relative_path: &str,
+    ) -> crate::application::ports::workspace_provider::ProviderResult<
+        apex_protocol::wire::GitDiffResult,
+    > {
+        self.git.file_diff(workspace, relative_path).await
+    }
+
     /// Ask for a workspace's status outright, and apply the answer.
     ///
     /// **Asking is also what subscribes.** The engine begins watching a repository when a

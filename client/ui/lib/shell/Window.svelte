@@ -399,7 +399,7 @@
                model swapped underneath it. The buffer behind it is not remounted: it lives in
                `buffers.svelte.ts` precisely so a tab switch cannot lose it. -->
           {#key activeDocument.id}
-            <EditorPanel path={activeDocument.path} {autosave} />
+            <EditorPanel path={activeDocument.path} {autosave} gitRevision={git.revision} />
           {/key}
         {:else}
           <p class="empty">No document open</p>

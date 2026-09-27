@@ -134,3 +134,14 @@ export const workspaceWatch = (add: string[], remove: string[]): Promise<WatchOu
 /// a deleted workspace leaves behind rather than an error.
 export const workspaceResume = (workspaceId: string): Promise<boolean> =>
   invoke('workspace_resume', { workspaceId });
+
+/// Line coordinates only. There is no field here for content and there must never be one
+/// (§12.3, FR-021).
+export interface FileDiffDto {
+  added: Array<[number, number]>;
+  modified: Array<[number, number]>;
+  deleted: number[];
+}
+
+export const gitFileDiff = (path: string): Promise<FileDiffDto> =>
+  invoke('git_file_diff', { path });

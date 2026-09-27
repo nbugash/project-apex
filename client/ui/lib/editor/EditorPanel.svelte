@@ -33,6 +33,8 @@
   import { describeOutcome } from './ending';
   import { editorTheme } from './palette';
   import { sessionSetAutosave } from '../ipc';
+  import * as ipc from '../ipc';
+  import { gutterMarks } from '../git/gutter';
   import { shellState } from '../state.svelte';
 
   interface Props {
@@ -41,8 +43,13 @@
     /// Whether saves happen without being asked. Owned by the session store, passed in, so this
     /// component never becomes a second place the preference lives (FR-007b).
     autosave?: boolean;
-  }
-  let { path = null, autosave = false }: Props = $props();
+      /// Bumped whenever this workspace's git state changes, so the gutter re-reads.
+    ///
+    /// A number rather than the diff itself: the diff is per file and fetched per editor, and
+    /// passing it in would make the window hold every open file's diff to hand one of them down.
+    gitRevision?: number;
+}
+  let { path = null, autosave = false, gitRevision = 0 }: Props = $props();
 
   let host = $state<HTMLDivElement | null>(null);
   // Reactive, so the effect below re-runs once Monaco has finished loading. As plain variables
@@ -208,6 +215,59 @@
     }
   });
 
+  /// The gutter: which lines of this file differ from the repository.
+  ///
+  /// Fetched per editor rather than held by the window, because a diff belongs to the file on
+  /// screen; the window would otherwise hold the whole repository's diffs to hand one down.
+  ///
+  /// Re-read on `gitRevision`, so a change made on the host moves the marks without the
+  /// developer touching anything (FR-020). Decorations are replaced wholesale: a diff is a
+  /// whole answer about a file, and merging would leave a mark for a line that stopped
+  /// differing.
+  let decorations: { clear: () => void } | null = null;
+  $effect(() => {
+    // Read before the guards, for the reason the effect above records: an effect that returns
+    // early has subscribed only to what it read first.
+    const p = path;
+    const revision = gitRevision;
+    const e = editor;
+    const api = monaco;
+    if (!p || !e || !api) return;
+
+    let cancelled = false;
+    void ipc
+      .gitFileDiff(p)
+      .then((diff) => {
+        if (cancelled) return;
+        const marks = gutterMarks(diff);
+        decorations?.clear();
+        decorations = e.createDecorationsCollection(
+          marks.map((m) => ({
+            range: new api.Range(m.startLine, 1, m.endLine, 1),
+            options: {
+              isWholeLine: false,
+              linesDecorationsClassName: m.className,
+              // The word as well as the stripe, because a two-pixel mark in a gutter is not
+              // reachable by a screen reader and is the whole of the information here.
+              linesDecorationsTooltip: m.kind,
+            },
+          })),
+        );
+      })
+      .catch(() => {
+        // Unavailable -- no engine, or an outage. The gutter shows nothing rather than stale
+        // marks, because marks that no longer describe the file are worse than none.
+        if (!cancelled) decorations?.clear();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  });
+  // Nothing is left behind when the panel goes: a decorations collection outliving its editor
+  // holds the model it decorated.
+  $effect(() => () => decorations?.clear());
+
   /// Expose the editor so the end-to-end suite can read what is rendered, on the same terms as
   /// the terminal: only under automation, because what a developer has open is their business.
   function publishForAutomation(
@@ -320,6 +380,29 @@
     flex: 1 1 auto;
     min-block-size: 0;
     min-inline-size: 0;
+  }
+
+  /* The git gutter. `:global` because Monaco owns these elements: the classes are handed to it
+     and applied to nodes Svelte never sees, so a scoped rule would compile to a selector that
+     matches nothing and the marks would silently not appear.
+
+     Three separate treatments rather than three colours: an added line is a solid bar, a
+     modified one is a narrower bar, and a deletion is a wedge. The distinction survives
+     greyscale and colour blindness, which FR-015 requires of every state this feature
+     publishes and which a colour-only gutter fails for roughly one developer in twelve. */
+  .editor :global(.vk-gutter-added),
+  .editor :global(.vk-gutter-modified),
+  .editor :global(.vk-gutter-deleted) {
+    margin-inline-start: var(--space-1);
+  }
+  .editor :global(.vk-gutter-added) {
+    border-inline-start: 2px solid var(--color-accent-400);
+  }
+  .editor :global(.vk-gutter-modified) {
+    border-inline-start: 2px dashed var(--color-accent-2-500);
+  }
+  .editor :global(.vk-gutter-deleted) {
+    border-inline-start: 2px dotted var(--color-neutral-300);
   }
 
   .editor {

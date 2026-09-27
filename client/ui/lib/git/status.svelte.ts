@@ -41,8 +41,16 @@ export function emptyStatus(): GitStatus {
 /// cost that only appears on the repositories where it matters.
 export class GitStatusStore {
   #status = $state<GitStatus>(emptyStatus());
+  /// Bumped on every applied refresh, so a consumer that does not read the status itself --
+  /// the editor gutter, which fetches its own per-file diff -- still has something to depend
+  /// on. Comparing statuses instead would make every surface re-derive when any path changed.
+  #revision = $state(0);
   #byPath = $derived(new Map(this.#status.changes.map((c) => [c.path, c.status])));
   #stop: UnlistenFn | null = null;
+
+  get revision(): number {
+    return this.#revision;
+  }
 
   get branch(): GitBranch {
     return this.#status.branch;
@@ -61,6 +69,7 @@ export class GitStatusStore {
   async refresh(): Promise<void> {
     try {
       this.#status = await invoke<GitStatus>('git_status');
+      this.#revision += 1;
     } catch {
       // A failed read leaves the previous state exactly as it was. Clearing would say nothing
       // has changed, which is a claim this client cannot make when it could not read.

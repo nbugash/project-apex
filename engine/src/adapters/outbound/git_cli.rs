@@ -31,6 +31,51 @@ impl GitCli {
         }
     }
 
+    /// Every line as added, when the path is untracked; three empty lists when it is merely
+    /// unchanged.
+    ///
+    /// `--no-index` against `/dev/null` rather than counting lines here: a file with no
+    /// trailing newline, or one git considers binary, are both cases git already decides
+    /// correctly and a line count would get wrong in the same way twice.
+    fn whole_file_if_untracked(&self, root: &Path, rel: &str) -> Result<GitDiffResult, GitFailure> {
+        // Tracked paths are unchanged, which is the ordinary case and the cheap answer.
+        if self
+            .run(root, &["ls-files", "--error-unmatch", "--", rel])
+            .is_ok()
+        {
+            return Ok(GitDiffResult::default());
+        }
+        // `--no-index` reports a difference by **exiting 1**, which is success for our purpose
+        // and a failure to `run`. Tolerated here and nowhere else.
+        let out = Command::new(&self.program)
+            .args([
+                "diff",
+                "--unified=0",
+                "--no-color",
+                "--no-index",
+                "--",
+                "/dev/null",
+                rel,
+            ])
+            .current_dir(root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => GitFailure::GitUnavailable,
+                _ => GitFailure::Failed(e.to_string()),
+            })?;
+        match out.status.code() {
+            // 0: identical to nothing, so the file is empty. 1: it differs, which is the case
+            // this exists for. Anything else -- including a path that is not there -- is an
+            // empty diff rather than a failure, because a file the developer cannot see is not
+            // a file with unknown git state.
+            Some(0) | Some(1) => Ok(parse_diff(&String::from_utf8_lossy(&out.stdout))),
+            _ => Ok(GitDiffResult::default()),
+        }
+    }
+
     /// Is this directory **itself** a repository's working tree?
     ///
     /// `rev-parse` walks upward, so a plain directory inside a checkout answers every git
@@ -147,9 +192,15 @@ impl Git for GitCli {
             &["diff", "--unified=0", "--no-color", "--", rel],
         )?;
         if raw.trim().is_empty() {
-            // Either unchanged, or untracked — git diff says nothing about a path it does not
-            // track. An untracked file is wholly new, which the caller resolves from its status.
-            return Ok(GitDiffResult::default());
+            // Silence means one of two things and they are not the same answer. **Unchanged**
+            // is three empty lists; **untracked** is every line added, because nothing has been
+            // recorded for the file to differ from (contracts/git-status.md guarantee 5).
+            //
+            // `git diff` says nothing about a path it does not track, so the two are
+            // indistinguishable here without asking. The previous version returned empty for
+            // both and left a comment saying the caller would resolve it from the status --
+            // no caller did, and a new file opened in the editor showed no gutter marks at all.
+            return self.whole_file_if_untracked(root.as_path(), rel);
         }
         Ok(parse_diff(&raw))
     }
