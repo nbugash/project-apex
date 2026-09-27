@@ -8,6 +8,7 @@ use apex_engine::adapters::inbound::rpc::{self, Action};
 use apex_engine::adapters::outbound::engine_socket::{self, Claim};
 use apex_engine::adapters::outbound::frame_writer::FrameWriter;
 use apex_engine::adapters::outbound::git_cli::GitCli;
+use apex_engine::adapters::outbound::git_watchers::GitWatchers;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
 use apex_engine::adapters::outbound::task_threads::TaskService;
 use apex_engine::adapters::outbound::watchers::{WatcherFactory, Watchers};
@@ -91,7 +92,23 @@ fn main() {
     // a workspace with no git state -- which `status_or_nothing` already turns into a
     // successful empty answer (FR-027, FR-028). Gating it by platform would replace a runtime
     // fact the client can be told about with a compile-time one it cannot.
-    let git = GitService::new(Arc::new(GitCli::default()));
+    // Linux gets a real git watch; anything else gets none, and git is then answered on
+    // request rather than pushed -- FR-027's degradation applied to the push half. The loss is
+    // stated by the shape of what happens, not hidden: `git/getStatus` still works.
+    #[cfg(target_os = "linux")]
+    let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> = Some(
+        Arc::new(apex_engine::adapters::outbound::inotify_watcher::InotifyGitWatch),
+    );
+    #[cfg(not(target_os = "linux"))]
+    let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> = None;
+
+    let git = GitWatchers::new(
+        git_watch,
+        Arc::new(GitService::new(Arc::new(GitCli::default()))),
+        Arc::clone(&clock),
+        Arc::clone(&writer),
+        codec.clone(),
+    );
 
     // A restart is announced, never inferred. The client learns about it because it was told,
     // and the identity it carries is what distinguishes a restart from a new session.
@@ -227,7 +244,7 @@ fn serve(
     fs: &dyn FileSystem,
     watchers: &Watchers,
     tasks: Option<&TaskService>,
-    git: Option<&GitService>,
+    git: Option<&GitWatchers>,
     codec: &mut FrameCodec,
     writer: &Arc<FrameWriter>,
 ) {

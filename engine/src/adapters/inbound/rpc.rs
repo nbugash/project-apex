@@ -150,7 +150,7 @@ pub fn dispatch(
     fs: &dyn crate::application::ports::file_system::FileSystem,
     watchers: Option<&crate::adapters::outbound::watchers::Watchers>,
     tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
-    git: Option<&crate::application::use_cases::git_status::GitService>,
+    git: Option<&crate::adapters::outbound::git_watchers::GitWatchers>,
     codec: &FrameCodec,
     body: &str,
 ) -> Action {
@@ -322,6 +322,12 @@ pub fn dispatch(
             // descriptor held for a directory nobody is looking at.
             if let Some(w) = watchers {
                 w.forget(&p.workspace_id);
+            }
+            // And its git watch, and the snapshot the pager was holding for it. Kept together
+            // with the line above because they are the same fact about a closed workspace:
+            // nothing is looking at it any more.
+            if let Some(g) = git {
+                g.forget(&p.workspace_id);
             }
 
             if let Some(service) = tasks {
@@ -569,7 +575,7 @@ pub fn dispatch(
             }
         }
         "git/getStatus" => {
-            let Some(service) = git else {
+            let Some(watchers) = git else {
                 // No git service composed. An empty status rather than an error, for the same
                 // reason a workspace without a repository gets one: a client that cannot read
                 // git is not a client whose workspace has failed (FR-027, FR-028).
@@ -589,6 +595,7 @@ pub fn dispatch(
                 .unwrap_or(serde_json::Value::Null);
             match serde_json::from_value::<apex_protocol::wire::GitStatusParams>(params) {
                 Ok(req) => {
+                    let service = watchers.service();
                     let limit = req
                         .limit
                         .unwrap_or(apex_protocol::wire::MAX_GIT_STATUS_PAGE);
@@ -602,9 +609,17 @@ pub fn dispatch(
                         None => match roots.resolve(&req.workspace_id.0) {
                             Ok(root) => {
                                 match crate::domain::path::ResolvedPath::resolve(&root, ".", fs) {
-                                    Ok(path) => service
-                                        .refresh(&req.workspace_id.0, &path, limit)
-                                        .map_err(|_| ()),
+                                    Ok(path) => {
+                                        // Asking once is what subscribes. A client that had to
+                                        // request a subscription separately could read a status
+                                        // and then never hear about it changing, which is the
+                                        // failure FR-002 and FR-003 describe; and `observe` is
+                                        // idempotent, so asking again costs a map lookup.
+                                        watchers.observe(&req.workspace_id, &path);
+                                        service
+                                            .refresh(&req.workspace_id.0, &path, limit)
+                                            .map_err(|_| ())
+                                    }
                                     Err(_) => Err(()),
                                 }
                             }
@@ -634,7 +649,7 @@ pub fn dispatch(
             }
         }
         "git/getFileDiff" => {
-            let Some(service) = git else {
+            let Some(service) = git.map(|w| w.service()) else {
                 return reply_or_nothing(encode_result(
                     codec,
                     id,
