@@ -49,3 +49,24 @@ and its base, nothing else, and no automatic conflict resolution.
 Both clarifications recorded in the spec are decisions the reviewer made against the
 recommendation, and both are recorded with their cost rather than as settled facts. That is
 deliberate: the cost is the part that will matter if either turns out to have been wrong.
+
+## Re-validation after clarify (2026-09-27)
+
+Four further clarifications integrated; **16/16 still passing, no regressions**. Three of the
+four sharpened items that were already passing rather than fixing failures:
+
+- *Requirements are testable and unambiguous* was the weakest pass before clarify. "Overlapping"
+  carried the whole merge design and was undefined; FR-020a now names context-aware three-way
+  merge semantics, and SC-006b makes it checkable against a standard tool rather than against an
+  opinion.
+- *Success criteria are measurable* improved for the same reason: SC-002 said "offline edits"
+  where the answer is that only **saved** edits are retained, so the old wording would have been
+  read as a failure by anyone testing an unsaved buffer.
+- *Edge cases are identified* gained the two cases the answers created rather than resolved: an
+  unsaved buffer when the application stops, and prefetch meeting a full cache.
+
+One answer went against the recommendation — files the client cannot merge stay editable and
+always prompt — and it **removed** a restriction rather than adding one, so nothing in the
+checklist regressed. FR-017a and FR-025a carry it, and SC-006a makes the "always prompts, even
+when the host did not change it" half measurable, which is the half an implementation would
+otherwise quietly drop.
