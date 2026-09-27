@@ -23,7 +23,7 @@ fn snapshot(n: usize) -> StatusSnapshot {
 
 #[test]
 fn five_thousand_changes_all_arrive() {
-    // SC-012. Every path marked, none lost beyond the first page.
+    // FR-006a, SC-012. Every path marked, none lost beyond the first page.
     let pager = StatusPager::new();
     pager.hold("w1", snapshot(5_000), MAX_GIT_STATUS_PAGE);
 

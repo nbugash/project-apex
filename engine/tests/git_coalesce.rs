@@ -35,7 +35,8 @@ fn one_change_runs_once_after_the_edge_passes() {
 
 #[test]
 fn fifty_writes_inside_one_second_cost_one_computation() {
-    // SC-013. `git add -A` on a large tree, or a rebase step, writes the index repeatedly; a
+    // FR-006b, SC-013. `git add -A` on a large tree, or a rebase step, writes the index
+    // repeatedly; a
     // full-repository status per write is what presents as the client hanging.
     let mut c = StatusCoalescer::new(EDGE_MS);
     let mut computations = 0usize;

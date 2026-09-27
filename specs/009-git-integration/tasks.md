@@ -180,7 +180,7 @@ no stale marks.
 - [X] T068 Per `specs/009-git-integration/quickstart.md` §5, run the eight mutation checks and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 2 and 4 matter most — each is a plausible simplification that leaves every other test green
 - [X] T069 Per `specs/009-git-integration/quickstart.md` §4, audit the eight negative checks and confirm, for each, that the condition which lets it fail is actually present — a real worktree rather than a directory, a real rename, a real burst, genuinely cached files
 - [X] T070 In `specs/009-git-integration/quickstart.md`, record the seven measurements from §3 in the *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
-- [ ] T071 Verify `make gate` is green, then mark F011's six subfeatures in `specs/features-map.md` and run `feature_map.py verify`
+- [X] T071 Verify `make gate` is green, then mark F011's six subfeatures in `specs/features-map.md` and run `feature_map.py verify`
 
 ---
 

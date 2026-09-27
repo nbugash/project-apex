@@ -7,6 +7,9 @@
 //!
 //! So this test never issues a second request. It asks once -- which is what subscribes -- and
 //! then changes the repository and waits for the engine to say so.
+//!
+//! FR-002a is the half an ordinary save exercises: it writes neither `HEAD` nor `index`, so the
+//! workspace's own file events are the only signal it produces (A-GITNUDGE).
 
 #![cfg(target_os = "linux")]
 
