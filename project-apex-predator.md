@@ -1171,7 +1171,9 @@ set is computed per workspace and used by **both** the indexer and the watcher, 
 is impossible by construction: an indexer that indexes what the watcher ignores returns search
 results for files whose changes are never noticed. No per-workspace user configuration in v1.
 See Appendix A, A-IGNORE, and A-GITWATCH for the two paths inside `.git/` that the git subsystem
-watches for status refresh and that reach neither the indexer nor the workspace watcher.
+watches for status refresh and that reach neither the indexer nor the workspace watcher, and
+A-GITNUDGE for the workspace file events that wake the same refresh for changes those two paths
+do not record.
 
 The client sets no OS watches in remote mode. It receives `workspace/onFileEvent` and acts only
 on paths it is currently displaying.
@@ -3598,8 +3600,60 @@ uniformly unwatched, and that the two exceptions are deliberate and narrow. A se
 adding a third watch inside `.git/` should have to justify it against this record rather than
 discover the precedent by accident.
 
+**Amended by A-GITNUDGE (2026-09-27).** These two watches are necessary and **not sufficient**.
+An ordinary save to a tracked file writes neither of them, so the two watches alone leave the
+most common change of all unreported. The workspace's own file events are a second trigger for
+the same refresh; the separation this record protects is unchanged, because the direction added
+is workspace-to-git and nothing travels the other way.
+
 **Reversal condition.** A host where two extra inotify watches per workspace are material, or a
 git version that offers a cheaper change signal than the files themselves.
+
+---
+
+## A-GITNUDGE — Workspace file events are the second trigger for a git status refresh (2026-09-27)
+
+**Amends A-GITWATCH.**
+
+**Decision.** A git status refresh is woken by **either** of two independent signals: a write to
+`HEAD` or `index` in the resolved git directory (A-GITWATCH), or an ordinary workspace file event
+for that workspace. Both feed the same coalescer, so the cost of a refresh is unchanged and a
+change seen by both signals still costs one git run. The workspace-to-git direction carries **no
+event detail** — the signal says only that something changed, exactly as A-GITWATCH's does, and
+the git subsystem's answer to either is the same: ask git again.
+
+**Rationale.** A-GITWATCH's rationale establishes that `HEAD` and `index` are the only way to
+notice an index-only change. It does not establish, and was read as though it did, that they are
+the only changes worth noticing. They are not: saving a tracked file writes neither, so a
+developer editing code in another terminal — the primary scenario of F011's first user story —
+would see nothing marked at all. The defect was found by a test asserting the engine speaks
+first, which passed for `git add` and failed for a plain save.
+
+**What this costs.** Nothing measurable. The workspace watcher is already established, already
+coalescing, and already delivering these events to the client; this adds one call on a path that
+was already running. No new descriptor, no new thread, no new watch.
+
+**What it does not cover.** Workspace watches are scoped to the paths a client asked to watch,
+which is what it is displaying. A change in a folder the client has never opened is therefore not
+noticed by this trigger, and waits for the next `HEAD` or `index` write or an explicit
+`git/getStatus`. This is accepted: the marks that matter are on rows a developer can see, and a
+client that is not displaying a folder has nothing to mark.
+
+**Alternatives rejected.** A recursive working-tree watch owned by the git subsystem: complete
+coverage regardless of what is displayed, and it costs a descriptor per directory on every
+repository while duplicating the recursive watch F013's indexer will also want — two independent
+recursive watchers over one tree, to be kept in step forever. A timed refresh as a floor: bounded
+and simple, but A-GITWATCH rejected polling in terms that apply unchanged, and it spends git runs
+on repositories where nothing happened. Narrowing the specification so an ordinary save is not
+expected to mark: honest, and it gives up the user story the feature exists to serve.
+
+**Why this binds beyond F011.** Anyone changing what the workspace watcher watches, or the scope
+of `workspace/watch`, is also changing when git status refreshes — a coupling that is invisible
+from either side alone. F013's search watcher in particular must not assume it is the only
+consumer of these events.
+
+**Reversal condition.** A workspace watcher that stops being scoped to displayed paths, which
+would make this trigger complete and the coverage note above obsolete.
 
 ---
 

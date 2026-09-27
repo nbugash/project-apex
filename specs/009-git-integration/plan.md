@@ -125,6 +125,7 @@ engine/
 ├── src/application/ports/git.rs                      # the port: status, diff
 ├── src/application/use_cases/git_status.rs           # coalescing, one run in flight, paging
 ├── src/adapters/outbound/git_cli.rs                  # the subprocess adapter
+├── src/adapters/outbound/git_watchers.rs            # watch + coalescer + pager -> notify
 ├── src/adapters/outbound/inotify_watcher.rs         # + the git watch: two watches, own
 │                                                     #   inotify instance, no exclusion set
 ├── src/adapters/inbound/rpc.rs                       # dispatch arms

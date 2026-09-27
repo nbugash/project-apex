@@ -292,3 +292,12 @@ impl crate::application::ports::git_watch::GitWatch for InotifyGitWatch {
         }))
     }
 }
+
+/// How the composition root obtains the git watch without naming this library.
+///
+/// The same reason `factory` above exists, and found the same way: the composition root named
+/// `InotifyGitWatch` directly, and `inotify_confinement.rs` failed. A guard that catches the
+/// second file on the day it appears is worth more than one that is argued with afterwards.
+pub fn git_watch() -> std::sync::Arc<dyn crate::application::ports::git_watch::GitWatch> {
+    std::sync::Arc::new(InotifyGitWatch)
+}

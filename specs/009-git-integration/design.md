@@ -18,6 +18,7 @@ engine/src/
 ├── application/ports/git.rs                        # the Git port
 ├── application/use_cases/git_status.rs             # coalescer, snapshot, pager
 ├── adapters/outbound/git_cli.rs                    # subprocess + porcelain v2 parser
+├── adapters/outbound/git_watchers.rs               # watch + coalescer + pager -> notify
 ├── adapters/outbound/inotify_watcher.rs            # + the git watch: two watches, its own
 │                                                   #   inotify instance, no exclusion set
 └── adapters/inbound/rpc.rs                         # dispatch arms (existing file)

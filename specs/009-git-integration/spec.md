@@ -45,6 +45,14 @@ Where this document fixes something the system specification leaves open, it say
   file events was rejected because an index-only change — `git add`, `git reset`, `git stash` —
   alters no working-tree file, so staged and unstaged state would stay stale until some
   unrelated file happened to change.
+- Q: What wakes a refresh when a developer simply saves a tracked file, which writes neither
+  `HEAD` nor `index`? → A: **The workspace's own file events, as a second trigger alongside the
+  two watches**, recorded as A-GITNUDGE. The answer above rejected workspace events as the
+  *sole* trigger and was read afterwards as though the two watches were sufficient; they are
+  necessary and not sufficient, and an ordinary save produced no update at all. Both signals feed
+  one coalescer, so a change seen by both still costs one git run. Coverage is the paths a client
+  has a watch on, which is what it displays. **Decided 2026-09-27, during implementation, after a
+  test asserting the engine speaks first passed for `git add` and failed for a plain save.**
 - Q: Does this feature show the current branch in the status bar? → A: Yes. §12.3 requires it and
   the branch already arrives in both `git/getStatus` and `git/onStatusUpdate`; without it the
   branch would be parsed, transmitted and cached with nothing displaying it. Added to the feature
@@ -226,6 +234,10 @@ bulk invalidation rather than one event per file, and that stale git state is go
 - **FR-001**: Git status MUST be computed on the engine, never on the client (§12.1).
 - **FR-002**: The engine MUST refresh status when the repository's `HEAD` changes and when its
   `index` changes (A-GITWATCH).
+- **FR-002a**: The engine MUST also refresh status on an ordinary workspace file event for that
+  workspace, which is the only signal an edit to a tracked file produces (A-GITNUDGE). Both
+  triggers MUST feed one coalescer, so a change that raises both still costs one status
+  computation.
 - **FR-003**: A change that alters the index but no working-tree file — staging, unstaging,
   stashing — MUST refresh status.
 - **FR-004**: The engine MUST resolve the repository's actual git directory rather than assuming

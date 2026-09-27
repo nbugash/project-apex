@@ -20,7 +20,7 @@ use apex_protocol::wire::{GitStatusUpdate, WorkspaceId, MAX_GIT_STATUS_PAGE};
 use crate::adapters::inbound::rpc::encode_notification;
 use crate::adapters::outbound::frame_writer::FrameWriter;
 use crate::application::ports::clock::{Clock, Millis};
-use crate::application::ports::git_watch::{GitWatch, GitWatchHandle};
+use crate::application::ports::git_watch::{GitWatch, GitWatchHandle, StatusNudge};
 use crate::application::use_cases::git_status::{GitService, StatusCoalescer, EDGE_MS};
 use crate::domain::path::ResolvedPath;
 
@@ -30,10 +30,15 @@ use crate::domain::path::ResolvedPath;
 /// than an edge plus a poll. `watch_thread.rs` picked the same number for the same reason.
 const IDLE_POLL_MS: Millis = 50;
 
-/// One observed workspace: the watch that wakes it, and the thread that answers.
+/// One observed workspace: what wakes it, and the thread that answers.
 struct Observed {
     /// Held, not used. Dropping it stops the watch, which is the whole of its interface.
-    _watch: Box<dyn GitWatchHandle>,
+    /// `None` on a host with no watching facility, where the workspace's own file events are
+    /// the only trigger left (A-GITNUDGE).
+    _watch: Option<Box<dyn GitWatchHandle>>,
+    /// Reachable from the map because A-GITNUDGE's second trigger arrives from elsewhere: the
+    /// watch closure holds its own handle, and `nudge` needs one too.
+    coalescer: Arc<Mutex<StatusCoalescer>>,
     alive: Arc<AtomicBool>,
     pump: Option<std::thread::JoinHandle<()>>,
 }
@@ -96,40 +101,40 @@ impl GitWatchers {
     /// Idempotent, because the natural caller is every `git/getStatus` and a second watch on one
     /// repository would double every notification.
     pub fn observe(&self, workspace: &WorkspaceId, root: &ResolvedPath) {
-        let Some(watcher) = self.watch.as_ref() else {
-            return;
-        };
         let mut observed = self.observed.lock().expect("git watchers poisoned");
         if observed.contains_key(&workspace.0) {
             return;
         }
-        // A workspace that is not a repository has no git directory to watch. Not an error and
-        // not worth a word: it is the ordinary case for most directories (FR-027).
+        // A workspace that is not a repository has no git state to report. Not an error and not
+        // worth a word: it is the ordinary case for most directories (FR-027).
         let Ok(git_dir) = self.git.git_dir(root) else {
             return;
         };
 
         let coalescer = Arc::new(Mutex::new(StatusCoalescer::new(EDGE_MS)));
-        let waker = Arc::clone(&coalescer);
-        let clock = Arc::clone(&self.clock);
-        let on_change = Box::new(move || {
-            // Runs on the watcher's thread and must not block: it records that something
-            // happened and returns. Deciding whether that is worth a git run belongs to the
-            // pump, which is the only place the edge is understood.
-            waker
-                .lock()
-                .expect("coalescer poisoned")
-                .notice(clock.now());
+        // The git-directory watch, if this host has one. Its absence is no longer a reason to
+        // stop: A-GITNUDGE's other trigger is the workspace's own file events, which work
+        // regardless, and a repository whose staging is noticed late beats one never noticed.
+        let handle = self.watch.as_ref().and_then(|watcher| {
+            let waker = Arc::clone(&coalescer);
+            let clock = Arc::clone(&self.clock);
+            let on_change = Box::new(move || {
+                // Runs on the watcher's thread and must not block: it records that something
+                // happened and returns. Deciding whether that is worth a git run belongs to the
+                // pump, which is the only place the edge is understood.
+                waker
+                    .lock()
+                    .expect("coalescer poisoned")
+                    .notice(clock.now());
+            });
+            watcher.watch(&git_dir, on_change).ok()
         });
-        let Ok(handle) = watcher.watch(&git_dir, on_change) else {
-            return;
-        };
 
         let alive = Arc::new(AtomicBool::new(true));
         let pump = spawn_pump(
             workspace.clone(),
             root.clone(),
-            coalescer,
+            Arc::clone(&coalescer),
             Arc::clone(&alive),
             Arc::clone(&self.git),
             Arc::clone(&self.clock),
@@ -140,6 +145,7 @@ impl GitWatchers {
             workspace.0.clone(),
             Observed {
                 _watch: handle,
+                coalescer,
                 alive,
                 pump: Some(pump),
             },
@@ -206,4 +212,30 @@ fn spawn_pump(
                 .finish(clock.now());
         }
     })
+}
+
+impl StatusNudge for GitWatchers {
+    /// A-GITNUDGE's second trigger.
+    ///
+    /// Silent for a workspace nobody has asked about and for a directory that is not a
+    /// repository -- both are simply absent from the map, so neither needs a branch here. It
+    /// takes one lock, records a time and returns, because it is called from the thread that
+    /// delivers file events and anything slower would delay them.
+    fn nudge(&self, workspace: &WorkspaceId) {
+        // Read before the map is locked. Taking a clock reading while holding the map would put
+        // whatever the clock does inside a lock the watcher thread also wants.
+        let now = self.clock.now();
+        if let Some(observed) = self
+            .observed
+            .lock()
+            .expect("git watchers poisoned")
+            .get(&workspace.0)
+        {
+            observed
+                .coalescer
+                .lock()
+                .expect("coalescer poisoned")
+                .notice(now);
+        }
+    }
 }

@@ -26,3 +26,18 @@ pub trait GitWatch: Send + Sync {
         on_change: Box<dyn Fn() + Send + Sync>,
     ) -> Result<Box<dyn GitWatchHandle>, GitFailure>;
 }
+
+/// Tell the git subsystem that a workspace may have changed, carrying **no detail at all**.
+///
+/// The second of A-GITNUDGE's two triggers. A-GITWATCH's two watches see every index-only
+/// change and no ordinary save, because saving a tracked file writes neither `HEAD` nor
+/// `index`; the workspace's own file events see the opposite. Both wake one coalescer, so a
+/// change that raises both still costs one git run.
+///
+/// **A workspace and nothing else.** The direction added here is workspace-to-git, and the port
+/// is shaped so nothing can travel the other way: there is no event type in the signature, so
+/// there is nothing for a git event to be turned into. That is what keeps A-GITWATCH's
+/// separation true by construction rather than by care.
+pub trait StatusNudge: Send + Sync {
+    fn nudge(&self, workspace: &apex_protocol::wire::WorkspaceId);
+}

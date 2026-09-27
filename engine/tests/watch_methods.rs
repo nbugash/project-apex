@@ -53,6 +53,7 @@ fn harness(capacity: Option<usize>) -> Harness {
             Arc::clone(&shared),
             Arc::new(FrameWriter::new(Box::new(std::io::sink()))),
             codec.clone(),
+            None,
         ),
         codec,
     }

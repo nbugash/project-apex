@@ -16,6 +16,7 @@ use crate::application::exclusions::ExclusionSet;
 use crate::application::ports::clock::Clock;
 use crate::application::ports::file_system::FileSystem;
 use crate::application::ports::file_watcher::FileWatcher;
+use crate::application::ports::git_watch::StatusNudge;
 use crate::domain::path::CanonicalRoot;
 
 /// How a watcher and a clock are made for one workspace. A closure rather than a type so the
@@ -29,6 +30,12 @@ pub struct Watchers {
     fs: Arc<dyn FileSystem>,
     writer: Arc<FrameWriter>,
     codec: FrameCodec,
+    /// Who to tell that this workspace changed, beyond the client.
+    ///
+    /// A-GITNUDGE: git status is refreshed from two signals, and this is the one the workspace
+    /// watcher already sees. `None` where nothing is listening, which is every test of watching
+    /// that predates F011 and has no reason to care.
+    nudge: Option<Arc<dyn StatusNudge>>,
 }
 
 impl Watchers {
@@ -37,6 +44,7 @@ impl Watchers {
         fs: Arc<dyn FileSystem>,
         writer: Arc<FrameWriter>,
         codec: FrameCodec,
+        nudge: Option<Arc<dyn StatusNudge>>,
     ) -> Self {
         Self {
             services: Mutex::new(HashMap::new()),
@@ -44,6 +52,7 @@ impl Watchers {
             fs,
             writer,
             codec,
+            nudge,
         }
     }
 
@@ -68,6 +77,7 @@ impl Watchers {
                     exclusions,
                     Arc::clone(&self.writer),
                     self.codec.clone(),
+                    self.nudge.clone(),
                 ),
             );
         }

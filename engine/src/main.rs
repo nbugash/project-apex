@@ -56,19 +56,6 @@ fn main() {
     // thread F004 adds is the second, and §4.6 makes this one pipe and one queue.
     let writer = Arc::new(FrameWriter::to_stdout());
 
-    // How a watcher is made for one workspace. A closure so this file decides, and so the
-    // engine still builds and runs on a host with no inotify -- where the factory yields
-    // nothing, `workspace/watch` is refused, and FR-027's degradation applies: browsing and
-    // reading continue, and the loss is stated rather than silent.
-    // Linux gets a watcher; anything else gets none, and `workspace/watch` is refused with a
-    // reason rather than appearing to succeed (FR-027, A-WATCHLOCAL). The concrete library is
-    // named only inside its own adapter, which is what `inotify_confinement.rs` enforces.
-    #[cfg(target_os = "linux")]
-    let factory: WatcherFactory = apex_engine::adapters::outbound::inotify_watcher::factory();
-    #[cfg(not(target_os = "linux"))]
-    let factory: WatcherFactory = Box::new(|_root| None);
-    let watchers = Watchers::new(factory, Arc::clone(&fs), Arc::clone(&writer), codec.clone());
-
     // One clock, shared. `Arc` rather than `Box` because the chunker reads it on every reader
     // thread while the escalation thread and the stop path read it too -- a `Box` can be handed
     // to exactly one of them.
@@ -96,18 +83,42 @@ fn main() {
     // request rather than pushed -- FR-027's degradation applied to the push half. The loss is
     // stated by the shape of what happens, not hidden: `git/getStatus` still works.
     #[cfg(target_os = "linux")]
-    let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> = Some(
-        Arc::new(apex_engine::adapters::outbound::inotify_watcher::InotifyGitWatch),
-    );
+    let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> =
+        Some(apex_engine::adapters::outbound::inotify_watcher::git_watch());
     #[cfg(not(target_os = "linux"))]
     let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> = None;
 
-    let git = GitWatchers::new(
+    let git = Arc::new(GitWatchers::new(
         git_watch,
         Arc::new(GitService::new(Arc::new(GitCli::default()))),
         Arc::clone(&clock),
         Arc::clone(&writer),
         codec.clone(),
+    ));
+
+    // How a watcher is made for one workspace. A closure so this file decides, and so the
+    // engine still builds and runs on a host with no inotify -- where the factory yields
+    // nothing, `workspace/watch` is refused, and FR-027's degradation applies: browsing and
+    // reading continue, and the loss is stated rather than silent.
+    // Linux gets a watcher; anything else gets none, and `workspace/watch` is refused with a
+    // reason rather than appearing to succeed (FR-027, A-WATCHLOCAL). The concrete library is
+    // named only inside its own adapter, which is what `inotify_confinement.rs` enforces.
+    //
+    // Constructed **after** git, because A-GITNUDGE makes the workspace watcher a trigger for
+    // git status as well as a source of client notifications, and it needs something to tell.
+    #[cfg(target_os = "linux")]
+    let factory: WatcherFactory = apex_engine::adapters::outbound::inotify_watcher::factory();
+    #[cfg(not(target_os = "linux"))]
+    let factory: WatcherFactory = Box::new(|_root| None);
+    let watchers = Watchers::new(
+        factory,
+        Arc::clone(&fs),
+        Arc::clone(&writer),
+        codec.clone(),
+        Some(Arc::clone(&git)
+            as Arc<
+                dyn apex_engine::application::ports::git_watch::StatusNudge,
+            >),
     );
 
     // A restart is announced, never inferred. The client learns about it because it was told,
@@ -128,7 +139,7 @@ fn main() {
         fs.as_ref(),
         &watchers,
         tasks.as_ref(),
-        Some(&git),
+        Some(git.as_ref()),
         &mut codec,
         &writer,
     );
@@ -197,7 +208,7 @@ fn main() {
             fs.as_ref(),
             &watchers,
             tasks.as_ref(),
-            Some(&git),
+            Some(git.as_ref()),
             &mut codec,
             &writer,
         );
