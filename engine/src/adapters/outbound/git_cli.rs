@@ -48,18 +48,18 @@ impl GitCli {
         // `--no-index` reports a difference by **exiting 1**, which is success for our purpose
         // and a failure to `run`. Tolerated here and nowhere else.
         let out = Command::new(&self.program)
+            .args(Self::PINNED)
             .args([
                 "diff",
                 "--unified=0",
                 "--no-color",
+                "--no-ext-diff",
                 "--no-index",
                 "--",
                 "/dev/null",
                 rel,
             ])
             .current_dir(root)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .output()
             .map_err(|e| match e.kind() {
@@ -110,17 +110,43 @@ impl GitCli {
         }
     }
 
-    /// Run git and classify what happened.
+    /// Settings pinned on every invocation, and the **only** ones.
     ///
-    /// The environment is pinned so that a developer's own git configuration cannot change what
-    /// the engine reads — `status.relativePaths`, a custom `core.quotePath`, an alias shadowing
-    /// `status` — any of which would alter the output format under a parser that expects one.
+    /// This used to be `GIT_CONFIG_GLOBAL=/dev/null` plus the same for system config, on the
+    /// reasoning that a developer's own configuration must not change what the engine reads.
+    /// The reasoning was right and the instrument was far too blunt: it also discarded
+    /// `core.excludesFile`, so the tree marked files the developer's own `git status` ignores.
+    /// Found by running the application against this repository, where `.claude/` is excluded
+    /// globally — and findable no other way, because every fixture in the suite creates a
+    /// pristine repository with no user configuration at all.
+    ///
+    /// Measured rather than assumed, against git 2.43: `status.relativePaths` and
+    /// `core.quotePath` have **no effect** on `--porcelain=v2 -z` output, even from a
+    /// subdirectory with a non-ASCII filename, because `-z` disables quoting and porcelain
+    /// paths are always repository-relative. An alias cannot shadow a built-in command. So the
+    /// blanket pin was buying nothing on the format side and costing correctness on the
+    /// content side.
+    ///
+    /// What is pinned is what would break a **stated requirement**:
+    ///
+    /// - `status.showUntrackedFiles` — set to `no`, it hides every untracked path, and
+    ///   reporting untracked files is FR-009b and SC-014. This overrides a user preference
+    ///   deliberately, because the feature's job is to report them.
+    ///
+    /// `diff.external` is the other hazard and cannot be neutralised here: `-c diff.external=`
+    /// makes git try to run the empty string. `--no-ext-diff` is the documented way and is
+    /// passed at the diff call sites instead.
+    ///
+    /// Everything else — `core.excludesFile` above all — is the developer's to decide. The
+    /// client should agree with the terminal beside it.
+    const PINNED: [&'static str; 2] = ["-c", "status.showUntrackedFiles=normal"];
+
+    /// Run git and classify what happened.
     fn run(&self, dir: &Path, args: &[&str]) -> Result<String, GitFailure> {
         let out = Command::new(&self.program)
+            .args(Self::PINNED)
             .args(args)
             .current_dir(dir)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .output()
             .map_err(|e| match e.kind() {
@@ -189,7 +215,17 @@ impl Git for GitCli {
         // lines that follow them are discarded here rather than transmitted (§12.3).
         let raw = self.run(
             root.as_path(),
-            &["diff", "--unified=0", "--no-color", "--", rel],
+            // `--no-ext-diff` because `diff.external` replaces the diff driver wholesale:
+            // with one configured, this returns no hunk headers at all and every file looks
+            // unchanged. Measured, not assumed.
+            &[
+                "diff",
+                "--unified=0",
+                "--no-color",
+                "--no-ext-diff",
+                "--",
+                rel,
+            ],
         )?;
         if raw.trim().is_empty() {
             // Silence means one of two things and they are not the same answer. **Unchanged**
