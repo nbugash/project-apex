@@ -438,6 +438,7 @@
   <StatusBar
     connection={shellState.connection}
     workspace={shellState.workspace}
+    branch={git.branch}
     {persistenceFailed}
   />
 </div>

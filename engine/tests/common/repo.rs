@@ -61,6 +61,21 @@ impl Repo {
         me
     }
 
+    /// An initialised repository with **no commits at all**.
+    ///
+    /// The state a developer is in for the first minute of every new project, and the one where
+    /// `# branch.oid (initial)` appears: the branch has a name and no object behind it.
+    pub fn empty() -> Self {
+        let dir = tempfile::tempdir().expect("temp");
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(dir.path(), &["init", "-q", "repo"]);
+        git(&root, &["config", "user.email", "t@example.invalid"]);
+        git(&root, &["config", "user.name", "Fixture"]);
+        git(&root, &["checkout", "-q", "-B", "main"]);
+        Self { root, _dir: dir }
+    }
+
     pub fn write(&self, rel: &str, body: &str) {
         let p = self.root.join(rel);
         if let Some(parent) = p.parent() {

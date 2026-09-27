@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { ConnectionState, WorkspaceReference } from '../ipc';
   import { present } from './presentation';
+  import { branchLabel } from '../git/branch';
+  import type { GitBranch } from '../git/status.svelte';
 
   /// Whether changes on the host are reaching the developer.
   ///
@@ -18,13 +20,22 @@
     workspace: WorkspaceReference | null;
     persistenceFailed?: boolean;
     reporting?: Reporting;
+    /// Where the repository is, or absent when there is no repository (F011, FR-018).
+    ///
+    /// **This surface is not in the prototype.** It is recorded as a deviation in spec.md, and
+    /// everything about it comes from design-system tokens so a designer can move it without
+    /// unpicking an improvised value (Principle I).
+    branch?: GitBranch | null;
   }
   let {
     connection,
     workspace,
     persistenceFailed = false,
     reporting = { kind: 'live' },
+    branch = null,
   }: Props = $props();
+
+  let vcs = $derived(branchLabel(branch));
 
   /// What to say when changes are not being reported. Silence is how a developer would
   /// otherwise discover that watching failed, which is the outcome FR-005 forbids.
@@ -62,6 +73,16 @@
     <span class="truncate">{workspace?.name ?? 'No workspace'}</span>
   </span>
 
+  {#if vcs}
+    <!-- Absent rather than empty when there is no repository: a blank slot reads as a
+         rendering fault, and a placeholder makes a statement about git to a developer who is
+         not using it (FR-019). -->
+    <span class="branch" data-testid="status-branch" data-kind={branch?.kind} title={vcs.title}>
+      <i class="ph {vcs.icon}" aria-hidden="true"></i>
+      <span class="truncate">{vcs.text}</span>
+    </span>
+  {/if}
+
   <span class="connection" role="status" aria-live="polite">
     <i class="ph {state.icon}" aria-hidden="true"></i>
     <span>{state.label}</span>
@@ -97,6 +118,7 @@
     overflow: hidden;
   }
   .workspace,
+  .branch,
   .connection,
   .warn {
     display: inline-flex;
@@ -112,6 +134,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .branch {
+    /* The same truncation rule as the workspace name beside it: a long branch name is common
+       and must not push the connection state off the bar. */
+    max-inline-size: 30%;
+    color: var(--color-neutral-300);
   }
   .connection {
     margin-inline-start: auto;

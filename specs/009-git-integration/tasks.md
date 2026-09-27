@@ -112,15 +112,15 @@ the host and confirm it follows.
 
 ### Tests for User Story 2
 
-- [ ] T043 [P] [US2] `engine/tests/git_branch.rs`: `# branch.head master` yields the branch; `# branch.head (detached)` yields the **detached case and not a branch named "(detached)"**, which is what a header-as-name reading produces (research.md) (FR-018, FR-019)
-- [ ] T044 [P] [US2] In `engine/tests/git_branch.rs`, a repository with no commits reports its branch name with `(initial)` as the commit, so an unborn branch shows a name rather than crashing on a missing object
-- [ ] T045 [P] [US2] `tests/unit/git-branch.test.ts`: the three cases render as a name, a short commit, and nothing at all — never an empty label or a placeholder (FR-019, SC-009)
+- [X] T043 [P] [US2] `engine/tests/git_branch.rs`: `# branch.head master` yields the branch; `# branch.head (detached)` yields the **detached case and not a branch named "(detached)"**, which is what a header-as-name reading produces (research.md) (FR-018, FR-019)
+- [X] T044 [P] [US2] In `engine/tests/git_branch.rs`, a repository with no commits reports its branch name with `(initial)` as the commit, so an unborn branch shows a name rather than crashing on a missing object
+- [X] T045 [P] [US2] `tests/unit/git-branch.test.ts`: the three cases render as a name, a short commit, and nothing at all — never an empty label or a placeholder (FR-019, SC-009)
 
 ### Implementation for User Story 2
 
-- [ ] T046 [US2] In `engine/src/adapters/outbound/git_cli.rs`, parse the branch header into the three-case position data-model.md defines
-- [ ] T047 [US2] In `client/core/src/application/use_cases/apply_git_status.rs` and the cache, store the branch per workspace alongside the state replacement
-- [ ] T048 [US2] `client/ui/lib/statusbar/StatusBar.svelte`: the branch indicator, built from design-system tokens only. This surface is **not in the prototype** and is recorded as a deviation in spec.md; a designer must be able to move it without unpicking an improvised value
+- [X] T046 [US2] In `engine/src/adapters/outbound/git_cli.rs`, parse the branch header into the three-case position data-model.md defines
+- [X] T047 [US2] In `client/core/src/application/use_cases/apply_git_status.rs` and the cache, store the branch per workspace alongside the state replacement
+- [X] T048 [US2] `client/ui/lib/statusbar/StatusBar.svelte`: the branch indicator, built from design-system tokens only. This surface is **not in the prototype** and is recorded as a deviation in spec.md; a designer must be able to move it without unpicking an improvised value
 - [ ] T049 [US2] `tests/e2e/git-branch.spec.ts`: the branch shows, follows a switch, is absent for a non-repository, and identifies the commit when HEAD is detached. For the non-repository case also assert the workspace stays fully usable and surfaces **zero** errors (SC-007) — the engine's half of that is T011's, and a successful empty status still reaches a client that could render it as a failure
 
 ---
