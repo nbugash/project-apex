@@ -549,6 +549,44 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn workspace(&self, ws: &WorkspaceId) -> CacheResult<Option<Workspace>> {
+        self.with(|c| {
+            let found = c
+                .query_row(
+                    "SELECT name, location_type, base_path, last_opened_at
+                       FROM workspaces WHERE workspace_id = ?1",
+                    rusqlite::params![&ws.0],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, i64>(3)?,
+                        ))
+                    },
+                )
+                .ok();
+            Ok(
+                found.map(|(name, location_type, base, last_opened_at)| Workspace {
+                    id: ws.clone(),
+                    name,
+                    location: if location_type == "LOCAL" {
+                        Location::Local { base }
+                    } else {
+                        // The host is not stored: §5.2 keeps the base path and the kind, and the
+                        // host belongs to the connection rather than to the workspace. Empty here
+                        // rather than invented, and only the base path is ever read back.
+                        Location::Remote {
+                            host: String::new(),
+                            base,
+                        }
+                    },
+                    last_opened_at,
+                }),
+            )
+        })
+    }
+
     fn replace_git_status(
         &self,
         ws: &WorkspaceId,

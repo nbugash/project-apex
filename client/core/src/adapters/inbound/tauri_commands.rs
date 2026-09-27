@@ -43,9 +43,28 @@ pub fn shell_ready(shell: State<'_, Shell>) -> Result<(), ShellError> {
     })
 }
 
+/// The restored session, and the workspace identity that comes with it.
+///
+/// **The restore also tells the core which workspace is current.** `workspace_open` sets that,
+/// and a relaunch does not call it -- the session restores the workspace instead. Without this
+/// the core came back up not knowing which workspace it had, so every command that resolves the
+/// workspace itself (Principle VI) answered `UnknownWorkspace` until the developer opened one
+/// by hand. It showed as git marks that survived a restart in the database and not on screen.
+///
+/// The engine outlives the client (A-ENGINELIFE), so its own registration is still there; what
+/// was missing was only this side's memory of which one it was.
 #[tauri::command]
-pub fn session_get(shell: State<'_, Shell>) -> SessionSnapshot {
-    shell.persist.snapshot()
+pub fn session_get(shell: State<'_, Shell>, tasks: State<'_, Tasks>) -> SessionSnapshot {
+    let snapshot = shell.persist.snapshot();
+    if let Some(ws) = snapshot.workspace.as_ref() {
+        let mut current = tasks.current.lock().expect("current workspace");
+        // Only when nothing has been opened since. A restore must never displace a workspace
+        // the developer opened in this session.
+        if current.is_none() {
+            *current = Some(ws.id.clone());
+        }
+    }
+    snapshot
 }
 
 #[tauri::command]
@@ -795,4 +814,118 @@ fn status_slug(status: &apex_protocol::wire::GitStatusKind) -> &'static str {
         Deleted => "deleted",
         Conflict => "conflict",
     }
+}
+
+// ---- Watching (F004's wiring, which F011 depends on) ----
+
+/// What a watch request achieved, as the interface sees it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchOutcomeDto {
+    /// The size of the requested set after the call, **not** the number of host descriptors.
+    pub watching: u32,
+    /// Paths the host could not watch. Data rather than an error: FR-005a keeps the workspace
+    /// browsable when watching fails, and FR-005 requires the loss be stated rather than silent.
+    pub refused: Vec<String>,
+}
+
+/// Ask the engine to watch these paths, and to stop watching those.
+///
+/// **One command taking both halves**, because they are one intention: the interface declares
+/// the set it wants watched, and the difference is what travels. Two commands would let a
+/// client send an add without its matching remove and drift out of step with the engine a
+/// folder at a time.
+///
+/// Folder paths for expanded folders and **file** paths for open editors, exactly as the port
+/// documents: the engine derives the directories. A caller that resolved that itself could not
+/// tell unwatching on a collapse from unwatching on a tab close, so collapsing a folder would
+/// silently stop reporting a file still open inside it (FR-003c, A-WATCHSCOPE).
+#[tauri::command]
+pub async fn workspace_watch(
+    add: Vec<String>,
+    remove: Vec<String>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<WatchOutcomeDto, WorkspaceFailure> {
+    // Resolved in the core, never accepted from the webview (Principle VI).
+    let ws = current_workspace(&tasks)?;
+
+    let mut watching = 0u32;
+    let mut refused: Vec<String> = Vec::new();
+
+    if !remove.is_empty() {
+        let paths = parse_paths(&remove)?;
+        // Unwatched first. Doing it the other way round means the peak set is the union of
+        // before and after, which on a large collapse-and-expand is twice what was ever wanted.
+        let outcome = access.provider.unwatch(&ws, &paths).await?;
+        watching = outcome.watching;
+    }
+    if !add.is_empty() {
+        let paths = parse_paths(&add)?;
+        let outcome = access.provider.watch(&ws, &paths).await?;
+        watching = outcome.watching;
+        refused = outcome
+            .refused
+            .into_iter()
+            .map(|r| r.path.as_str().to_string())
+            .collect();
+    }
+    Ok(WatchOutcomeDto { watching, refused })
+}
+
+/// Untrusted input, refused rather than repaired into something that parses.
+fn parse_paths(raw: &[String]) -> Result<Vec<RelPath>, WorkspaceFailure> {
+    raw.iter().map(|p| editor_path(p)).collect()
+}
+
+/// Make a restored workspace live again.
+///
+/// **A relaunch commonly meets an engine that has never heard of this workspace.** The engine
+/// outlives its client, but only while it has something to preserve: with no tasks running it
+/// exits when the last client goes (A-ENGINELIFE rule 3). So the ordinary case is a fresh
+/// engine, and everything `workspace_open` told it has to be said again -- registration first,
+/// because a watch and a status both name a workspace the engine must already know.
+///
+/// Without this a restored session looked correct and was inert: the tree showed its cached
+/// listing, git showed its stored marks, and nothing would ever update either of them again.
+/// That is the most misleading state this application can be in, because it is
+/// indistinguishable from a host where nothing has changed.
+///
+/// Idempotent, and safe against an engine that *does* still know the workspace: registration is
+/// keyed on the identity, and asking for a status the engine already has costs one computation.
+#[tauri::command]
+pub async fn workspace_resume(
+    workspace_id: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<bool, WorkspaceFailure> {
+    let ws = WorkspaceId(workspace_id);
+    // The root path is not in the session -- it records an identity and a display name -- so it
+    // comes from this client's own projection, which is where the workspace was recorded when
+    // it was opened.
+    let Some(known) = access
+        .cache
+        .workspace(&ws)
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?
+    else {
+        // Nothing to resume. Not an error: a session naming a workspace this client no longer
+        // holds is what a deleted workspace leaves behind.
+        return Ok(false);
+    };
+    let base = match &known.location {
+        crate::domain::workspace::Location::Remote { base, .. } => base.clone(),
+        crate::domain::workspace::Location::Local { base } => base.clone(),
+    };
+
+    if let Some(sender) = tasks.sender.as_ref() {
+        crate::adapters::inbound::task_commands::register_with_engine(sender, &ws.0, &base).await;
+        *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
+    }
+    // Asking is also what makes the engine start watching this repository, so this is not
+    // merely a refresh: without it nothing would be pushed for the rest of the session.
+    if let Some(git) = access.git.as_ref() {
+        let outcome = git.refresh(&ws).await;
+        crate::logging::info(&format!("git status on resume: {outcome:?}"));
+    }
+    Ok(true)
 }

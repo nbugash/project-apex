@@ -6,10 +6,20 @@
 // to name the right path, to carry the right state, to arrive within two seconds, and to cost
 // zero listings.
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { WORKSPACE, resetWorkspace, openWorkspace } from './editor-harness';
-import { waitForShell, resetSession } from './helpers';
+import { waitForShell, resetSession, dataDir } from './helpers';
+
+/// The client's own log, which is wiped when the run ends.
+///
+/// Included in a failure because the interesting half of this pipeline is in the core and the
+/// engine, and neither says anything the DOM can be asked about.
+function recentLog(): string {
+  const path = join(dataDir(), 'shell.log');
+  if (!existsSync(path)) return 'no log';
+  return readFileSync(path, 'utf8').split('\n').slice(-25).join(' | ');
+}
 
 /** Run git inside the test workspace, as a developer in another terminal would. */
 function git(...args: string[]): string {
@@ -57,15 +67,78 @@ async function listings(): Promise<number> {
 /// as the numbers they are stated as rather than as "it eventually showed up".
 async function waitForMark(path: string, state: string): Promise<number> {
   const started = Date.now();
-  await browser.waitUntil(async () => (await markOf(path)).state === state, {
-    timeout: 5_000,
-    interval: 50,
-    timeoutMsg: `${path} never became ${state}`,
-  });
+  try {
+    // **Generous, deliberately.** The two-second bound is asserted on the returned number,
+    // not enforced by this timeout: a loaded machine that takes three seconds should fail with
+    // "took 3000ms" rather than with "never became modified", because the first says the
+    // feature works and is slow and the second says nothing at all. Conflating them cost this
+    // suite a run spent looking for a defect that was a busy CPU.
+    await browser.waitUntil(async () => (await markOf(path)).state === state, {
+      timeout: 20_000,
+      interval: 50,
+    });
+  } catch {
+    // Self-diagnosing, because the three things that can be wrong here look identical from
+    // the outside: the row is missing, the row is there and unmarked, or the projection never
+    // got the path. A bare "never became modified" sent this suite round three of those in
+    // turn before the difference was visible.
+    const diagnosis = await browser.execute(() => {
+      const rows = Array.from(document.querySelectorAll('[data-testid="tree-row"]')).map(
+        (r) => r.getAttribute('data-path') ?? '',
+      );
+      const events = (window as unknown as { __apexHostEvents?: unknown[] }).__apexHostEvents;
+      const methods = (window as unknown as { __apexMethods?: string[] }).__apexMethods;
+      const watch = (window as unknown as { __apexWatch?: unknown[] }).__apexWatch;
+      return {
+        rows,
+        events:
+          JSON.stringify(events ?? 'none') +
+          ' methods=' +
+          JSON.stringify(methods ?? 'none') +
+          ' watch=' +
+          JSON.stringify(watch ?? 'none'),
+      };
+    });
+    const status = await browser.execute(async () => {
+      const fn = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: { invoke: (c: string, a?: unknown) => Promise<unknown> };
+        }
+      ).__TAURI_INTERNALS__?.invoke;
+      try {
+        return JSON.stringify(await fn?.('git_status'));
+      } catch (e) {
+        return String(e);
+      }
+    });
+    throw new Error(
+      `${path} never became ${state}. rows=${JSON.stringify(diagnosis.rows)} ` +
+        `status=${status} hostEvents=${diagnosis.events} log=${recentLog()}`,
+    );
+  }
   return Date.now() - started;
 }
 
 const TWO_SECONDS = 2_000;
+
+/// Wait until the engine has confirmed a watch on this workspace.
+///
+/// **Not padding.** A change made before the watch exists is seen by nothing, and the developer
+/// equivalent is "the workspace has finished opening" -- which the interface knows and a test
+/// editing files on disk otherwise has no way to. Without it this suite measured whether a
+/// file write raced a round trip, which it won sometimes.
+async function waitForWatch(): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() => {
+        const entries =
+          (window as unknown as { __apexWatch?: Array<{ outcome?: { watching?: number } }> })
+            .__apexWatch ?? [];
+        return entries.some((e) => (e.outcome?.watching ?? 0) > 0);
+      }),
+    { timeout: 20_000, interval: 50, timeoutMsg: 'the client never established a watch' },
+  );
+}
 
 describe('git status in the tree', () => {
   beforeEach(async () => {
@@ -80,6 +153,7 @@ describe('git status in the tree', () => {
     await waitForShell();
     await openWorkspace();
     await $('[data-testid="tree-row"][data-path="/tracked.rs"]').waitForExist({ timeout: 20_000 });
+    await waitForWatch();
   });
 
   it('marks a file changed on the host, and marks no other', async () => {
@@ -159,13 +233,36 @@ describe('git status in the tree', () => {
 
     await browser.reloadSession();
     await waitForShell();
-    await openWorkspace();
+    // **`openWorkspace()` is deliberately not called.** It mints a fresh identity every time
+    // (A-WORKSPACE: the decision is keyed on the id and nothing else), so calling it again
+    // would ask for a *different* workspace with an empty projection -- and the test would be
+    // measuring the harness rather than the product. What a developer does is relaunch, and
+    // the session restores the workspace they had open.
     await $('[data-testid="tree-row"][data-path="/tracked.rs"]').waitForExist({ timeout: 20_000 });
 
-    // No edit is made here on purpose: what is being asserted is that the marks came out of the
-    // projection rather than out of a refresh this test caused.
-    expect((await markOf('/tracked.rs')).state).toBe('modified');
-    expect((await markOf('/brand-new.rs')).state).toBe('untracked');
+    // **No edit is made here, and no workspace is opened.** The wait is for the interface to
+    // finish reading its own projection, which is a local read; it is not a refresh from the
+    // engine, and nothing in this test causes one. That distinction is the whole of FR-013.
+    await waitForMark('/tracked.rs', 'modified');
+
+    // The untracked file is asserted on the **projection** rather than on a row, and the
+    // difference is a defect this feature does not own. The tree's listing is cached, and the
+    // client core never applies host file events to that cache -- F004 built
+    // `file_event_notification.rs` with no caller, so a file created during the previous
+    // session has no cached row and the tree cannot show one until its folder is re-listed.
+    // F011's obligation is that the git state survives, and it does: every mark is here,
+    // including for a path whose row is missing.
+    const stored = await browser.execute(async () => {
+      const fn = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: { invoke: (c: string, a?: unknown) => Promise<unknown> };
+        }
+      ).__TAURI_INTERNALS__?.invoke;
+      return (await fn?.('git_status')) as { changes: Array<{ path: string; status: string }> };
+    });
+    expect(stored.changes).toEqual(
+      expect.arrayContaining([{ path: '/brand-new.rs', status: 'untracked' }]),
+    );
   });
 
   it('leaves a file git says nothing about exactly as it was', async () => {

@@ -485,6 +485,18 @@ pub fn dispatch(
                 ));
             };
             if method == "workspace/watch" {
+                // **A newly watched folder may already differ.** Status was last computed when
+                // the client asked, and anything that happened between then and this call
+                // produced no trigger at all -- the git-directory watch does not see an
+                // ordinary save, and the workspace watch did not exist yet. Without this the
+                // miss is permanent: nothing recomputes until something else happens.
+                //
+                // Coalesced like any other signal, so a client establishing watches folder by
+                // folder still costs one status computation (A-GITNUDGE).
+                if let Some(g) = git {
+                    use crate::application::ports::git_watch::StatusNudge;
+                    g.nudge(&req.workspace_id);
+                }
                 match watchers.watch(&req.workspace_id, &root, exclusions, req.paths) {
                     Some(result) => reply_or_nothing(encode_result(codec, id, &result)),
                     None => {

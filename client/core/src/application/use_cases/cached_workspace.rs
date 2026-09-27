@@ -123,6 +123,38 @@ impl WorkspaceProvider for CachedWorkspace {
         self.inner.stat(ws, path).await
     }
 
+    /// Forwarded, with nothing added.
+    ///
+    /// **The caching layer has no opinion about watching.** A watch is a request about the
+    /// future and the cache is a record of the past, so there is nothing here to answer from --
+    /// and a layer that silently reported success while asking nobody would leave a tree that
+    /// had quietly stopped updating, which is the failure FR-025 exists to prevent.
+    ///
+    /// These two were the only provider methods `CachedWorkspace` did not forward, so every
+    /// watch request the client could have made answered `Unsupported` before reaching a
+    /// transport that implements them both.
+    async fn watch(
+        &self,
+        ws: &WorkspaceId,
+        paths: &[RelPath],
+    ) -> ProviderResult<crate::application::ports::workspace_provider::WatchOutcome> {
+        if !self.connected() {
+            return Err(ProviderError::Offline);
+        }
+        self.inner.watch(ws, paths).await
+    }
+
+    async fn unwatch(
+        &self,
+        ws: &WorkspaceId,
+        paths: &[RelPath],
+    ) -> ProviderResult<crate::application::ports::workspace_provider::WatchOutcome> {
+        if !self.connected() {
+            return Err(ProviderError::Offline);
+        }
+        self.inner.unwatch(ws, paths).await
+    }
+
     /// The flow FR-021a through FR-021c specify, in the order they specify it.
     async fn read_file(
         &self,

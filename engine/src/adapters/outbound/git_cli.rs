@@ -84,7 +84,19 @@ impl Git for GitCli {
     fn status(&self, root: &ResolvedPath) -> Result<StatusSnapshot, GitFailure> {
         let raw = self.run(
             root.as_path(),
-            &["status", "--porcelain=v2", "-z", "--branch"],
+            // `--no-optional-locks` first, and it is not a micro-optimisation: an ordinary
+            // `git status` refreshes the index stat cache and **writes `.git/index`**, which
+            // is one of the two files A-GITWATCH watches. Without this, every status run wakes
+            // the watch that schedules the next one -- a loop the coalescer bounds to a low
+            // rate but never ends, on every open repository, forever. It also means a status
+            // computation is no longer distinguishable from a developer staging a file.
+            &[
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+            ],
         )?;
         parse_status(&raw)
     }

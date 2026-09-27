@@ -44,6 +44,10 @@ pub fn run() {
             // F011's read surface. Registered here for the reason the four above record: an
             // unregistered command is an unknown command, and the webview finds out at runtime.
             cmd::git_status,
+            // F004 built the client's watch components and never connected them; nothing
+            // could ask the engine to watch anything. F011's FR-002a depends on it.
+            cmd::workspace_watch,
+            cmd::workspace_resume,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,
             adapters::inbound::task_commands::task_resize,

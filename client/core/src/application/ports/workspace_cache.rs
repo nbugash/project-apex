@@ -90,6 +90,14 @@ pub trait WorkspaceCache: Send + Sync {
     fn register(&self, ws: &Workspace, now: i64) -> CacheResult<Attachment>;
     fn forget(&self, ws: &WorkspaceId) -> CacheResult<()>;
 
+    /// One workspace as it was registered, or `None` if this client has never seen it.
+    ///
+    /// Needed because a restored session carries an identity and a display name but **not the
+    /// root path**, and the engine has to be told the path again: it exits when nothing is left
+    /// to preserve (A-ENGINELIFE), so a relaunch commonly meets an engine that has never heard
+    /// of this workspace.
+    fn workspace(&self, ws: &WorkspaceId) -> CacheResult<Option<Workspace>>;
+
     // ---- tree ----
     /// One indexed query, no join. Ordered as §5.4's sidebar query orders.
     fn list_children(&self, ws: &WorkspaceId, parent: &RelPath) -> CacheResult<Vec<FsEntry>>;

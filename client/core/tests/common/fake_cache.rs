@@ -377,6 +377,10 @@ impl WorkspaceCache for InMemoryCache {
         Ok(report)
     }
 
+    fn workspace(&self, ws: &WorkspaceId) -> CacheResult<Option<Workspace>> {
+        Ok(self.workspaces.lock().unwrap().get(&ws.0).cloned())
+    }
+
     fn replace_git_status(&self, ws: &WorkspaceId, git: &GitProjection) -> CacheResult<()> {
         // Honours `write_fails` like every other write here, so a test can make the commit fail
         // and check that the previous state survives (FR-009a).
