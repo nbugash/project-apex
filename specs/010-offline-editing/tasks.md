@@ -246,12 +246,39 @@ and Principle VII's requirement, and it is what made F011's defects visible befo
 
 ### Parallel Opportunities
 
-- T003 and T004 with T005 through T007: protocol and schema touch different crates.
-- All of US1's tests (T012 through T017) in parallel — different files, no shared state.
-- US5's engine tests (T060 through T063) in parallel with any client story's work.
-- T074 and T075 in parallel; different documents.
-- **Not parallel**: anything touching `tauri_commands.rs` (T019, T030, T055, T056) or
-  `reconcile.rs` (T044, T045) — same file, sequential.
+**What `[P]` means here.** The tasks are independent *as work* — no task depends on another's
+result — which is what makes them safe to plan in any order. It does **not** license two writers
+in one file at the same time. Several tasks deliberately add cases to one test file, and the
+convention is: **one writer per file at a time, whatever the marker says.**
+
+This is worth stating rather than fixing by deleting markers. Thirty-eight tasks write a file
+another task also writes, mostly because a test file gathers a story's cases — `reconcile.rs` has
+thirteen, `retain_edit.rs` seven, `git_recent.rs` six. Stripping `[P]` from all of them would lose
+the information that the cases are independent, which is what matters when deciding what to leave
+until later.
+
+**Genuinely parallel — different files, no shared writer:**
+
+- Protocol, schema and port work in Phase 2: different crates.
+- US5's engine tests against any client story's work: different crates.
+- The two documentation tasks in Phase 8: different documents.
+
+**Files with more than one writer**, which must be taken one task at a time:
+
+| File | Tasks |
+|---|---|
+| `client/core/src/adapters/inbound/tauri_commands.rs` | six, across US1, US2 and US4 |
+| `client/core/tests/reconcile.rs` | thirteen, across US3 and US4 |
+| `client/core/tests/retain_edit.rs` | seven, in US2 |
+| `engine/tests/git_recent.rs` | six, in US5 |
+| `tests/e2e/offline-state.spec.ts` | six, across US1 and US2 |
+| `client/core/tests/merge_agreement.rs` | three, across US3 and US4 |
+| `client/core/tests/prefetch.rs` | three, in US5 |
+| `client/core/tests/offline_budget.rs`, `tests/unit/offline-presentation.test.ts` | two each |
+
+Described by file rather than by task id on purpose: an enumerated id list goes stale on the next
+insertion, which is exactly how the previous version of this section came to name four
+`tauri_commands.rs` tasks when there were six.
 
 ## Parallel Example: User Story 1
 
