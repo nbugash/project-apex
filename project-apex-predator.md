@@ -1980,6 +1980,87 @@ two — or measurement showing the 1 MiB cap admits an unacceptable head-of-line
 
 ---
 
+## A-PENDING — Offline work is its own table, keyed by path (2026-09-27)
+
+**Extends A-OFFLINE, which said a persisted outbox "becomes part of the cache schema (§5.2)"
+without saying what shape.**
+
+**Decision.** Work saved while offline lives in its own table keyed by `(workspace_id,
+relative_path)`, holding the content, the hash of the content it was derived from, and whether
+the client can merge it as text. Not columns on `file_contents`.
+
+**Rationale.** Three facts, any one of which would be enough. A pending edit must **outlive the
+cached content it came from**, which is subject to eviction. It must **exist where there is no
+cached content at all**, because a file created offline has neither a `files` row nor a
+`file_contents` row. And it answers a **different question**: `file_contents` records what the
+host last gave us, a pending edit records what the developer has written that the host has not
+seen. One row holding both would make `sha256_hash` mean two things depending on a sibling
+column.
+
+**Why this binds beyond F012.** Anything reading the cache — F013's search above all — must know
+that a path can carry work with no cached content and no tree row. F011 met the mirror image of
+this and paid for it: git status was keyed by the tree's identity for a file and could not
+describe an untracked file in a folder the tree had never listed, which was found only by the one
+test written to look for it.
+
+**Reversal condition.** A measured cost to the extra lookup on the file-open path, which is the
+only path where the two tables are read together.
+
+---
+
+## A-RECENT — `git/recentlyChanged`, paths only (2026-09-27)
+
+**Decision.** §4.8 gains one method: given a workspace and a commit count, it returns the
+deduplicated set of workspace-relative paths those commits touched. No content, no commit
+identities, no authors, no dates. Capped at 100 commits, not paged.
+
+**Rationale.** §11.4's prefetch requires files changed in recent commits, and nothing in the
+catalogue reports history: `git/getStatus` describes the working tree, which is a different
+question. The information is on the engine's host, where git is; the client has no repository in
+remote mode, which is the mode offline matters in.
+
+Paths only, and deliberately narrow. A prefetch needs to know *which files*; everything else
+would be a history API arriving as a side effect of a caching feature. A later feature that wants
+commit metadata should widen this on purpose.
+
+Not paged, unlike `git/getStatus`. A cursor would let a client walk a monorepo's entire history
+one page at a time, which is the opposite of a bounded prefetch; truncation at the frame cap is
+the correct behaviour because a partial prefetch is already an ordinary outcome.
+
+**Why this binds beyond F012.** The method catalogue is shared, and the first feature to expose
+history sets the shape every later one inherits or has to justify departing from.
+
+**Reversal condition.** A history feature that needs commit identity, at which point widening
+this is a deliberate protocol change rather than an accident.
+
+---
+
+## A-RECONNECT — Reconciliation is triggered by the published connection state (2026-09-27)
+
+**Decision.** Offline work is reconciled once per transition into `Connected`, driven by the
+connection state F001 already publishes — the same source the offline indicator reads.
+
+**Rationale.** Principle II. There is already one authority on whether the client is connected,
+and adding a timer, a probe, or a "first request that succeeds" heuristic would be a second
+detector of a state that is already known. F011 paid for exactly this: the git watch and the
+workspace watch answered different questions about one repository until A-GITNUDGE reconciled
+them, and the symptom was a feature that worked for `git add` and silently did nothing for an
+ordinary save.
+
+**Alternatives rejected.** Reconciling on the first successful request after an outage makes
+reconciliation a side effect of whatever the developer happened to do next, so the same outage
+reconciles at a different moment depending on unrelated activity. A manual button is auditable
+and predictable, and fails FR-019's requirement that the clean case cost zero interactions.
+
+**Why this binds beyond F012.** Any later feature that must act on reconnection — restoring
+language servers, re-establishing watches — uses this trigger rather than adding another. The
+watches already do; this records why.
+
+**Reversal condition.** A connection state that cannot distinguish a reconnection from a first
+connection, which would make "once per transition" ambiguous.
+
+---
+
 ## A-OFFLINE — Offline editing with three-way merge (2026-09-23)
 
 **Supersedes A-B3. Resolves `[OPEN: B3-reversal]`, and the B4 question that A-B3's existence
