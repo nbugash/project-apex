@@ -32,6 +32,13 @@ use crate::application::use_cases::apply_git_status::{ApplyGitStatus, ApplyOutco
 /// The method this adapter exists for.
 pub const GIT_STATUS_UPDATE: &str = "git/onStatusUpdate";
 
+/// A branch switch or a large pull, which invalidates what git state this client holds.
+///
+/// Handled here rather than in the webview because the projection is the core's, and the
+/// interface reads it back: clearing it in the view alone would leave the database holding the
+/// previous branch's marks for the next session to restore.
+pub const INVALIDATE_ALL: &str = "workspace/invalidateAll";
+
 /// How many updates may wait. Small deliberately: the engine coalesces, so a queue that grows
 /// means updates are arriving faster than they can be applied, and the useful response to that
 /// is to drop the oldest rather than to buffer a history nobody will read.
@@ -42,8 +49,15 @@ pub struct GitNotifications {
     next: Arc<dyn NotificationSink>,
 }
 
+enum Work {
+    /// Apply a status, pulling any pages it says remain.
+    Status(Box<GitStatusUpdate>),
+    /// Forget this workspace's git state: what it describes is no longer true.
+    Invalidate(crate::domain::workspace::WorkspaceId),
+}
+
 struct Job {
-    update: GitStatusUpdate,
+    work: Work,
     method: String,
     body: String,
 }
@@ -62,7 +76,19 @@ impl GitNotifications {
             };
             rt.block_on(async move {
                 while let Ok(job) = rx.recv() {
-                    match apply.apply(job.update).await {
+                    let outcome = match job.work {
+                        Work::Invalidate(ws) => {
+                            apply.invalidate(&ws);
+                            crate::logging::info(&format!("git state invalidated for {}", ws.0));
+                            // Forwarded on the same terms as a status: the interface re-reads
+                            // the projection, so it must not be woken before there is anything
+                            // new in it to read.
+                            onward.deliver(&job.method, &job.body);
+                            continue;
+                        }
+                        Work::Status(update) => apply.apply(*update).await,
+                    };
+                    match outcome {
                         ApplyOutcome::Applied {
                             paths,
                             pages,
@@ -99,19 +125,24 @@ impl GitNotifications {
 
 impl NotificationSink for GitNotifications {
     fn deliver(&self, method: &str, body: &str) {
-        if method != GIT_STATUS_UPDATE {
-            self.next.deliver(method, body);
-            return;
-        }
-        let Some(update) = parse(body) else {
-            // Unparseable, so there is nothing to apply. Still forwarded: this layer's failure
-            // to read a frame is not a reason to hide it from everything downstream.
-            crate::logging::warn("a git status update could not be read");
+        let work = match method {
+            GIT_STATUS_UPDATE => parse::<GitStatusUpdate>(body).map(|u| Work::Status(Box::new(u))),
+            INVALIDATE_ALL => parse::<apex_protocol::wire::InvalidateAllParams>(body)
+                .map(|p| Work::Invalidate(crate::domain::workspace::WorkspaceId(p.workspace_id.0))),
+            _ => {
+                self.next.deliver(method, body);
+                return;
+            }
+        };
+        let Some(work) = work else {
+            // Unparseable, so there is nothing to do. Still forwarded: this layer's failure to
+            // read a frame is not a reason to hide it from everything downstream.
+            crate::logging::warn(&format!("a {method} frame could not be read"));
             self.next.deliver(method, body);
             return;
         };
         let job = Job {
-            update,
+            work,
             method: method.to_string(),
             body: body.to_string(),
         };
@@ -124,7 +155,7 @@ impl NotificationSink for GitNotifications {
     }
 }
 
-fn parse(body: &str) -> Option<GitStatusUpdate> {
+fn parse<T: serde::de::DeserializeOwned>(body: &str) -> Option<T> {
     let frame: serde_json::Value = serde_json::from_str(body).ok()?;
     serde_json::from_value(frame.get("params")?.clone()).ok()
 }

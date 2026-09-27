@@ -71,6 +71,30 @@ impl ApplyGitStatus {
         .await
     }
 
+    /// A bulk invalidation arrived: forget what this workspace's git state was.
+    ///
+    /// **Clearing is right here and wrong everywhere else.** FR-029 keeps the last known state
+    /// through an outage, because offline the client does not know whether anything changed.
+    /// An invalidation is the opposite: a positive statement that what it knew is now wrong.
+    /// The marks describe the branch the developer has just left, and every one of them is a
+    /// claim about a file that may not exist on this one (FR-025, FR-026, SC-011).
+    ///
+    /// **Nothing is refetched.** A burst of requests at the moment a switch has churned the
+    /// whole tree is the worst time to issue one (FR-026a), and the status that follows is
+    /// being pushed anyway. Cached content and its hashes are untouched: which files differ
+    /// from the repository is not a statement about whether a cached copy matches the host
+    /// (§5.3).
+    pub fn invalidate(&self, workspace: &WorkspaceId) {
+        if let Err(e) = self
+            .cache
+            .replace_git_status(workspace, &GitProjection::default())
+        {
+            // Logged rather than swallowed: what is on screen now describes a branch nobody is
+            // on, and an unexplained wrong tree is the hardest kind of bug to attribute.
+            crate::logging::warn(&format!("git state was not cleared: {e}"));
+        }
+    }
+
     /// Which lines of one file differ.
     ///
     /// Not applied to anything: a diff belongs to the editor showing that file, and storing it

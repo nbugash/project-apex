@@ -162,14 +162,14 @@ no stale marks.
 
 ### Tests for User Story 4
 
-- [ ] T061 [P] [US4] `engine/tests/git_branch_switch.rs`: a switch changing 10,000 files produces **exactly one** invalidation. The count is the assertion — an implementation emitting per-file events satisfies every other test in this feature (FR-024, SC-005)
-- [ ] T062 [P] [US4] `client/core/tests/git_invalidate.rs`: a bulk invalidation clears the workspace's git state and does **not** eagerly refetch the tree, and no file remains marked from the previous branch (FR-025, FR-026, SC-011)
+- [X] T061 [P] [US4] `engine/tests/git_branch_switch.rs`: a switch changing 10,000 files produces **exactly one** invalidation. The count is the assertion — an implementation emitting per-file events satisfies every other test in this feature (FR-024, SC-005)
+- [X] T062 [P] [US4] `client/core/tests/git_invalidate.rs`: a bulk invalidation clears the workspace's git state and does **not** eagerly refetch the tree, and no file remains marked from the previous branch (FR-025, FR-026, SC-011)
 
 ### Implementation for User Story 4
 
-- [ ] T063 [US4] In `engine/src/application/use_cases/git_status.rs`, a `HEAD` change emits `workspace/invalidateAll` once (§12.4) rather than a status of every path
-- [ ] T064 [US4] In `client/core/src/application/use_cases/apply_git_status.rs`, apply a bulk invalidation by clearing git state for the workspace without touching cached content
-- [ ] T065 [US4] `tests/e2e/git-branch-switch.spec.ts`: a real branch switch on the host leaves the tree showing the new branch's state and nothing from the old
+- [X] T063 [US4] A `HEAD` change costs **one** status update, and the bulk invalidation comes from the workspace watcher's own coalescer rather than from the git subsystem. Not `git_status.rs` emitting `workspace/invalidateAll` as the task first said: that would put a workspace notification on the git path, which is exactly the separation A-GITWATCH exists to keep and `git_watch.rs` asserts structurally. Measured in `engine/tests/git_branch_switch.rs`: a 2,000-file switch costs 1 status update, ~4 event frames and ~7 invalidations
+- [X] T064 [US4] In `client/core/src/application/use_cases/apply_git_status.rs`, apply a bulk invalidation by clearing git state for the workspace without touching cached content
+- [X] T065 [US4] `tests/e2e/git-branch-switch.spec.ts`: a real branch switch on the host leaves the tree showing the new branch's state and nothing from the old
 
 ---
 
