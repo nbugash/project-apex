@@ -329,8 +329,9 @@ bulk invalidation rather than one event per file, and that stale git state is go
 - **SC-012**: A repository reporting 5,000 changed paths shows **all 5,000** marked, with no path
   missing because it fell beyond the first page.
 - **SC-013**: A burst of 50 index changes within one second produces **one** status report, not 50.
-- **SC-014**: An untracked file in a folder the developer has never expanded is marked correctly
-  the first time that folder is opened — the state was held without a tree row existing for it.
+- **SC-014**: An untracked file in a folder the developer has never expanded is marked **as
+  untracked** the first time that folder is opened — the state was held without a tree row
+  existing for it.
 - **SC-015**: A paged status whose pull is interrupted leaves the previously applied status
   intact: **zero** files change state as a result of the failed pull.
 
@@ -346,7 +347,7 @@ bulk invalidation rather than one event per file, and that stale git state is go
 - **`git` on the host is current enough to report status in a machine-readable form.** Where it
   is not, FR-028 applies and the workspace degrades as a non-repository. The precise mechanism is
   a planning decision, not a requirement.
-- **The client already has somewhere to keep git status, but not in the shape this feature
+- **The client already has somewhere to keep git state, but not in the shape this feature
   needs.** F003 built it deliberately for this feature and keyed it on the tree's identity for a
   file. Clarify established that it must be keyed by workspace and path instead, because
   untracked and deleted paths have no tree entry. Nothing has ever written to it, so this costs a
