@@ -26,6 +26,13 @@ runs 10 and 11 each found one of these missing, and F011 shipped four instances 
 — an artifact that exists with nothing pointing at it. The tasks below name the registration
 explicitly wherever they create something.
 
+**One of those lists is ordered.** `wdio.conf.ts`'s live `specs` array must keep
+`terminal-live.spec.ts` last: the config records, in thirteen lines and from measurement, that
+every spec which ran after it stalled in its `before` hook for minutes while passing on its own.
+Appending is the natural reading of "add it to the list" and is the wrong one, and the symptom is
+a hang rather than a failure. T001a states the position; T079a checks the interaction did not
+gain a second instance, since the offline specs restart the engine much as that spec does.
+
 **Do not restate a count another document derives.** Say "every mutation §5 lists", not "the eight
 mutation checks". Analyze runs 12 and 13 between them found five stale counts — the mutation total,
 the mutation ranking, the requirement and criterion totals in plan.md, the measurement total, and
@@ -40,7 +47,7 @@ deliberately because the reviewer's scope decision fixes it rather than remediat
 
 ---
 
-- [ ] T001a In `tests/e2e/wdio.conf.ts`, add `'./offline-*.spec.ts'` to the **live** `specs` list and to the ordinary suite's `exclude` list, beside the git and editor entries. Without it these three specs match no live pattern, so they would run in the ordinary suite — where there is no engine to disconnect from, which is the one thing they all require — and never run in the live one. F011 had to do exactly this for `git-*.spec.ts`; the registration is invisible until the suite quietly runs the wrong set
+- [ ] T001a In `tests/e2e/wdio.conf.ts`, add `'./offline-*.spec.ts'` to the **live** `specs` list and to the ordinary suite's `exclude` list. Without it these three specs match no live pattern, so they would run in the ordinary suite — where there is no engine to disconnect from, which is the one thing they all require — and never run in the live one. F011 had to do exactly this for `git-*.spec.ts`; the registration is invisible until the suite quietly runs the wrong set. **Position it before `'./terminal-live.spec.ts'`, never after.** That array's order is load-bearing and the config says so in thirteen lines above it: `terminal-live` starts a real login shell, and every spec that ran after it stalled in its `before` hook for minutes while passing on its own. Appending is the natural reading of "add to the list" and is the wrong one — the failure is a hang, not an assertion, and it arrives minutes later in a suite that was green the day before
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
@@ -234,6 +241,7 @@ offline, and confirm they are readable.
 - [ ] T077 Per `quickstart.md` §4, audit **every** negative check it lists and confirm for each that the condition which lets it fail is actually present — a real binary rather than a text file named `.bin`, a genuinely untouched host side, a cache genuinely at its budget, an interruption genuinely between two files
 - [ ] T078 In `quickstart.md` §6, record **every** measurement §3 lists in the *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
 - [ ] T079 Confirm every one of spec.md's 29 acceptance scenarios is named by at least one test, and every FR and SC is cited by name in a test file. F011 shipped with three requirements tested but uncited, which made a coverage audit read them as gaps
+- [ ] T079a Run `npm run e2e:live` and record its wall-clock time beside the figure `wdio.conf.ts` already carries — eight files in 46 seconds. The offline specs disconnect and restart the engine, which is the same class of thing `terminal-live.spec.ts` does, and that config's comment says plainly that what `terminal-live` leaves behind "has not been identified". Three new specs now run before it. If the suite slows by minutes rather than seconds, the residue is ours and the ordering hazard has a second instance; report it rather than reordering until it passes, because "green in this order" is the weaker claim the comment exists to keep visible
 - [ ] T080 Verify `make gate` is green, then mark F012's five subfeatures in `specs/features-map.md` and run `feature_map.py verify`
 
 ---
