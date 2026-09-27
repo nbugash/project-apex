@@ -122,13 +122,21 @@ fn the_unstaged_state_wins_over_the_staged_one() {
     // `.M` is unmodified-in-index, modified-in-worktree. `M.` is the reverse. A parser that
     // collapsed the pair before applying the rule would give these the same answer, which is
     // exactly the mistake the rule exists to prevent.
-    let unstaged = parse_status("# branch.head main\u{0}1 .M N... 100644 100644 100644 aa bb src/a.rs\u{0}")
-        .expect("parse");
-    let staged = parse_status("# branch.head main\u{0}1 M. N... 100644 100644 100644 aa bb src/a.rs\u{0}")
-        .expect("parse");
+    let unstaged =
+        parse_status("# branch.head main\u{0}1 .M N... 100644 100644 100644 aa bb src/a.rs\u{0}")
+            .expect("parse");
+    let staged =
+        parse_status("# branch.head main\u{0}1 M. N... 100644 100644 100644 aa bb src/a.rs\u{0}")
+            .expect("parse");
 
-    assert_eq!(state_of(&unstaged.changes, "/src/a.rs"), Some(GitStatusKind::Modified));
-    assert_eq!(state_of(&staged.changes, "/src/a.rs"), Some(GitStatusKind::Staged));
+    assert_eq!(
+        state_of(&unstaged.changes, "/src/a.rs"),
+        Some(GitStatusKind::Modified)
+    );
+    assert_eq!(
+        state_of(&staged.changes, "/src/a.rs"),
+        Some(GitStatusKind::Staged)
+    );
     assert_ne!(
         state_of(&unstaged.changes, "/src/a.rs"),
         state_of(&staged.changes, "/src/a.rs"),
@@ -140,16 +148,25 @@ fn the_unstaged_state_wins_over_the_staged_one() {
 fn a_file_staged_and_then_edited_again_reports_the_unstaged_state() {
     // `MM`: staged, then edited. The developer's work is recorded nowhere, and reporting STAGED
     // would tell them it is safe when part of it is not (spec.md, *Clarifications*).
-    let snap = parse_status("# branch.head main\u{0}1 MM N... 100644 100644 100644 aa bb src/a.rs\u{0}")
-        .expect("parse");
-    assert_eq!(state_of(&snap.changes, "/src/a.rs"), Some(GitStatusKind::Modified));
+    let snap =
+        parse_status("# branch.head main\u{0}1 MM N... 100644 100644 100644 aa bb src/a.rs\u{0}")
+            .expect("parse");
+    assert_eq!(
+        state_of(&snap.changes, "/src/a.rs"),
+        Some(GitStatusKind::Modified)
+    );
 }
 
 #[test]
 fn a_conflict_overrides_every_other_state() {
-    let snap = parse_status("# branch.head main\u{0}u AA N... 100644 100644 100644 100644 aa bb cc both.rs\u{0}")
-        .expect("parse");
-    assert_eq!(state_of(&snap.changes, "/both.rs"), Some(GitStatusKind::Conflict));
+    let snap = parse_status(
+        "# branch.head main\u{0}u AA N... 100644 100644 100644 100644 aa bb cc both.rs\u{0}",
+    )
+    .expect("parse");
+    assert_eq!(
+        state_of(&snap.changes, "/both.rs"),
+        Some(GitStatusKind::Conflict)
+    );
 }
 
 // ---- The branch header ----
@@ -174,8 +191,7 @@ fn a_detached_head_is_not_a_branch_named_detached() {
 fn a_repository_with_no_commits_still_has_a_branch() {
     // An unborn branch: the name exists, the commit does not. Showing nothing here would hide
     // the branch a developer is about to commit to.
-    let snap =
-        parse_status("# branch.oid (initial)\u{0}# branch.head main\u{0}").expect("parse");
+    let snap = parse_status("# branch.oid (initial)\u{0}# branch.head main\u{0}").expect("parse");
     assert_eq!(snap.branch, BranchPosition::Branch("main".into()));
 }
 

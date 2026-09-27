@@ -217,10 +217,7 @@ fn parse_cursor(raw: &str) -> Option<(u64, usize)> {
 /// A workspace that is not a repository and a host without git both become a successful empty
 /// status (FR-027, FR-028). Only a genuine failure is reported as one, and even then the caller
 /// shows no git state rather than failing the workspace.
-pub fn status_or_nothing(
-    git: &dyn Git,
-    root: &ResolvedPath,
-) -> Result<StatusSnapshot, GitFailure> {
+pub fn status_or_nothing(git: &dyn Git, root: &ResolvedPath) -> Result<StatusSnapshot, GitFailure> {
     match git.status(root) {
         Ok(s) => Ok(s),
         Err(e) if e.is_absence() => Ok(StatusSnapshot::nothing()),
@@ -230,3 +227,68 @@ pub fn status_or_nothing(
 
 /// Shared handle for the parts of the engine that hold one of these per workspace.
 pub type SharedPager = Arc<StatusPager>;
+
+/// What the dispatch layer reaches git through: one place holding the adapter and the pager.
+///
+/// Bundled rather than passed as two parameters because they are only ever used together, and a
+/// dispatch arm that could reach a pager without the git that filled it is a shape with no
+/// meaning.
+pub struct GitService {
+    git: Arc<dyn Git>,
+    pager: StatusPager,
+}
+
+impl GitService {
+    pub fn new(git: Arc<dyn Git>) -> Self {
+        Self {
+            git,
+            pager: StatusPager::new(),
+        }
+    }
+
+    /// Compute a status and hold it, returning the first page.
+    ///
+    /// An absence — not a repository, or no git — is a successful empty answer rather than an
+    /// error, so a workspace that does not use git is fully usable (FR-027, FR-028).
+    pub fn refresh(
+        &self,
+        workspace: &str,
+        root: &ResolvedPath,
+        limit: u32,
+    ) -> Result<GitStatusResult, GitFailure> {
+        let snapshot = status_or_nothing(self.git.as_ref(), root)?;
+        Ok(self.pager.hold(workspace, snapshot, limit))
+    }
+
+    /// A later page of a status already computed.
+    pub fn page(
+        &self,
+        workspace: &str,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<GitStatusResult, PageRefusal> {
+        self.pager.page(workspace, cursor, limit)
+    }
+
+    /// Which lines of one file differ. An absence yields an empty diff for the same reason a
+    /// status does: a workspace without git is not a failing workspace.
+    pub fn file_diff(
+        &self,
+        root: &ResolvedPath,
+        relative: &str,
+    ) -> Result<apex_protocol::wire::GitDiffResult, GitFailure> {
+        match self.git.file_diff(root, relative) {
+            Ok(d) => Ok(d),
+            Err(e) if e.is_absence() => Ok(apex_protocol::wire::GitDiffResult::default()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn git_dir(&self, root: &ResolvedPath) -> Result<std::path::PathBuf, GitFailure> {
+        self.git.git_dir(root)
+    }
+
+    pub fn forget(&self, workspace: &str) {
+        self.pager.forget(workspace);
+    }
+}

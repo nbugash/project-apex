@@ -39,7 +39,12 @@ fn within(limit: Duration, mut cond: impl FnMut() -> bool) -> bool {
 }
 
 /// A watch on `repo`'s git directory, and a counter of how often it fired.
-fn watching(root: &std::path::Path) -> (Arc<AtomicUsize>, Box<dyn apex_engine::application::ports::git_watch::GitWatchHandle>) {
+fn watching(
+    root: &std::path::Path,
+) -> (
+    Arc<AtomicUsize>,
+    Box<dyn apex_engine::application::ports::git_watch::GitWatchHandle>,
+) {
     let git_dir = GitCli::default()
         .git_dir(&resolved(root))
         .expect("git_dir must resolve");
@@ -166,7 +171,9 @@ fn dropping_the_handle_stops_the_watch() {
     let (fired, handle) = watching(&repo.root);
     repo.write("a.txt", "1\n");
     repo.run(&["add", "a.txt"]);
-    assert!(within(Duration::from_secs(5), || fired.load(Ordering::SeqCst) > 0));
+    assert!(within(Duration::from_secs(5), || fired
+        .load(Ordering::SeqCst)
+        > 0));
 
     drop(handle);
     let after_stop = fired.load(Ordering::SeqCst);

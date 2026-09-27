@@ -77,7 +77,10 @@ fn a_burst_of_any_length_costs_two_computations_not_n() {
 
     // And then nothing more.
     run_if_due(&mut c, 100_000, &mut computations);
-    assert_eq!(computations, 2, "the follow-up must not itself schedule another");
+    assert_eq!(
+        computations, 2,
+        "the follow-up must not itself schedule another"
+    );
 }
 
 #[test]
@@ -88,7 +91,11 @@ fn nothing_runs_while_a_run_is_in_flight() {
     c.notice(0);
     assert!(c.begin(EDGE_MS));
     c.notice(EDGE_MS + 1);
-    assert_eq!(c.due(EDGE_MS + 10_000), Due::Idle, "a second run must not start");
+    assert_eq!(
+        c.due(EDGE_MS + 10_000),
+        Due::Idle,
+        "a second run must not start"
+    );
     assert!(!c.begin(EDGE_MS + 10_000));
 }
 

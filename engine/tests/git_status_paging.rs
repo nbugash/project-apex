@@ -30,7 +30,9 @@ fn five_thousand_changes_all_arrive() {
     let mut paths = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
-        let p = pager.page("w1", cursor.as_deref(), MAX_GIT_STATUS_PAGE).expect("page");
+        let p = pager
+            .page("w1", cursor.as_deref(), MAX_GIT_STATUS_PAGE)
+            .expect("page");
         assert!(
             p.changes.len() as u32 <= MAX_GIT_STATUS_PAGE,
             "a page exceeded the cap: {}",
@@ -86,7 +88,10 @@ fn a_clean_repository_is_an_empty_page_and_not_an_error() {
     let pager = StatusPager::new();
     let first = pager.hold("w1", snapshot(0), MAX_GIT_STATUS_PAGE);
     assert!(first.changes.is_empty());
-    assert!(first.next_cursor.is_none(), "an empty final page carries no cursor");
+    assert!(
+        first.next_cursor.is_none(),
+        "an empty final page carries no cursor"
+    );
 }
 
 #[test]
@@ -141,7 +146,10 @@ fn a_cursor_from_another_workspace_is_refused() {
 #[test]
 fn a_workspace_with_no_snapshot_is_refused() {
     let pager = StatusPager::new();
-    assert_eq!(pager.page("never", None, 1_000), Err(PageRefusal::UnknownCursor));
+    assert_eq!(
+        pager.page("never", None, 1_000),
+        Err(PageRefusal::UnknownCursor)
+    );
 }
 
 #[test]
@@ -151,7 +159,10 @@ fn forgetting_a_workspace_releases_its_snapshot() {
     let pager = StatusPager::new();
     pager.hold("w1", snapshot(10), 1_000);
     pager.forget("w1");
-    assert_eq!(pager.page("w1", None, 1_000), Err(PageRefusal::UnknownCursor));
+    assert_eq!(
+        pager.page("w1", None, 1_000),
+        Err(PageRefusal::UnknownCursor)
+    );
 }
 
 #[test]

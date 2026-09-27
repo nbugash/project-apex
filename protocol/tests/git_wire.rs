@@ -107,7 +107,8 @@ fn a_final_page_carries_no_cursor_at_all() {
 
 #[test]
 fn a_non_final_page_carries_one() {
-    let frame = r#"{"current_branch":{"kind":"branch","value":"main"},"changes":[],"next_cursor":"c-2"}"#;
+    let frame =
+        r#"{"current_branch":{"kind":"branch","value":"main"},"changes":[],"next_cursor":"c-2"}"#;
     let r: GitStatusResult = serde_json::from_str(frame).expect("decode");
     assert_eq!(r.next_cursor.as_deref(), Some("c-2"));
 }
@@ -133,7 +134,10 @@ fn a_diff_has_nowhere_to_put_file_content() {
         modified: vec![[2, 2]],
     };
     let json = serde_json::to_string(&d).expect("encode");
-    assert_eq!(json, r#"{"added":[[5,7]],"deleted":[4],"modified":[[2,2]]}"#);
+    assert_eq!(
+        json,
+        r#"{"added":[[5,7]],"deleted":[4],"modified":[[2,2]]}"#
+    );
 }
 
 #[test]

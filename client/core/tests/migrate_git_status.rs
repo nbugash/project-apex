@@ -49,19 +49,34 @@ fn the_rest_of_the_projection_survives_the_upgrade() {
     migrate(&mut conn, 3, &mut noop).expect("migrate to 3");
 
     let ws: String = conn
-        .query_row("SELECT name FROM workspaces WHERE workspace_id='w1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT name FROM workspaces WHERE workspace_id='w1'",
+            [],
+            |r| r.get(0),
+        )
         .expect("the workspace must survive");
     assert_eq!(ws, "repo");
 
     let path: String = conn
-        .query_row("SELECT relative_path FROM files WHERE file_id='f1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT relative_path FROM files WHERE file_id='f1'",
+            [],
+            |r| r.get(0),
+        )
         .expect("the file must survive");
     assert_eq!(path, "/src/a.rs");
 
     let hash: String = conn
-        .query_row("SELECT sha256_hash FROM file_contents WHERE file_id='f1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT sha256_hash FROM file_contents WHERE file_id='f1'",
+            [],
+            |r| r.get(0),
+        )
         .expect("the cached content must survive");
-    assert_eq!(hash, "abc", "a git schema change must not touch cached content (§5.3)");
+    assert_eq!(
+        hash, "abc",
+        "a git schema change must not touch cached content (§5.3)"
+    );
 }
 
 #[test]

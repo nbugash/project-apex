@@ -150,6 +150,7 @@ pub fn dispatch(
     fs: &dyn crate::application::ports::file_system::FileSystem,
     watchers: Option<&crate::adapters::outbound::watchers::Watchers>,
     tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
+    git: Option<&crate::application::use_cases::git_status::GitService>,
     codec: &FrameCodec,
     body: &str,
 ) -> Action {
@@ -557,6 +558,129 @@ pub fn dispatch(
                             )),
                         }
                     }
+                    Err(refusal) => {
+                        let (code, message) = refusal.wire();
+                        reply_or_nothing(encode_error(codec, id, code, &message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "git/getStatus" => {
+            let Some(service) = git else {
+                // No git service composed. An empty status rather than an error, for the same
+                // reason a workspace without a repository gets one: a client that cannot read
+                // git is not a client whose workspace has failed (FR-027, FR-028).
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::GitStatusResult {
+                        current_branch: apex_protocol::wire::BranchPosition::None,
+                        changes: Vec::new(),
+                        next_cursor: None,
+                    },
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::GitStatusParams>(params) {
+                Ok(req) => {
+                    let limit = req
+                        .limit
+                        .unwrap_or(apex_protocol::wire::MAX_GIT_STATUS_PAGE);
+                    // A cursor addresses a snapshot already held; its absence asks for a fresh
+                    // one. Reading a stale cursor as "start again" would assemble one picture
+                    // from two snapshots, so it is refused (contracts/git-status.md).
+                    let answer = match req.cursor.as_deref() {
+                        Some(cursor) => service
+                            .page(&req.workspace_id.0, Some(cursor), limit)
+                            .map_err(|_| ()),
+                        None => match roots.resolve(&req.workspace_id.0) {
+                            Ok(root) => {
+                                match crate::domain::path::ResolvedPath::resolve(&root, ".", fs) {
+                                    Ok(path) => service
+                                        .refresh(&req.workspace_id.0, &path, limit)
+                                        .map_err(|_| ()),
+                                    Err(_) => Err(()),
+                                }
+                            }
+                            Err(_) => {
+                                return reply_or_nothing(encode_error(
+                                    codec,
+                                    id,
+                                    codes::WORKSPACE_NOT_REGISTERED,
+                                    "workspace is not registered with this engine",
+                                ))
+                            }
+                        },
+                    };
+                    match answer {
+                        Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
+                        Err(()) => reply_or_nothing(encode_error(
+                            codec,
+                            id,
+                            INVALID_PARAMS,
+                            "unknown or expired cursor",
+                        )),
+                    }
+                }
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "git/getFileDiff" => {
+            let Some(service) = git else {
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::GitDiffResult::default(),
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::GitDiffParams>(params) {
+                Ok(req) => match workspace::resolve_request(
+                    roots,
+                    fs,
+                    &req.workspace_id.0,
+                    &req.relative_path,
+                ) {
+                    // Contained before git is asked, so a path that escapes is refused rather
+                    // than diffed (Principle VI).
+                    Ok(_) => match roots.resolve(&req.workspace_id.0) {
+                        Ok(root) => {
+                            match crate::domain::path::ResolvedPath::resolve(&root, ".", fs) {
+                                Ok(path) => match service.file_diff(&path, &req.relative_path) {
+                                    Ok(d) => reply_or_nothing(encode_result(codec, id, &d)),
+                                    Err(e) => reply_or_nothing(encode_error(
+                                        codec,
+                                        id,
+                                        INVALID_PARAMS,
+                                        &format!("{e:?}"),
+                                    )),
+                                },
+                                Err(_) => reply_or_nothing(encode_error(
+                                    codec,
+                                    id,
+                                    codes::NOT_FOUND,
+                                    "workspace root is gone",
+                                )),
+                            }
+                        }
+                        Err(_) => reply_or_nothing(encode_error(
+                            codec,
+                            id,
+                            codes::WORKSPACE_NOT_REGISTERED,
+                            "workspace is not registered with this engine",
+                        )),
+                    },
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
                         reply_or_nothing(encode_error(codec, id, code, &message))

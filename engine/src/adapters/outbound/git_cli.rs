@@ -215,7 +215,9 @@ pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
                 // `<xy> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`
                 let parts: Vec<&str> = rest.splitn(10, ' ').collect();
                 if parts.len() != 10 {
-                    return Err(GitFailure::Failed(format!("unreadable `u` record: {field}")));
+                    return Err(GitFailure::Failed(format!(
+                        "unreadable `u` record: {field}"
+                    )));
                 }
                 if let Some(p) = contained(parts[9]) {
                     changes.push(GitChange {

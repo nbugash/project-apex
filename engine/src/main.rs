@@ -7,10 +7,12 @@
 use apex_engine::adapters::inbound::rpc::{self, Action};
 use apex_engine::adapters::outbound::engine_socket::{self, Claim};
 use apex_engine::adapters::outbound::frame_writer::FrameWriter;
+use apex_engine::adapters::outbound::git_cli::GitCli;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
 use apex_engine::adapters::outbound::task_threads::TaskService;
 use apex_engine::adapters::outbound::watchers::{WatcherFactory, Watchers};
 use apex_engine::application::ports::file_system::FileSystem;
+use apex_engine::application::use_cases::git_status::GitService;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
 use apex_engine::session::SessionRegistry;
 use apex_protocol::framing::{FrameCodec, FrameError};
@@ -84,6 +86,13 @@ fn main() {
     #[cfg(not(target_os = "linux"))]
     let tasks: Option<TaskService> = None;
 
+    // Git, on every platform. Unlike the watcher and the pty runner there is nothing here to
+    // cfg on: the adapter shells out to `git`, and a host without it is not a broken engine but
+    // a workspace with no git state -- which `status_or_nothing` already turns into a
+    // successful empty answer (FR-027, FR-028). Gating it by platform would replace a runtime
+    // fact the client can be told about with a compile-time one it cannot.
+    let git = GitService::new(Arc::new(GitCli::default()));
+
     // A restart is announced, never inferred. The client learns about it because it was told,
     // and the identity it carries is what distinguishes a restart from a new session.
     if registry.restarted() {
@@ -102,6 +111,7 @@ fn main() {
         fs.as_ref(),
         &watchers,
         tasks.as_ref(),
+        Some(&git),
         &mut codec,
         &writer,
     );
@@ -170,6 +180,7 @@ fn main() {
             fs.as_ref(),
             &watchers,
             tasks.as_ref(),
+            Some(&git),
             &mut codec,
             &writer,
         );
@@ -216,6 +227,7 @@ fn serve(
     fs: &dyn FileSystem,
     watchers: &Watchers,
     tasks: Option<&TaskService>,
+    git: Option<&GitService>,
     codec: &mut FrameCodec,
     writer: &Arc<FrameWriter>,
 ) {
@@ -229,8 +241,16 @@ fn serve(
         loop {
             match codec.decode(&mut buf) {
                 Ok(Some(frame)) => {
-                    match rpc::dispatch(registry, roots, fs, Some(watchers), tasks, codec, &frame.0)
-                    {
+                    match rpc::dispatch(
+                        registry,
+                        roots,
+                        fs,
+                        Some(watchers),
+                        tasks,
+                        git,
+                        codec,
+                        &frame.0,
+                    ) {
                         Action::Reply(reply) => {
                             let _ = writer.write_interactive(&reply);
                         }
