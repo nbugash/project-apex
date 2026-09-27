@@ -136,11 +136,14 @@ client/core/
 └── tests/
 client/ui/lib/
 ├── git/status.svelte.ts                              # the projection the tree reads
+├── git/marker.ts                                     # state to token and glyph, pure
 ├── git/gutter.ts                                     # coordinates to decorations, pure
+├── shell/Window.svelte                               # starts the status subscription, once
 ├── workspace/FileTree.svelte                         # fills the reserved .vcs column
 ├── statusbar/StatusBar.svelte                        # the branch
 └── editor/EditorPanel.svelte                         # gutter decorations
 tests/unit/ tests/e2e/                                # Vitest and WebdriverIO
+tests/e2e/wdio.conf.ts                                # git specs join the live run
 ```
 
 **Structure decision**: Existing layout, existing boundaries. Git is one more outbound port on

@@ -31,9 +31,11 @@ client/ui/lib/
 ├── git/status.svelte.ts                            # the projection the surfaces read
 ├── git/marker.ts                                   # state -> token + glyph, pure
 ├── git/gutter.ts                                   # coordinates -> decorations, pure
+├── shell/Window.svelte                             # starts the subscription once (existing)
 ├── workspace/FileTree.svelte                       # fills the reserved .vcs column (existing)
 ├── statusbar/StatusBar.svelte                      # branch (existing)
 └── editor/EditorPanel.svelte                       # gutter decorations (existing)
+tests/e2e/wdio.conf.ts                              # git specs join the live run (existing)
 ```
 
 ## Class & Interface Model

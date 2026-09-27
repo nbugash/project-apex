@@ -297,13 +297,24 @@ bulk invalidation rather than one event per file, and that stale git state is go
 
 ### Key Entities
 
-- **Git status entry**: one changed path and its single state, belonging to one workspace and
-  identified by that pair — not by any file the tree happens to know about, because an untracked
-  or deleted path may have no tree row at all. The set of entries for a workspace is replaced
-  wholesale, never merged row by row, and the replacement spans every page of an update.
-- **Branch**: what the repository currently has checked out, or the absence of one.
-- **File diff**: for one file, the line coordinates that were added, deleted and modified. Holds
-  no file content.
+Named here in the spec's own words, with the name [data-model.md](./data-model.md) and
+[design.md](./design.md) use in brackets, so the mapping is stated once rather than inferred.
+
+- **Git state** (`GitState`): one changed path and its single state, belonging to one workspace
+  and identified by that pair — not by any file the tree happens to know about, because an
+  untracked or deleted path may have no tree row at all. The set of entries for a workspace is
+  replaced wholesale, never merged row by row.
+- **Status update** (`StatusUpdate`): one complete answer from the engine about a workspace,
+  which may arrive across several messages. **The update is the whole sequence, not the message.**
+  It is replaced into the projection when its final part arrives, and an update that is only
+  partly received is discarded rather than applied — applying part of one marks every path it did
+  not mention as unchanged, which is the most consequential way to build this feature wrongly
+  (FR-009a).
+- **Branch position** (`BranchPosition`): where the repository is, which is not always a branch.
+  Three cases — on a branch, detached, or no repository at all — rather than a name that might be
+  absent, because "no branch" and "a branch named nothing" are different facts.
+- **File diff** (`FileDiff`): for one file, the line coordinates that were added, deleted and
+  modified. Holds no file content.
 
 ## Success Criteria *(mandatory)*
 
