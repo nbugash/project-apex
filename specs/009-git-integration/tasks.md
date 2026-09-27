@@ -93,9 +93,9 @@ and confirm the tree marks that file and no other.
 - [ ] T037 [US1] In `client/core/src/adapters/inbound/tauri_commands.rs`, `git_status` reading the projection, with the workspace resolved in the core rather than accepted from the webview (Principle VI, as F010 and F006 both do)
 - [ ] T038 [US1] `client/ui/lib/git/status.svelte.ts`: the projection the surfaces read, updated by a subscription rather than polled
 - [ ] T039 [P] [US1] `client/ui/lib/git/marker.ts`: state to design-system token and glyph, pure. Tokens read from the element, no colour literal — `lint:ds` refuses one, which is how F006's first new surface was caught inventing token names
-- [ ] T040 [US1] `client/ui/lib/workspace/FileTree.svelte`: fill the `.vcs` column F000 reserved, using `--vk-tree-vcs-size`, so adding it reflows nothing
+- [ ] T040 [US1] `client/ui/lib/workspace/FileTree.svelte`: fill the `.vcs` column F000 reserved, using `--vk-tree-vcs-size`, so adding it reflows nothing. A file with no git state keeps exactly the row it has today (FR-016), which the existing workspace-tree specs already assert and which must still hold after this change
 - [ ] T041 [US1] `client/ui/lib/shell/Window.svelte`: subscribe to status updates once for the window, as the file-event router is, so a background tab is covered
-- [ ] T042 [US1] `tests/e2e/git-status.spec.ts`: **all six** of US1's acceptance scenarios against a real engine and a real repository — a modified file marked, a staged file's mark changing, an untracked file distinguishable without colour, **zero** requests to render a folder, the cached-file count unchanged across an update, and **the same files still marked after a relaunch** (FR-013). Six, counted against spec.md, because Principle VII makes each scenario's test an obligation and the sixth was missing when analyze checked
+- [ ] T042 [US1] `tests/e2e/git-status.spec.ts`: **all six** of US1's acceptance scenarios against a real engine and a real repository — a modified file marked, a staged file's mark changing, an untracked file distinguishable without colour, **zero** requests to render a folder, the cached-file count unchanged across an update, and **the same files still marked after a relaunch** (FR-013). Each mark asserted to arrive **within 2 seconds** of the host change (SC-001, SC-002), so the bound is measured where the behaviour is rather than only tabulated in quickstart. Six, counted against spec.md, because Principle VII makes each scenario's test an obligation and the sixth was missing when analyze checked
 
 ---
 
@@ -118,7 +118,7 @@ the host and confirm it follows.
 - [ ] T046 [US2] In `engine/src/adapters/outbound/git_cli.rs`, parse the branch header into the three-case position data-model.md defines
 - [ ] T047 [US2] In `client/core/src/application/use_cases/apply_git_status.rs` and the cache, store the branch per workspace alongside the state replacement
 - [ ] T048 [US2] `client/ui/lib/statusbar/StatusBar.svelte`: the branch indicator, built from design-system tokens only. This surface is **not in the prototype** and is recorded as a deviation in spec.md; a designer must be able to move it without unpicking an improvised value
-- [ ] T049 [US2] `tests/e2e/git-branch.spec.ts`: the branch shows, follows a switch, is absent for a non-repository, and identifies the commit when HEAD is detached
+- [ ] T049 [US2] `tests/e2e/git-branch.spec.ts`: the branch shows, follows a switch, is absent for a non-repository, and identifies the commit when HEAD is detached. For the non-repository case also assert the workspace stays fully usable and surfaces **zero** errors (SC-007) — the engine's half of that is T011's, and a successful empty status still reaches a client that could render it as a failure
 
 ---
 
