@@ -18,12 +18,14 @@ the remote has not moved.
 
 - Q: §11.1 to §11.3 of the system specification still describe the read-only offline lock that
   A-OFFLINE reversed, while §11.5 describes the merge. Where should that be corrected? → A:
-  **In this specification, not in the system specification.** This feature states the current
-  behaviour and names the superseded subsections so the correction is discoverable from here.
-  The system specification is left untouched by this cycle. **The known cost:** §11.1 to §11.3
-  remain contradictory for any later feature that reads them without reading this file, and
-  A-OFFLINE's own Consequences ("§11 is rewritten") remain unapplied. Recorded so that the next
-  person to notice finds the decision rather than the appearance of an oversight.
+  **In the system specification.** First answered "in this feature's spec, not the system
+  spec"; `/speckit-analyze` then found that Principle II forbids exactly that resolution — "where
+  any other document contradicts it, the contradiction MUST be resolved in that file before
+  dependent work starts" — and raised it CRITICAL. §11.1, §11.2, §11.3, §11.5's step 5, §7's
+  citing line and §13.1 are rewritten, and §5.2 gains the `pending_edits` table A-OFFLINE's
+  Consequences called for. **Reversed 2026-09-27.** The first answer was made against a
+  recommendation that argued discoverability rather than the rule; the rule was the answer, and
+  reading Principle II before offering the option would have avoided the round trip.
 - Q: A-OFFLINE says F012 "grows from one feature to roughly three". How much does this cycle
   build? → A: **All five subfeatures in one cycle**, as the feature map carries them. The
   alternative was splitting along A-OFFLINE's estimate and shipping the merge engine separately.
@@ -57,21 +59,21 @@ the remote has not moved.
   at a guess. The accepted cost is that prefetch may complete only partially on a large
   repository, and partial completion is a normal outcome rather than a failure.
 
-### Superseded system-specification subsections
+### System-specification subsections this feature corrected
 
-These describe behaviour this feature replaces. A-OFFLINE (2026-09-23) reversed A-B3 and its
-Consequences state that §11 is rewritten; §11.5 was updated and the subsections below were not.
-Where this specification and those subsections disagree, **this specification and A-OFFLINE are
-correct**.
+A-OFFLINE (2026-09-23) reversed A-B3 and its Consequences state that §11 is rewritten. Only
+§11.5 had been updated; the rest were corrected as part of this feature, after analyze raised the
+contradiction as a Principle II violation.
 
-| Subsection | What it still says | What is true |
+| Subsection | What it said | What it says now |
 |---|---|---|
-| §11.1 | "read-only mirror", "nothing is queued for later write", headed "Decision (A-B3)" | A-B3 is superseded; the editor stays writable and edits persist |
-| §11.2 | "Monaco models switch to `readOnly: true`" | The editor does not lock offline |
-| §11.3 | Editor offline: "Cached files only, read-only" | Cached files only, **writable**, with edits persisted locally |
-| §11.5 step 5 | "Unlock the editor" | Nothing was locked; the step is the merge and the status change |
-| §7 (the line citing §11) | "read-only access when disconnected" | Read and write access to cached files when disconnected |
-| §5.2 | `file_contents` carries no base revision and there is no store for pending edits | A-OFFLINE requires both; this feature adds them |
+| §7 | "read-only access when disconnected" | read **and** write access, with saved work held until reconciled |
+| §11.1 | "read-only mirror", "nothing is queued", headed "Decision (A-B3)" | Headed "Decision (A-OFFLINE)"; the editor stays writable, and only file content is ever held |
+| §11.2 | "Monaco models switch to `readOnly: true`" | The editor stays writable; a file with work not yet on the host is shown as held locally |
+| §11.3 | Editor offline: "Cached files only, read-only" | Cached files only, **writable**, held locally until reconciled. The table is also now the enumeration FR-004 is bound to |
+| §11.5 step 5 | "Unlock the editor" | Reconcile per file; nothing was locked |
+| §13.1 | "An offline workspace ... is read-only" | Readable and writable, with saved work awaiting reconnection |
+| §5.2 | No table for offline work | `pending_edits` added (A-PENDING). `git_status` also corrected to the shape F011 shipped, which had not been propagated either |
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -270,8 +272,10 @@ changed files, go offline, and confirm those files are readable.
   developer infer it from an action that fails or hangs.
 - **FR-003**: Losing the connection MUST NOT close a tab, reset the tree, clear cached content,
   or clear the last known git state.
-- **FR-004**: Every capability that requires the engine MUST state that it requires the engine
-  when used offline, rather than failing in a way that reads as a defect.
+- **FR-004**: Every capability §11.3's component table marks as unavailable offline MUST state
+  that it requires the engine, rather than failing in a way that reads as a defect. The table is
+  the enumeration: bounding the requirement to it is what makes it closable, where "every
+  capability" was quantified over an open set and could never be shown satisfied.
 
 **Reading offline**
 
@@ -358,9 +362,10 @@ changed files, go offline, and confirm those files are readable.
 
 ### Key Entities
 
-- **Retained edit**: a file's locally held content, the hash of the content it was derived from,
+- **Pending edit**: a file's locally held content, the hash of the content it was derived from,
   and when it was retained. Belongs to one workspace and one path. Absent for a file with no
-  offline work.
+  offline work. The stored thing is always a *pending edit*; "offline edit" is the developer's
+  act of making one, and the two are not used interchangeably.
 - **Base revision**: the hash of the content the client last confirmed with the host for a path.
   Already carried by the write protocol; this feature stores it.
 - **Reconciliation outcome**: per file, what happened on reconnection — written unchanged,
@@ -398,7 +403,7 @@ changed files, go offline, and confirm those files are readable.
   project's manifest files and the files changed in the bounded set of recent commits are
   readable offline, or prefetch stopped because the cache was full and said so.
 - **SC-010a**: **Zero** cached files are evicted by prefetch.
-- **SC-011**: Reconciling **100** files with retained edits completes in under **10 seconds**.
+- **SC-011**: Reconciling **100** files with pending edits completes in under **10 seconds**.
 - **SC-012**: **Zero** requests are issued to read a cached file while offline.
 
 ## Assumptions

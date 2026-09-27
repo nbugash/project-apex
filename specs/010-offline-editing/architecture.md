@@ -15,7 +15,7 @@ that outlives the process. A **reconciler**, woken by the connection state the c
 publishes, walks those rows on reconnection and decides per file whether to write, to combine, or
 to ask. A **prefetcher** fills the cache deliberately while online, and stops rather than evicting.
 
-The one architectural idea worth holding: **the retained edit is the durable fact, and every
+The one architectural idea worth holding: **the pending edit is the durable fact, and every
 outcome is a statement about one attempt on it**. A row is deleted only when the host has
 confirmed a write. Everything else — a lost connection, a conflict, a refused stale write — leaves
 the row alone, which is what makes "nothing is lost" true by construction rather than by care.
@@ -124,7 +124,7 @@ sequenceDiagram
 |----------|-------------|
 | `diffy` for the three-way merge, measured against `git merge-file` | research.md, *Three-way merge* |
 | A new protocol method for recent-commit paths | research.md, *Recent-commit prefetch needs a protocol method* |
-| Pending edits in their own table, keyed by path | research.md, *Where retained edits live* |
+| Pending edits in their own table, keyed by path | research.md, *Where pending edits live* |
 | Reconciliation triggered by the published connection state | research.md, *Reconciliation is driven by the connection state* |
 | Unmergeable decided by what the client holds, not by sniffing | research.md, *Unmergeable files* |
 | Prefetch stops rather than evicts | research.md, *Prefetch stops rather than evicts* |

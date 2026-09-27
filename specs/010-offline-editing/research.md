@@ -80,18 +80,18 @@ deliberately rather than inheriting a shape chosen for prefetch.
 
 ---
 
-## Where retained edits live: a new table, not new columns
+## Where pending edits live: a new table, not new columns
 
 **Decision.** A new `pending_edits` table keyed by `(workspace_id, relative_path)`, holding the
 saved content, the base hash, and when it was retained. Schema version 4.
 
 **Rationale.** Three reasons, in order of weight.
 
-A retained edit **outlives the cache entry it came from**. `file_contents` is subject to eviction
+A pending edit **outlives the cache entry it came from**. `file_contents` is subject to eviction
 (F005); a pending edit must not be. Putting them in one row makes eviction a question of "which
 columns may I clear", which is exactly the kind of rule that gets it wrong once.
 
-A retained edit **exists for paths that have no `file_contents` row at all** — a file created
+A pending edit **exists for paths that have no `file_contents` row at all** — a file created
 offline has no cached content and no base. F011 learned this shape the expensive way: git status
 was keyed by the tree's file identity and could not describe an untracked file in a folder the
 tree had never listed. Keying by path avoids repeating that.

@@ -30,8 +30,10 @@ File Layout* and must match it; where they disagree, one of the two documents is
 
 **Everything here blocks more than one user story. Nothing here delivers user value on its own.**
 
-- [ ] T003 [P] In `protocol/src/wire.rs`, add `RecentlyChangedParams` and `RecentlyChangedResult` per `contracts/recently-changed.md`, snake_case on the wire (A-WIRECASE), with `commits` optional
-- [ ] T004 [P] `protocol/tests/recent_wire.rs`: hand-written JSON round-trips for both types, asserting the wire spelling rather than trusting the derive
+The `recentlyChanged` wire types were here in the first draft and are now in Phase 7, where they
+belong: they serve US5 alone, so keeping them in Foundational misstated the dependency graph and
+would have orphaned them if US5 were deferred — which this file offers as the escape hatch.
+
 - [ ] T005 In `client/core/src/adapters/outbound/sqlite/schema.rs`, add `CURRENT_VERSION = 4` and `V4` creating `pending_edits` per data-model.md: keyed `(workspace_id, relative_path)`, `base_sha256` nullable, `mergeable` not null, foreign key cascading from `workspaces`
 - [ ] T006 In `client/core/src/adapters/outbound/sqlite/migrate.rs`, add `4 => schema::V4`
 - [ ] T007 `client/core/tests/migrate_v4.rs`: migrating a **populated** version-3 database preserves every workspace, file, cached blob and git row. Nothing has ever written a `pending_edits` row at migration time, so a migration that dropped the database and recreated it would satisfy every check about the new table perfectly — what must survive is everything else, which is the assertion F011's V3 test learned to make
@@ -55,9 +57,9 @@ opened file reads, and no action hangs waiting for a reply that is not coming.
 - [ ] T012 [P] [US1] `tests/e2e/offline-state.spec.ts`: US1 scenario 1, FR-002 and FR-003 — the status bar shows a distinct offline state **within 2 seconds** of the connection dropping, and no tab closes or resets. The elapsed time is printed, so SC-001 is a number rather than a verdict
 - [ ] T013 [P] [US1] In `tests/e2e/offline-state.spec.ts`, US1 scenario 2, FR-005 and SC-012: a cached file opens offline with **zero** requests issued. The count is the assertion; F011's listing counter exists because `toBeGreaterThanOrEqual(0)` passes for an implementation that does nothing
 - [ ] T014 [P] [US1] In `tests/e2e/offline-state.spec.ts`, US1 scenario 3: a folder never listed is marked unavailable rather than shown empty — and the distinction is asserted on the DOM, because "shown empty" and "marked unavailable" look identical to a test that only counts rows
-- [ ] T015 [P] [US1] In `tests/e2e/offline-state.spec.ts`, US1 scenarios 4, 5 and 6 and FR-007, FR-008, FR-009: path search returns cached results without claiming completeness; content search, terminals and code intelligence each state that they require the engine; git state is the last known state, marked, not cleared
+- [ ] T015 [P] [US1] In `tests/e2e/offline-state.spec.ts`, US1 scenarios 4, 5 and 6 and FR-004, FR-007, FR-008, FR-009: path search returns cached results without claiming completeness, and **every row §11.3's table marks unavailable offline** states that it requires the engine — content search, code intelligence, terminals and tasks — with git state the last known state, marked, not cleared. Driven from the table rather than from a list in the test, so a row added there fails this test instead of being silently uncovered
 - [ ] T016 [P] [US1] `client/core/tests/offline_budget.rs`: SC-007 and SC-008 as printed numbers — a cached file opens in under 200 ms, and path search over 50,000 cached paths returns in under 1 second. Measured through the real provider and the real store, not a double returning a clone, because F011's first budget test printed `0 us` and could not tell a fast client from one that was not running
-- [ ] T017 [P] [US1] `tests/unit/offline-presentation.test.ts`: the offline state and the "requires the engine" wording map to design-system tokens and are distinguishable **without colour**, compared by luminance following `rail-greyscale.spec.ts`
+- [ ] T017 [P] [US1] `tests/unit/offline-presentation.test.ts`: the offline state and the "requires the engine" wording map to design-system tokens and are distinguishable **without colour**, compared by luminance following `tests/e2e/rail-greyscale.spec.ts`
 
 ### Implementation for User Story 1
 
@@ -116,7 +118,7 @@ reconnect, and confirm everything lands with no prompt.
 - [ ] T037 [P] [US3] In `client/core/tests/reconcile.rs`, US3 scenario 3 and FR-023: reconciliation is per file — a file that reached the host is no longer pending and one that did not still is, in the same run
 - [ ] T038 [US3] In `client/core/tests/reconcile.rs`, US3 scenario 4 and FR-028: a connection lost **between two files** leaves no file partly written and every unreconciled edit retained. The interruption must land between files, which needs more than one file with work — an interruption inside a single file's write proves a different thing
 - [ ] T039 [P] [US3] In `client/core/tests/reconcile.rs`, FR-022: a row is deleted **only** where the host confirmed a write. Driven by making the write fail after the merge succeeded, which is the ordering a careless implementation gets wrong
-- [ ] T040 [P] [US3] `client/core/tests/reconcile_budget.rs`: SC-011 as a printed number — reconciling 100 files with retained edits completes in under 10 seconds
+- [ ] T040 [P] [US3] `client/core/tests/reconcile_budget.rs`: SC-011 as a printed number — reconciling 100 files with pending edits completes in under 10 seconds
 - [ ] T041 [US3] `tests/e2e/offline-reconcile.spec.ts`: US3 scenarios 1, 2 and 5 against a real engine — a clean reconnection costs **zero** developer interactions (SC-004), a non-overlapping host change still costs zero (SC-005), and the developer is shown what happened per file rather than inferring it
 
 ### Implementation for User Story 3
@@ -183,6 +185,8 @@ offline, and confirm they are readable.
 
 ### Implementation for User Story 5
 
+- [ ] T067a [P] [US5] In `protocol/src/wire.rs`, add `RecentlyChangedParams` and `RecentlyChangedResult` per `contracts/recently-changed.md`, snake_case on the wire (A-WIRECASE), with `commits` optional
+- [ ] T067b [P] [US5] `protocol/tests/recent_wire.rs`: hand-written JSON round-trips for both types, asserting the wire spelling rather than trusting the derive
 - [ ] T068 [P] [US5] In `engine/src/application/ports/git.rs`, add `recently_changed` to the `Git` port
 - [ ] T069 [US5] In `engine/src/adapters/outbound/git_cli.rs`, implement it with `git log --name-only`, honouring the prefix re-rooting FR-003a established and the config pinning already there
 - [ ] T070 [US5] In `engine/src/adapters/inbound/rpc.rs`, dispatch `git/recentlyChanged`, refusing an unregistered workspace with `-32001` and a non-positive `commits` with `-32602`

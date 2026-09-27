@@ -61,7 +61,7 @@ scenarios. One new protocol method, one schema migration, one new client depende
 | III. Decisions Recorded First | Alternatives closed are recorded before the code | **PASS** — research.md records six, three of which bind beyond F012 and go to Appendix A before implementation |
 | IV. Open Items Block | No live `[OPEN:]` marker in the sections this feature implements | **PASS** — checked at cycle preflight; none live before Appendix A |
 | V. Interaction Budget Verified | Anything on the interaction path ships with a failing-when-exceeded measurement | **PASS** — SC-007, SC-008, SC-009 and SC-011 are measurements, and quickstart records them as numbers |
-| VI. Trust Boundaries Both Sides | Paths validated on both sides | **PASS** — retained edits are keyed by a path the client re-validates on read, and the write path already validates on both sides |
+| VI. Trust Boundaries Both Sides | Paths validated on both sides | **PASS** — pending edits are keyed by a path the client re-validates on read, and the write path already validates on both sides |
 | VII. Every Feature Ships With Tests | Every acceptance scenario has an automated test | **PASS** — 29 scenarios; the plan allocates each to a suite in quickstart.md |
 | VIII. Ports and Adapters | Use cases orchestrate and return plain data; adapters hold I/O | **PASS** — the merge is a pure function over three strings, the reconciler is a use case, and `diffy` is named only inside one adapter, as `inotify` is |
 

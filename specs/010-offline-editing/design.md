@@ -41,8 +41,19 @@ client/ui/lib/
 ├── offline/ConflictPanel.svelte
 └── editor/EditorPanel.svelte                # writable offline; "held locally"
 
+protocol/tests/recent_wire.rs                 # wire spelling, hand-written JSON
 engine/tests/git_recent.rs
-client/core/tests/{merge_agreement,retain_edit,reconcile,prefetch,migrate_v4}.rs
+client/core/tests/
+├── merge_agreement.rs                       # SC-006b: agreement with `git merge-file`
+├── merge_confinement.rs                     # `diffy` named in exactly one file
+├── retain_edit.rs
+├── reconcile.rs
+├── prefetch.rs
+├── pending_store.rs                         # asserted on a REOPENED store
+├── migrate_v4.rs
+├── offline_budget.rs                        # SC-007, SC-008
+├── reconcile_budget.rs                      # SC-011
+└── prefetch_budget.rs                       # SC-009, SC-010a
 tests/unit/offline-presentation.test.ts
 tests/e2e/{offline-state,offline-reconcile,offline-conflict}.spec.ts
 ```

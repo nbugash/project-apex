@@ -778,7 +778,8 @@ on the network. In remote mode this cache is **a projection, never an authority*
 disagrees with the engine, the engine wins.
 
 The cache serves three jobs: instant file tree rendering, avoiding refetches of unchanged
-files, and read-only access when disconnected (§11).
+files, and read **and write** access when disconnected (§11). The write half is A-OFFLINE's:
+work saved offline is held in the projection until a reconnection can reconcile it.
 
 ## 5.2 Canonical schema (A-B5)
 
@@ -825,15 +826,37 @@ CREATE TABLE file_contents (
     FOREIGN KEY(file_id) REFERENCES files(file_id) ON DELETE CASCADE
 );
 
+-- Keyed by workspace and path, not by `file_id` (F011). A file's git state must be
+-- recordable where the tree has no row for it: an untracked file in a folder nobody has
+-- expanded has no `files` row to hang from, and the tree deliberately re-lists nothing.
 CREATE TABLE git_status (
-    file_id       TEXT PRIMARY KEY,
     workspace_id  TEXT NOT NULL,
     relative_path TEXT NOT NULL,
     status_type   TEXT NOT NULL,         -- MODIFIED|UNTRACKED|STAGED|DELETED|CONFLICT
+    PRIMARY KEY (workspace_id, relative_path),
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_git_status_lookup ON git_status(workspace_id, relative_path);
+CREATE TABLE git_branch (
+    workspace_id TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,          -- branch|detached|none
+    value        TEXT,                   -- the name, or the full commit; NULL for none
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+
+-- Work saved while offline (A-OFFLINE, A-PENDING). Keyed by path for the same reason
+-- `git_status` is, and separate from `file_contents` because a pending edit outlives the
+-- cached content it came from and can exist where there is none at all.
+CREATE TABLE pending_edits (
+    workspace_id  TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    content_blob  BLOB NOT NULL,         -- Zstd level 3, as file_contents
+    base_sha256   TEXT,                  -- NULL for a file created offline
+    mergeable     INTEGER NOT NULL,      -- 0 when not held as text, or over the editor's limit
+    retained_at   INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, relative_path),
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
 
 -- Fuzzy path search. A leading-wildcard LIKE cannot use an index and degrades to a
 -- full scan on large workspaces, which is the opposite of instant filtering.
@@ -1189,18 +1212,24 @@ their own hash terms (§5.3); invalidation of the tree is not invalidation of co
 
 # 11. Offline Behaviour and Reconnection
 
-## 11.1 Decision (A-B3): read-only offline
+## 11.1 Decision (A-OFFLINE): the editor stays writable
 
-When the connection to the engine is lost, the workspace becomes a **read-only mirror**. The
-editor locks, the cached tree stays navigable, cached files stay readable, and nothing is
-queued for later write.
+When the connection to the engine is lost, the workspace stays **readable and writable**. The
+cached tree stays navigable, cached files stay readable, and the editor does not lock. Work
+saved while offline is held locally against the hash of the content the client last confirmed
+with the host, and reconciled on reconnection by a three-way merge (§11.5).
 
-**This decision is provisional and was made by engineering, not product.** It resolves a direct
-contradiction in the source material, which specified both an outbound write queue and a
-read-only editor lock. The alternatives, and what reversing this costs, are in Appendix A, A-B3.
+**This reverses A-B3**, which made the workspace a read-only mirror and was provisional and
+engineering-made. Product answered the question A-B3 left to them: offline editing is a
+differentiator worth roughly two additional features. A-B3 is kept in Appendix A rather than
+edited, because its reasoning is still the argument against.
 
-The consequence worth stating plainly: a developer on a plane can read their code and cannot
-change it.
+The consequence worth stating plainly: a developer on a plane can read their code, change it,
+and have those changes reach the host when the plane lands — merged where nothing collided, and
+with a conflict raised where something did.
+
+**Nothing is queued but file content.** There is no outbox for arbitrary operations: no offline
+commit, no deferred task run. What is held is a file's content and the base it was derived from.
 
 ## 11.2 What the user sees
 
@@ -1208,16 +1237,17 @@ Offline is explicit, never inferred from silent failure:
 
 - The status bar shows a distinct offline state.
 - Open tabs stay open; the tree stays interactive; nothing closes or resets.
-- Monaco models switch to `readOnly: true`.
+- The editor stays writable. A file with work not yet on the host is shown as held locally, so
+  "saved" and "saved to the host" are never confused.
 - Features that require the engine state that they require the engine, rather than appearing
-  broken.
+  broken. §11.3 enumerates them; a capability absent from that table does not require the engine.
 
 ## 11.3 Component behaviour
 
 | Component | Online | Offline |
 |---|---|---|
 | File tree | SQLite, lazily filled from the engine | SQLite only; unfetched folders marked unavailable |
-| Editor | Cache or ranged read from engine | Cached files only, read-only |
+| Editor | Cache or ranged read from engine | Cached files only, **writable**; saved work held locally until reconciled |
 | Path search | Engine-side ripgrep | `files_fts` over cached paths |
 | Content search | Engine-side ripgrep | Unavailable, stated as such |
 | Code intelligence | Remote language servers | Unavailable; syntax highlighting persists (local Tree-sitter) |
@@ -1240,7 +1270,8 @@ A tokio loop attempts reconnection on a backoff while offline. On success:
 2. Re-run the handshake and verify protocol compatibility (§3.8).
 3. Reconcile: compare cached hashes against the engine for open files; refetch what changed.
 4. Restore language servers for open workspaces.
-5. Unlock the editor and update the status bar.
+5. Reconcile offline work per file (below) and update the status bar. Nothing is unlocked,
+   because nothing was locked.
 
 Reconciliation is a **three-way merge**, not a pull: edits made offline persist against the
 `baseSha256` the client held when the connection dropped, and on reconnect the client merges
@@ -1303,8 +1334,8 @@ A workspace may target the developer's own machine instead of an instance. The p
 abstraction (§6) makes this a routing decision rather than a second application.
 
 Local mode is not the same as offline (§11). An offline workspace is a remote workspace whose
-engine is unreachable, and is read-only. A local workspace has no remote at all and is fully
-writable.
+engine is unreachable: it is readable and writable, and its saved work waits for a reconnection
+to reconcile. A local workspace has no remote at all, so nothing ever waits.
 
 ## 13.2 Behaviour
 
