@@ -3600,9 +3600,10 @@ uniformly unwatched, and that the two exceptions are deliberate and narrow. A se
 adding a third watch inside `.git/` should have to justify it against this record rather than
 discover the precedent by accident.
 
-**Scope (2026-09-27).** "The repository" means the one whose working tree *is* the workspace
-root. `rev-parse` walks upward, so a root inside another checkout would otherwise be watched and
-reported as that project's; F011's spec records the reasoning and FR-003a states the rule.
+**Scope (2026-09-27).** "The repository" is the one `rev-parse` finds by walking upward, which
+for a workspace on a subdirectory is the enclosing project. Its status is scoped to the subtree
+and every path re-rooted to the workspace; the branch is the repository's. F011's spec records
+the reasoning and FR-003a and FR-003b state the rules.
 
 **Amended by A-GITNUDGE (2026-09-27).** These two watches are necessary and **not sufficient**.
 An ordinary save to a tracked file writes neither of them, so the two watches alone leave the

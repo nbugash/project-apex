@@ -76,38 +76,27 @@ impl GitCli {
         }
     }
 
-    /// Is this directory **itself** a repository's working tree?
+    /// Where this workspace sits inside its repository, as a path prefix.
     ///
-    /// `rev-parse` walks upward, so a plain directory inside a checkout answers every git
-    /// question with the enclosing repository's -- and that is not a workspace's git state, it
-    /// is somebody else's. Verified against git directly: from a subdirectory,
-    /// `--porcelain=v2` prints paths relative to the **repository** root and lists files
-    /// outside the workspace entirely, so a workspace opened inside a larger repository would
-    /// mark paths that do not exist in it and miss the ones that do.
+    /// Empty when the workspace root **is** the working tree's top level, which is the ordinary
+    /// case. Otherwise `services/checkout/`, straight from `rev-parse --show-prefix` rather
+    /// than computed by subtracting one path from another — git already knows, and path
+    /// arithmetic across symlinks and case-insensitive filesystems is a source of defects with
+    /// no upside here.
     ///
-    /// So the rule is equality, not ancestry: the workspace root must be the working tree's top
-    /// level. Anything else degrades as a non-repository, which FR-027 already describes
-    /// exactly -- no branch, no marks, workspace fully usable.
-    ///
-    /// The case this refuses is real and wanted -- a subdirectory of a monorepo as a workspace
-    /// -- and refusing it cleanly is better than serving it wrongly. Supporting it means
-    /// scoping the status and re-rooting every path, which is a feature rather than a check.
-    fn is_the_top_level(&self, root: &Path) -> Result<(), GitFailure> {
-        let out = self.run(root, &["rev-parse", "--show-toplevel"])?;
-        let top = PathBuf::from(out.trim());
-        // Compared canonically: the root has already been canonicalised, and git answers with a
-        // resolved path, but a symlinked temporary directory makes the two differ textually
-        // while naming one directory.
-        let same = std::fs::canonicalize(&top)
-            .ok()
-            .zip(std::fs::canonicalize(root).ok())
-            .map(|(a, b)| a == b)
-            .unwrap_or(false);
-        if same {
-            Ok(())
-        } else {
-            Err(GitFailure::NotARepository)
-        }
+    /// **Why a subdirectory is supported rather than refused.** `rev-parse` walks upward, so a
+    /// workspace inside a checkout gets the enclosing repository's answers: paths relative to
+    /// the *repository* root, and files from elsewhere in it. Reported unchanged, that marks
+    /// paths which do not exist in this workspace and misses the ones that do. The first
+    /// version of this feature refused the case for exactly that reason. A workspace on a
+    /// subdirectory of a monorepo is an ordinary way to work, though, so the scoping and
+    /// re-rooting are done here instead: `-- .` limits the status to this subtree, and the
+    /// prefix is stripped from every path on the way out.
+    fn workspace_prefix(&self, root: &Path) -> Result<String, GitFailure> {
+        Ok(self
+            .run(root, &["rev-parse", "--show-prefix"])?
+            .trim()
+            .to_string())
     }
 
     /// Settings pinned on every invocation, and the **only** ones.
@@ -173,7 +162,10 @@ impl Git for GitCli {
         // `rev-parse --git-dir`, never `<root>/.git`. In a linked worktree or a submodule that
         // path is a *file* holding a `gitdir:` pointer, and the directory with `HEAD` and `index`
         // in it is elsewhere entirely — verified against git 2.43 in research.md.
-        self.is_the_top_level(root.as_path())?;
+        //
+        // Not gated on the workspace being the repository's top level: a subdirectory
+        // workspace is watched through the same `HEAD` and `index`, because they are the
+        // repository's and a subtree does not have its own.
         let out = self.run(root.as_path(), &["rev-parse", "--git-dir"])?;
         let raw = out.trim();
         if raw.is_empty() {
@@ -188,7 +180,20 @@ impl Git for GitCli {
     }
 
     fn status(&self, root: &ResolvedPath) -> Result<StatusSnapshot, GitFailure> {
-        self.is_the_top_level(root.as_path())?;
+        let prefix = self.workspace_prefix(root.as_path())?;
+        // **A wholly untracked subdirectory collapses to itself.** git reports `? sub/` rather
+        // than its contents, and for a workspace *on* `sub/` that strips to the empty string
+        // and vanishes -- so a developer who opened a new, unadded directory inside a
+        // repository would see no untracked markers at all. Asking for every file expands it.
+        //
+        // Only where there is a prefix. At the repository root collapsing is what keeps
+        // `? node_modules/` one entry instead of thousands, and the cost of expanding is
+        // unbounded there; under a prefix it is bounded by the workspace itself.
+        let untracked = if prefix.is_empty() {
+            "--untracked-files=normal"
+        } else {
+            "--untracked-files=all"
+        };
         let raw = self.run(
             root.as_path(),
             // `--no-optional-locks` first, and it is not a micro-optimisation: an ordinary
@@ -203,13 +208,22 @@ impl Git for GitCli {
                 "--porcelain=v2",
                 "-z",
                 "--branch",
+                untracked,
+                // **Scoping is for cost, not for correctness.** The prefix strip below is what
+                // keeps another team's files out; removing this pathspec changes no result,
+                // which a mutation confirmed. What it changes is how much of a monorepo git
+                // walks on every refresh, and the coalescer runs this often.
+                "--",
+                ".",
             ],
         )?;
-        parse_status(&raw)
+        parse_status_in(&raw, &prefix)
     }
 
     fn file_diff(&self, root: &ResolvedPath, relative: &str) -> Result<GitDiffResult, GitFailure> {
-        self.is_the_top_level(root.as_path())?;
+        // No prefix arithmetic here: every git invocation below runs with the workspace root as
+        // its working directory, and a pathspec is resolved relative to that. The coordinates
+        // that come back are line numbers, which no amount of nesting changes.
         let rel = relative.trim_start_matches('/');
         // `--unified=0` removes context lines, so the hunk headers are exact and the changed
         // lines that follow them are discarded here rather than transmitted (§12.3).
@@ -255,11 +269,10 @@ impl Git for GitCli {
 /// wrong upstream, and reinterpreting it is exactly the repair Principle VI forbids --
 /// contracts/git-status.md guarantee 7 says the entry is *dropped*.
 ///
-/// Containment is a real property here because `is_the_top_level` establishes that the
-/// repository root and the workspace root are the same directory. Without that, "relative to
-/// the repository" and "inside the workspace" are different questions and this function could
-/// not answer either.
-fn contained(raw: &str) -> Option<String> {
+/// `prefix` is where the workspace sits inside the repository, so "relative to the repository"
+/// and "inside the workspace" are two different questions and this answers both: strip the
+/// prefix, or drop the entry when it does not have one.
+fn contained(raw: &str, prefix: &str) -> Option<String> {
     if raw.is_empty() || raw.contains('\0') {
         return None;
     }
@@ -267,6 +280,12 @@ fn contained(raw: &str) -> Option<String> {
     if raw.starts_with('/') {
         return None;
     }
+    // Outside this workspace, whatever else it may be inside.
+    let raw = if prefix.is_empty() {
+        raw
+    } else {
+        raw.strip_prefix(prefix)?
+    };
     let mut out = String::from("/");
     for part in raw.split('/') {
         match part {
@@ -312,7 +331,23 @@ fn collapse(xy: &str) -> Option<GitStatusKind> {
 /// A record this build cannot read rejects the whole snapshot. A partial status is
 /// indistinguishable from a repository where the missing files are clean, so the alternative to
 /// an error is telling the developer their changes do not exist.
+/// Parse a status whose paths are already workspace-relative.
+///
+/// Kept so that the parser's own tests, which feed it captured output from a workspace at the
+/// repository root, say what they mean rather than passing an empty prefix on every line.
 pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
+    parse_status_in(raw, "")
+}
+
+/// Parse a status reported relative to the **repository** root, for a workspace sitting at
+/// `prefix` inside it.
+///
+/// `prefix` is empty for the ordinary case and `services/checkout/` for a subdirectory
+/// workspace. Every path is re-rooted on the way out, and one that does not begin with the
+/// prefix is **dropped**: with `-- .` scoping the status that should not arise, and if it does
+/// it names a file outside this workspace, which contracts/git-status.md guarantee 7 says is
+/// dropped rather than forwarded.
+pub fn parse_status_in(raw: &str, prefix: &str) -> Result<StatusSnapshot, GitFailure> {
     let mut fields = raw.split('\0').filter(|f| !f.is_empty()).peekable();
     let mut branch = BranchPosition::None;
     let mut oid: Option<String> = None;
@@ -360,7 +395,7 @@ pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
                         ));
                     }
                 }
-                if let (Some(status), Some(p)) = (collapse(xy), contained(path)) {
+                if let (Some(status), Some(p)) = (collapse(xy), contained(path, prefix)) {
                     changes.push(GitChange { path: p, status });
                 }
             }
@@ -372,7 +407,7 @@ pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
                         "unreadable `u` record: {field}"
                     )));
                 }
-                if let Some(p) = contained(parts[9]) {
+                if let Some(p) = contained(parts[9], prefix) {
                     changes.push(GitChange {
                         path: p,
                         status: GitStatusKind::Conflict,
@@ -380,7 +415,7 @@ pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
                 }
             }
             "?" => {
-                if let Some(p) = contained(rest) {
+                if let Some(p) = contained(rest, prefix) {
                     changes.push(GitChange {
                         path: p,
                         status: GitStatusKind::Untracked,

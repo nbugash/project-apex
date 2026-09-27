@@ -252,3 +252,72 @@ fn an_absolute_path_is_dropped_rather_than_read_as_workspace_relative() {
         snap.changes
     );
 }
+
+// ---- A workspace inside a repository (FR-003a) ----
+
+#[test]
+fn a_prefix_is_stripped_so_paths_are_workspace_relative() {
+    // git reports relative to the **repository** root. A workspace on `services/checkout`
+    // needs `/pay.rs`, not `/services/checkout/pay.rs`: the second names nothing that exists
+    // in this workspace, so every mark would land on no row at all.
+    let snap = apex_engine::adapters::outbound::git_cli::parse_status_in(
+        "# branch.head main\u{0}\
+         1 .M N... 100644 100644 100644 aa bb services/checkout/pay.rs\u{0}\
+         ? services/checkout/scratch.txt\u{0}",
+        "services/checkout/",
+    )
+    .expect("parse");
+    let paths: Vec<&str> = snap.changes.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(paths, vec!["/pay.rs", "/scratch.txt"]);
+}
+
+#[test]
+fn a_path_outside_the_workspace_is_dropped_rather_than_re_rooted() {
+    // With `-- .` scoping this should not arrive; if it does it names another team's file, and
+    // contracts/git-status.md guarantee 7 says the entry is dropped. Stripping "whatever
+    // prefix it happens to have" would put somebody else's path in this tree.
+    let snap = apex_engine::adapters::outbound::git_cli::parse_status_in(
+        "# branch.head main\u{0}\
+         1 .M N... 100644 100644 100644 aa bb services/billing/bill.rs\u{0}\
+         1 .M N... 100644 100644 100644 aa bb services/checkout/pay.rs\u{0}",
+        "services/checkout/",
+    )
+    .expect("parse");
+    let paths: Vec<&str> = snap.changes.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec!["/pay.rs"],
+        "a file outside the workspace leaked in"
+    );
+}
+
+#[test]
+fn a_rename_inside_a_subdirectory_workspace_is_re_rooted_too() {
+    // Record type `2` carries the destination in the same position as a `1`, so the prefix has
+    // to be stripped there as well -- and the original path is a separate NUL field that must
+    // still be consumed, or everything after it desynchronises.
+    let snap = apex_engine::adapters::outbound::git_cli::parse_status_in(
+        "# branch.head main\u{0}\
+         2 R. N... 100644 100644 100644 aa bb R100 services/checkout/new.rs\u{0}services/checkout/old.rs\u{0}\
+         1 .M N... 100644 100644 100644 aa bb services/checkout/after.rs\u{0}",
+        "services/checkout/",
+    )
+    .expect("parse");
+    let paths: Vec<&str> = snap.changes.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(paths, vec!["/new.rs", "/after.rs"]);
+}
+
+#[test]
+fn an_empty_prefix_leaves_paths_exactly_as_they_are() {
+    // The ordinary case, and the one every other test in this file exercises.
+    let with = apex_engine::adapters::outbound::git_cli::parse_status_in(
+        "# branch.head main\u{0}1 .M N... 100644 100644 100644 aa bb src/a.rs\u{0}",
+        "",
+    )
+    .expect("parse");
+    let without =
+        parse_status("# branch.head main\u{0}1 .M N... 100644 100644 100644 aa bb src/a.rs\u{0}")
+            .expect("parse");
+    assert_eq!(with.changes, without.changes);
+    assert_eq!(with.changes[0].path, "/src/a.rs");
+}

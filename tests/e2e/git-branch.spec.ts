@@ -6,8 +6,24 @@
 // `git_degrade.rs`; a successful empty status still reaches a client that could render it as a
 // failure, and only this says whether it does.
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WORKSPACE, resetWorkspace, openWorkspace } from './editor-harness';
 import { waitForShell, resetSession } from './helpers';
+
+/// A directory that is genuinely inside no repository.
+///
+/// **Not `.e2e-workspace`**, which lives inside this project's own checkout: under FR-003a a
+/// workspace there is served as a subtree of *this* repository and correctly shows its branch.
+/// The earlier version of these two tests used it and passed only because subdirectory
+/// workspaces were refused outright; when that changed they failed, which is the test doing its
+/// job. A non-repository has to be somewhere outside the tree.
+function outsideAnyRepository(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'apex-nonrepo-'));
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+  return dir;
+}
 
 function git(...args: string[]): string {
   const r = spawnSync('git', args, { cwd: WORKSPACE, encoding: 'utf8' });
@@ -55,11 +71,11 @@ async function waitForBranch(text: string): Promise<void> {
   });
 }
 
-async function open(): Promise<void> {
+async function open(base?: string): Promise<void> {
   resetSession();
   await browser.reloadSession();
   await waitForShell();
-  await openWorkspace();
+  await openWorkspace(base);
   await $('[data-testid="tree-row"]').waitForExist({ timeout: 20_000 });
 }
 
@@ -108,27 +124,69 @@ describe('the branch indicator', () => {
   it('shows nothing at all for a workspace that is not a repository', async () => {
     // FR-019 and SC-007 together. A placeholder would make a statement about git to a
     // developer who is not using it, and an error would say the workspace had failed.
-    resetWorkspace({ 'plain.txt': 'no repository here\n' });
-    await open();
-
-    // Given time to be wrong: the assertion is that nothing appears, and a check made
-    // immediately would pass against an indicator that arrives a moment later.
-    await browser.pause(2_000);
-    expect(await indicator()).toBeNull();
+    const dir = outsideAnyRepository({ 'plain.txt': 'no repository here\n' });
+    try {
+      await open(dir);
+      // Given time to be wrong: the assertion is that nothing appears, and a check made
+      // immediately would pass against an indicator that arrives a moment later.
+      await browser.pause(2_000);
+      expect(await indicator()).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('leaves a workspace that is not a repository fully usable and error-free', async () => {
-    resetWorkspace({ 'plain.txt': 'no repository here\n', 'other.txt': 'also fine\n' });
-    await open();
-    await browser.pause(2_000);
+    const dir = outsideAnyRepository({
+      'plain.txt': 'no repository here\n',
+      'other.txt': 'also fine\n',
+    });
+    try {
+      await open(dir);
+      await browser.pause(2_000);
 
-    expect(await errorsOnScreen()).toBe(0);
-    const rows = await browser.execute(
-      () =>
-        Array.from(document.querySelectorAll('[data-testid="tree-row"]')).map(
-          (r) => r.getAttribute('data-path') ?? '',
-        ),
-    );
-    expect(rows).toEqual(expect.arrayContaining(['/plain.txt', '/other.txt']));
+      expect(await errorsOnScreen()).toBe(0);
+      const rows = await browser.execute(
+        () =>
+          Array.from(document.querySelectorAll('[data-testid="tree-row"]')).map(
+            (r) => r.getAttribute('data-path') ?? '',
+          ),
+      );
+      expect(rows).toEqual(expect.arrayContaining(['/plain.txt', '/other.txt']));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('serves a workspace on a subdirectory as a subtree of its repository', async () => {
+    // FR-003a through the interface. The branch is the repository's; the marks are only this
+    // subtree's, re-rooted. Without the re-rooting every mark names a path that does not exist
+    // here, and the developer sees an accurate branch beside a tree claiming nothing changed.
+    resetWorkspace({ 'top.txt': 'at the root\n' });
+    makeRepo();
+    spawnSync('sh', ['-c', `mkdir -p '${WORKSPACE}/inner' && printf 'x' > '${WORKSPACE}/inner/deep.txt'`]);
+    git('add', '-A');
+    git('commit', '-q', '-m', 'add inner');
+    spawnSync('sh', ['-c', `printf 'changed' > '${WORKSPACE}/inner/deep.txt'`]);
+    spawnSync('sh', ['-c', `printf 'changed' > '${WORKSPACE}/top.txt'`]);
+
+    await open(`${WORKSPACE}/inner`);
+
+    await browser.waitUntil(async () => (await indicator())?.kind === 'branch', {
+      timeout: 20_000,
+      timeoutMsg: 'a subdirectory workspace showed no branch',
+    });
+
+    const status = await browser.execute(async () => {
+      const fn = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: { invoke: (c: string, a?: unknown) => Promise<unknown> };
+        }
+      ).__TAURI_INTERNALS__?.invoke;
+      return (await fn?.('git_status')) as { changes: Array<{ path: string }> };
+    });
+    const paths = status.changes.map((c) => c.path);
+    expect(paths).toContain('/deep.txt');
+    expect(paths.some((p) => p.includes('top.txt'))).toBe(false);
   });
 });

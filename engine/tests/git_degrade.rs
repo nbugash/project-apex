@@ -120,43 +120,73 @@ fn a_genuine_failure_is_still_a_failure() {
 // ---- A workspace inside somebody else's repository ----
 
 #[test]
-fn a_directory_inside_a_repository_is_not_itself_a_repository() {
-    // **`rev-parse` walks upward.** A plain directory inside a checkout answers every git
-    // question with the enclosing repository's -- which is not this workspace's git state, it
-    // is another project's. Found by an end-to-end test whose fixture happened to live inside
-    // this project's own checkout and was told it was on `feature/F011-git-integration`.
+fn a_subdirectory_workspace_reports_only_its_own_subtree() {
+    // FR-003a. **The monorepo case, supported rather than refused.** `rev-parse` walks upward, so
+    // without scoping this workspace receives the enclosing repository's changes -- on a
+    // monorepo, most of somebody else's work -- under paths relative to the *repository* root,
+    // which name nothing that exists here.
+    //
+    // The first version of this feature refused the case outright for exactly that reason.
+    // Opening a subdirectory of a large repository is an ordinary way to work, so the status
+    // is scoped with `-- .` and every path re-rooted instead.
     let repo = Repo::new();
-    let inside = repo.root.join("src");
-    assert!(inside.is_dir(), "the fixture has a subdirectory");
+    repo.write("src/mine.txt", "changed here\n");
+    repo.write("kept.txt", "changed elsewhere\n");
+    repo.write("src/untracked.txt", "new here\n");
 
-    assert_eq!(
-        GitCli::default().status(&resolved(&inside)),
-        Err(GitFailure::NotARepository),
-        "a subdirectory reported the enclosing repository's status"
+    let inside = repo.root.join("src");
+    let status = GitCli::default()
+        .status(&resolved(&inside))
+        .expect("a subdirectory of a repository has git state");
+
+    let paths: Vec<&str> = status.changes.iter().map(|c| c.path.as_str()).collect();
+    assert!(
+        paths.contains(&"/mine.txt"),
+        "a change inside the workspace must be reported, re-rooted: {paths:?}"
+    );
+    assert!(
+        paths.contains(&"/untracked.txt"),
+        "an untracked file inside the workspace must be reported: {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.contains("kept.txt")),
+        "a change outside the workspace leaked in: {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.starts_with("/src/")),
+        "paths are relative to the workspace, not the repository: {paths:?}"
     );
 }
 
 #[test]
-fn a_subdirectory_workspace_degrades_rather_than_reporting_the_wrong_paths() {
-    // What the alternative costs, stated as a test. From a subdirectory `--porcelain=v2`
-    // prints paths relative to the **repository** root and lists files outside the workspace,
-    // so serving it would mark paths that do not exist in this workspace and miss the ones
-    // that do. An empty status is wrong about nothing (FR-027).
+fn a_subdirectory_workspace_reports_the_repository_s_branch() {
+    // The branch is the repository's and needs no re-rooting: a subtree does not have one of
+    // its own, and the developer working in it is on that branch.
     let repo = Repo::new();
-    repo.write("src/a.txt", "changed\n");
-    repo.write("kept.txt", "also changed\n");
-
+    repo.run(&["checkout", "-q", "-b", "feature/thing"]);
     let inside = repo.root.join("src");
-    let service = GitService::new(Arc::new(GitCli::default()));
-    let page = service
-        .refresh("w1", &resolved(&inside), 1_000)
-        .expect("an absence is a successful empty status");
+    assert_eq!(
+        GitCli::default()
+            .status(&resolved(&inside))
+            .expect("status")
+            .branch,
+        BranchPosition::Branch("feature/thing".into())
+    );
+}
 
-    assert_eq!(page.current_branch, BranchPosition::None);
+#[test]
+fn a_subdirectory_workspace_diffs_its_own_files() {
+    // No prefix arithmetic on this path: git runs with the workspace root as its working
+    // directory and a pathspec is resolved against that.
+    let repo = Repo::new();
+    repo.write("src/a.txt", "one\nCHANGED\nthree\nfour\n");
+    let inside = repo.root.join("src");
+    let diff = GitCli::default()
+        .file_diff(&resolved(&inside), "a.txt")
+        .expect("diff");
     assert!(
-        page.changes.is_empty(),
-        "a subdirectory workspace was given the enclosing repository's changes: {:?}",
-        page.changes
+        !diff.modified.is_empty(),
+        "a file inside a subdirectory workspace reported no change: {diff:?}"
     );
 }
 
@@ -175,5 +205,53 @@ fn the_repository_root_itself_still_works() {
         page.changes.iter().any(|c| c.path == "/src/a.txt"),
         "the repository root must still report its own changes: {:?}",
         page.changes
+    );
+}
+
+#[test]
+fn a_wholly_untracked_subdirectory_workspace_still_reports_its_files() {
+    // FR-003b. **The case that broke the first version of subdirectory support.** git collapses a
+    // directory with nothing tracked in it to a single `? sub/` entry -- which, for a
+    // workspace *on* `sub/`, strips to the empty string and disappears. A developer who made a
+    // new directory inside a repository and opened it would see no markers at all, on a
+    // workspace where every single file is new.
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.root.join("fresh/deep")).unwrap();
+    repo.write("fresh/a.txt", "a\n");
+    repo.write("fresh/deep/b.txt", "b\n");
+
+    let inside = repo.root.join("fresh");
+    let status = GitCli::default()
+        .status(&resolved(&inside))
+        .expect("status");
+    let paths: Vec<&str> = status.changes.iter().map(|c| c.path.as_str()).collect();
+
+    assert!(
+        paths.contains(&"/a.txt") && paths.contains(&"/deep/b.txt"),
+        "an untracked subdirectory workspace reported {paths:?}"
+    );
+}
+
+#[test]
+fn the_repository_root_still_collapses_untracked_directories() {
+    // The other half of the same decision. Expanding at the root is unbounded -- one entry per
+    // file under every untracked directory -- and a collapsed `? build/` is what the tree
+    // wants anyway.
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.root.join("build/nested")).unwrap();
+    repo.write("build/one.o", "x\n");
+    repo.write("build/nested/two.o", "y\n");
+
+    let status = GitCli::default()
+        .status(&resolved(&repo.root))
+        .expect("status");
+    let paths: Vec<&str> = status.changes.iter().map(|c| c.path.as_str()).collect();
+    assert!(
+        paths.contains(&"/build"),
+        "the root workspace should report the directory, not its contents: {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|p| p.contains("one.o")),
+        "the root workspace expanded an untracked directory: {paths:?}"
     );
 }

@@ -46,7 +46,8 @@ Where this document fixes something the system specification leaves open, it say
   alters no working-tree file, so staged and unstaged state would stay stale until some
   unrelated file happened to change.
 - Q: What is "the workspace's repository" when the workspace root sits *inside* a checkout
-  rather than being one? → A: **Only the root itself counts.** `rev-parse --show-toplevel` must
+  rather than being one? → A: **Superseded 2026-09-27 by the entry below.** Originally: only the
+  root itself counts. `rev-parse --show-toplevel` must
   equal the workspace root; anything else degrades as a non-repository under FR-027 — no branch,
   no marks, workspace fully usable. `rev-parse` walks upward, so without this a plain directory
   inside a checkout answered every git question with the enclosing project's. Verified against
@@ -57,6 +58,16 @@ Where this document fixes something the system specification leaves open, it say
   and re-rooting every path, which is a feature rather than a check. **Decided 2026-09-27,
   during implementation, after an end-to-end fixture living inside this project's own checkout
   was told it was on `feature/F011-git-integration`.**
+- Q: Should a workspace on a subdirectory of a repository be supported, having first been
+  refused? → A: **Supported.** Opening a subdirectory of a large repository is an ordinary way
+  to work, and refusing it cleanly was the safe first answer rather than the right one. The
+  status is scoped with `-- .` and every path re-rooted by the prefix `rev-parse --show-prefix`
+  reports; a path that does not carry the prefix is dropped. Scoping is for cost, not
+  correctness -- the prefix strip is what keeps another team's files out, which a mutation
+  confirmed. Two consequences found by testing rather than by reasoning: a wholly untracked
+  workspace directory collapses to a single entry that strips to nothing, so untracked files
+  are expanded when there is a prefix and left collapsed at the repository root, where
+  expanding is unbounded. **Decided 2026-09-27.**
 - Q: What wakes a refresh when a developer simply saves a tracked file, which writes neither
   `HEAD` nor `index`? → A: **The workspace's own file events, as a second trigger alongside the
   two watches**, recorded as A-GITNUDGE. The answer above rejected workspace events as the
@@ -252,9 +263,13 @@ bulk invalidation rather than one event per file, and that stale git state is go
   computation.
 - **FR-003**: A change that alters the index but no working-tree file — staging, unstaging,
   stashing — MUST refresh status.
-- **FR-003a**: The engine MUST treat a workspace as a repository only when the workspace root
-  **is** the working tree's top level. A root inside some other repository is a non-repository
-  for this feature's purposes and degrades under FR-027.
+- **FR-003a**: Where the workspace root sits **inside** a repository rather than being its top
+  level, the engine MUST report only that subtree, with every path re-rooted to the workspace.
+  A path outside it MUST be dropped rather than re-rooted. The branch is the repository's,
+  which is the branch the developer is working on.
+- **FR-003b**: Where the workspace root is itself untracked, the engine MUST still report its
+  files individually. git collapses a wholly untracked directory to a single entry, which for a
+  workspace *on* that directory names the workspace itself and marks nothing.
 - **FR-004**: The engine MUST resolve the repository's actual git directory rather than assuming
   `<root>/.git` is a directory, so that linked worktrees and submodules are watched correctly.
 - **FR-005**: The two watched paths MUST NOT be reported as workspace file events (A-GITWATCH).
@@ -378,11 +393,11 @@ Named here in the spec's own words, with the name [data-model.md](./data-model.m
 - **The developer performs git operations elsewhere.** F010 gives them a terminal on the same
   host; this feature reads the result. No requirement here implies a button that changes the
   repository.
-- **One repository per workspace root, and the root must be its top level.** Nested repositories
-  below the root are not enumerated; a submodule is watched only when it is itself the workspace
-  root. A workspace root *below* a repository is likewise not that repository's workspace — see
-  the clarification dated 2026-09-27 and FR-003a. The assumption originally covered only the
-  first direction, and the second is where the defect was.
+- **One repository per workspace root.** Nested repositories *below* the root are not
+  enumerated; a submodule is watched only when it is itself the workspace root. A workspace root
+  *below* a repository **is** served, from that repository, scoped and re-rooted to the subtree
+  (FR-003a). The assumption originally covered only the first direction, and the second is where
+  the defect was.
 - **The status bar is the right home for the branch**, on the strength of §12.3, even though the
   prototype has no such indicator. Recorded as a design deviation above.
 - **`git` on the host is current enough to report status in a machine-readable form.** Where it

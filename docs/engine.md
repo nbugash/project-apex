@@ -362,15 +362,31 @@ file follows the old inode, which after the first rename is an unlinked file not
 touch again: the watch fires exactly once and then goes quiet forever, on a repository that
 looks perfectly healthy. The directory is watched and events are filtered by name.
 
-### Why the workspace root must *be* the repository
+### A workspace inside a repository
 
-`rev-parse` walks upward, so a plain directory inside a checkout answers every git question with
-the enclosing project's. Worse than a wrong branch: from a subdirectory `--porcelain=v2` prints
-paths relative to the **repository** root and lists files outside the workspace entirely, so
-such a workspace would mark paths that do not exist in it and miss the ones that do. The rule is
-equality with `--show-toplevel`; anything else degrades as a non-repository, which FR-027
-already describes. A subdirectory of a monorepo as a workspace is a real case, refused cleanly
-rather than served wrongly.
+`rev-parse` walks upward, so a workspace on `services/checkout` gets the enclosing repository's
+answers: paths relative to the **repository** root, and files from everywhere else in it.
+Reported unchanged, that marks paths which do not exist in this workspace and misses the ones
+that do — while the branch indicator reads correctly, which is what makes it dangerous. A
+partial success that lights up the most visible signal actively recruits trust.
+
+The first version of this feature refused the case for that reason. Opening a subdirectory of a
+monorepo is an ordinary way to work, though, so it is served instead: `rev-parse --show-prefix`
+gives `services/checkout/`, the status is scoped with `-- .`, and the prefix is stripped from
+every path on the way out. A path that does not carry the prefix is dropped rather than
+re-rooted — stripping whatever prefix a path happens to have would put another team's file in
+this tree.
+
+**Scoping is for cost, not correctness.** The prefix strip is what keeps other subtrees out;
+removing the pathspec changes no result, which a mutation confirmed. What it changes is how much
+of a monorepo git walks on every refresh, and the coalescer runs this often.
+
+Two consequences were found by testing rather than by reasoning. git collapses a wholly
+untracked directory to one entry, so a workspace *on* an untracked directory receives a single
+path that strips to the empty string and disappears — every file new, nothing marked. Untracked
+files are therefore expanded when there is a prefix. They are left collapsed at the repository
+root, where expanding is unbounded and `? node_modules/` as one entry is what the tree wants
+anyway.
 
 ### What the coalescer bounds, and what it does not
 
