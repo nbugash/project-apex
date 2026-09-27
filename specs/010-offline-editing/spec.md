@@ -245,35 +245,42 @@ changed files, go offline, and confirm those files are readable.
 
 ### Edge Cases
 
-- A file is **deleted on the host** while the developer edited it offline. Covered by US4
+Each case carries an identity so a task can cite it by name. Citing by position
+would mean every insertion silently reassigns the cases after it.
+
+- **EC-01**: A file is **deleted on the host** while the developer edited it offline. Covered by US4
   scenario 5: the developer is asked.
-- A file is **deleted locally** by the developer while offline: not propagated, returns on the
+- **EC-02**: A file is **deleted locally** by the developer while offline: not propagated, returns on the
   next refetch (FR-016a).
-- The **workspace root is gone** when the connection returns — the workspace cannot be
+- **EC-03**: The **workspace root is gone** when the connection returns — the workspace cannot be
   reconciled at all, and the developer must be told rather than shown an empty tree.
-- The connection **drops during reconciliation**, mid-file or between files.
-- The application is **quit during reconciliation** and relaunched.
-- **Two offline sessions back to back** with no successful reconnection between them: the base is
+- **EC-04**: The connection **drops during reconciliation**, mid-file or between files (FR-028).
+- **EC-05**: The application is **quit during reconciliation** and relaunched.
+- **EC-06**: **Two offline sessions back to back** with no successful reconnection between them: the base is
   still the last content confirmed with the host, not the previous offline content (FR-011c).
-- A file is **edited offline and never had a base** because it was created offline.
-- A file is edited offline whose cached content was **evicted** in the meantime: the merge is
+- **EC-07**: A file is **edited offline and never had a base** because it was created offline:
+  retained with no base recorded, and reconciled as a create rather than a merge (FR-014).
+- **EC-08**: A file is edited offline whose cached content was **evicted** in the meantime: the merge is
   unaffected, because the base travels with the pending edit rather than being referenced
   (FR-011b).
-- **Binary or very large files** edited offline: editable, never merged, and always prompting on
+- **EC-09**: **Binary or very large files** edited offline: editable, never merged, and always prompting on
   reconnection (FR-017a, FR-025a).
-- **Local storage is full** while persisting an offline edit.
-- An **unsaved buffer** when the application stops offline: lost, exactly as online (FR-011a).
-- **Prefetch meets a full cache** and stops part-way (FR-029a).
-- The **same file is edited offline in two windows** of the application. **N/A**: the application
+- **EC-10**: **Local storage is full** while persisting an offline edit: the save fails and the
+  developer is told while the work is still in the buffer (FR-016).
+- **EC-11**: An **unsaved buffer** when the application stops offline: lost, exactly as online (FR-011a).
+- **EC-12**: **Prefetch meets a full cache** and stops part-way (FR-029a).
+- **EC-13**: The **same file is edited offline in two windows** of the application. **N/A**: the application
   is a single window (§2), so there is no second editor to disagree with. Recorded rather than
   dropped, because a later multi-window feature inherits the question.
-- The engine's content for a file changed **and changed back** while offline, so the hashes match
+- **EC-14**: The engine's content for a file changed **and changed back** while offline, so the hashes match
   even though the file was touched: **fast-forward is correct** and needs no special handling.
   Reconciliation compares content, not history, and content is what the developer cares about
   (FR-019). Recorded because the case invites a fix it does not need.
-- The developer **resolves a conflict and the host changes again** before the resolution is
-  written.
-- Reconnection succeeds but the **protocol version is incompatible** (§3.8), so the workspace
+- **EC-15**: The developer **resolves a conflict and the host changes again** before the resolution
+  is written: the write is refused for a stale base and becomes a new conflict rather than an
+  error, and the host's newer content is never overwritten
+  (`contracts/offline-commands.md`, `conflict_resolve` guarantee 2).
+- **EC-16**: Reconnection succeeds but the **protocol version is incompatible** (§3.8), so the workspace
   cannot be used even though the link is up.
 
 ## Requirements *(mandatory)*
