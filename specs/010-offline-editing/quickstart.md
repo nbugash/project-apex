@@ -57,7 +57,7 @@ Numbers, not verdicts. Each is printed by the command beside it.
 | **SC-005** interactions for a non-overlapping host change | `npm run e2e:live -- --spec tests/e2e/offline-reconcile.spec.ts` | **0** |
 | **SC-006** overlapping changes resolved by the client choosing a side | `cargo test -p apex-shell --test reconcile` | **0** |
 | **SC-006a** unmergeable files prompting, including those the host did not change | same test | **100%** |
-| **SC-010** manifests and recent-commit files readable offline after 5 connected minutes | `npm run e2e:live -- --spec tests/e2e/offline-state.spec.ts` | **100%**, or prefetch stopped and said so |
+| **SC-010** manifests and recent-commit files readable offline once prefetch reports done or stopped | `cargo test -p apex-shell --test prefetch -- --nocapture` | **100%** of what it reported fetching |
 
 Record each in the *Validation record* below when the feature is implemented.
 

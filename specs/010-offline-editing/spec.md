@@ -111,6 +111,8 @@ coming.
 
 ### User Story 2 - Keep editing, and lose nothing (Priority: P1)
 
+**Builds on US1.** Retaining an edit requires knowing the client is offline, which US1 is where the client learns. Independently *testable*, not independently deliverable.
+
 The developer keeps working. They edit files, save them, close tabs, and reopen them. Nothing
 tells them to stop, and nothing is silently discarded — including across a restart of the
 application while still offline.
@@ -143,6 +145,8 @@ still offline, and confirm every edit is present.
 
 ### User Story 3 - Reconnect without merging by hand (Priority: P2)
 
+**Builds on US2.** There is nothing to reconcile until something has been retained.
+
 The connection returns. Where nobody else touched the file, the developer's offline work simply
 goes to the host. Where somebody did, but in a different part of the file, it still goes —
 merged. The developer is not asked to adjudicate changes that do not actually disagree.
@@ -172,6 +176,8 @@ host, reconnect, and confirm everything lands with no prompt.
 ---
 
 ### User Story 4 - See a real conflict, and decide it myself (Priority: P2)
+
+**Builds on US3.** A conflict is an outcome of reconciliation, so there is no conflict to show without it.
 
 Two people changed the same lines. The client does not choose. It shows the developer what they
 wrote, what the host has, and what they started from, and waits.
@@ -207,6 +213,9 @@ developer is asked and that neither version is written until they answer.
 ---
 
 ### User Story 5 - Have what I need before I lose the connection (Priority: P3)
+
+**Independent of US1 through US4.** Could be built first or last, and is the only story besides
+US1 that is independently deliverable as well as independently testable.
 
 The client caches deliberately while online, so that going offline is not a lottery about which
 files happen to be in the cache.
@@ -421,9 +430,12 @@ changed files, go offline, and confirm those files are readable.
   **1 second**.
 - **SC-009**: Interactive actions taken while prefetch is running are no slower than the same
   actions with prefetch idle, within **10%**.
-- **SC-010**: After a connected session of **5 minutes** in a repository, **100%** of the
-  project's manifest files and the files changed in the bounded set of recent commits are
-  readable offline, or prefetch stopped because the cache was full and said so.
+- **SC-010**: Once prefetch reports that it has completed or stopped at the cache budget,
+  **100%** of the project's manifest files and the files changed in the bounded set of recent
+  commits are readable offline. Stated against prefetch's own report rather than against a
+  wall-clock session, because the criterion is about what prefetch achieves and a timed version
+  would need a five-minute wait in a suite that runs in ninety seconds — which is a test that
+  gets skipped, and a skipped test reads as coverage.
 - **SC-010a**: **Zero** cached files are evicted by prefetch.
 - **SC-011**: Reconciling **100** files with pending edits completes in under **10 seconds**.
 - **SC-012**: **Zero** requests are issued to read a cached file while offline.
