@@ -94,14 +94,14 @@ an intention to do it.
   - [ ] C and C++: clangd with compile_commands discovery
   - [ ] Zig: zls
   - [ ] Elixir: Lexical with mix project resolution
-- [ ] **F011 git-integration** [P] (depends: F000, F003)
+- [x] **F011 git-integration** [P] (depends: F000, F003)
   - Spec: specs/009-git-integration
-  - [ ] Engine-side porcelain v2 parsing and watch triggers
-  - [ ] git_status projection with transactional merge
-  - [ ] File tree colouring from cached status
-  - [ ] Diff gutter coordinates via git/getFileDiff
-  - [ ] Bulk invalidation on branch switch
-  - [ ] Current branch in the status bar
+  - [x] Engine-side porcelain v2 parsing and watch triggers
+  - [x] git_status projection with transactional merge
+  - [x] File tree colouring from cached status
+  - [x] Diff gutter coordinates via git/getFileDiff
+  - [x] Bulk invalidation on branch switch
+  - [x] Current branch in the status bar
 - [ ] **F012 offline-editing** [P] (depends: F006)
   - Spec: not yet specified
   - [ ] Offline UI state consuming F001's connection state, not re-detecting it
