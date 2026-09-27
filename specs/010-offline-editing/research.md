@@ -57,7 +57,8 @@ side-by-side interface is a design question, below.
 
 **Decision.** Add one method, `git/recentlyChanged`, taking a workspace and a commit count and
 returning the paths those commits touched. **This is a protocol addition and belongs in Appendix
-A**, because §4.8's catalogue binds every feature.
+A**, because §4.8's catalogue binds every feature. Recorded there as **A-RECENT**, which is the
+authority on the shape below; this section keeps the alternatives it closed.
 
 **Rationale.** FR-029 and §11.4 require prefetching files changed in recent commits. Nothing in
 §4.8 exposes that: `git/getStatus` reports the *working tree*, which is a different question, and
@@ -183,6 +184,6 @@ because each closes an alternative for features other than this one.
 
 | Decision | Why it binds beyond F012 |
 |---|---|
-| `git/recentlyChanged` joins §4.8 | The protocol catalogue is shared; any later history or prefetch feature inherits this shape |
+| `git/recentlyChanged` joins §4.8, as **A-RECENT** | The protocol catalogue is shared; any later history or prefetch feature inherits this shape |
 | Pending edits are a separate table keyed by path | F013's search and any later feature reading the cache must know a path can have work with no cached content |
 | Reconciliation is triggered by the published connection state | Any later feature reacting to reconnection uses the same trigger rather than adding a second |

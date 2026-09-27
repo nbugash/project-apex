@@ -453,7 +453,7 @@ would mean every insertion silently reassigns the cases after it.
   content; it does not commit, pull, or push. F011 reads git state and F010 gives them a
   terminal.
 - **Offline is a state of the connection, not of the workspace.** A local workspace has no remote
-  and is never offline in this sense (§11.6).
+  and is never offline in this sense (§13.1).
 - **The base for reconciliation is the last content confirmed with the host**, not the last
   content the developer saw. These differ when a file was fetched, edited offline, and the
   application relaunched; the stored hash is what matters.

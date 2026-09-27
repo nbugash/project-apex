@@ -14,6 +14,11 @@ method catalogue; this states the guarantees the table cannot express.**
 
 ### Guarantees
 
+Guarantees 1, 2 and 6 are **A-RECENT**'s decisions, not this contract's: paths only, capped at
+100 commits, and not paged. A later feature that wants commit identity widens the method by
+amending that record, because the method catalogue is shared and the first feature to expose
+history sets the shape the rest inherit.
+
 1. **Paths only.** No content, no commit identities, no authors, no timestamps. The method exists
    to feed a prefetch, and a prefetch needs to know *which files*. Widening it into a history API
    is a deliberate act for a later feature, not a side effect of this one.
