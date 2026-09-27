@@ -64,6 +64,7 @@ opened file reads, and no action hangs waiting for a reply that is not coming.
 ### Implementation for User Story 1
 
 - [ ] T018 [US1] `client/ui/lib/offline/state.svelte.ts`: `OfflineStore`, taking `connected` from the connection state F001 already publishes and **never re-detecting it** (FR-001). A second detector of a state already known is the defect A-RECONNECT records
+- [ ] T018a [US1] In `client/core/src/adapters/inbound/tauri_commands.rs` and `client/core/src/composition.rs`, add `connection: Arc<ObserveConnection>` to `WorkspaceAccess` and wire it. Needed because `CachedWorkspace::connected()` is private and is not on the `WorkspaceProvider` trait, so no command can reach it — without this, `offline_status` and the offline routing of `file_write` have nowhere to get the answer from. Rejected alternative: routing inside `CachedWorkspace::write_file`, which already checks it, but that widens the caching layer's job and hides the offline branch from where the `HeldLocally` outcome is produced
 - [ ] T019 [US1] In `client/core/src/adapters/inbound/tauri_commands.rs`, `offline_status` per `contracts/offline-commands.md`: the workspace resolved in the core, never accepted from the view, and no engine contact on this path
 - [ ] T020 [US1] In `client/ui/lib/statusbar/StatusBar.svelte`, the offline indicator built from design-system tokens only, carrying an icon and a word so the state is not held in colour alone (FR-002, FR-004)
 - [ ] T021 [US1] In `client/ui/lib/workspace/FileTree.svelte`, mark a folder that was never listed as unavailable rather than rendering it empty (FR-006)
@@ -96,7 +97,7 @@ offline, and confirm every saved edit is present.
 ### Implementation for User Story 2
 
 - [ ] T029 [US2] `client/core/src/application/use_cases/retain_edit.rs`: `RetainEdit::save` per design.md — on a path that already has offline work it replaces the **content** and leaves the **base untouched** (FR-011c), and it returns the store's error rather than absorbing it
-- [ ] T030 [US2] In `client/core/src/adapters/inbound/tauri_commands.rs`, route `file_write` to `RetainEdit` when the client is disconnected, returning a `HeldLocally` outcome in the **success** channel beside F006's existing four. F006 established why: these are outcomes the interface must branch on, and splitting them across `Ok` and `Err` pushes the caller back to inspecting an error to find out which it was
+- [ ] T030 [US2] In `client/core/src/adapters/inbound/tauri_commands.rs`, route `file_write` to `RetainEdit` when `access.connection` reports anything other than connected (T018a added the field), returning a `HeldLocally` outcome in the **success** channel beside F006's existing four. F006 established why: these are outcomes the interface must branch on, and splitting them across `Ok` and `Err` pushes the caller back to inspecting an error to find out which it was
 - [ ] T031 [US2] In `client/ui/lib/editor/EditorPanel.svelte`, keep the editor writable while offline — no `readOnly` — including for a file the client cannot merge (FR-010, FR-017a) — and show that the file's work is held locally
 - [ ] T032 [US2] In `client/ui/lib/editor/buffers.svelte.ts`, serve a reopened buffer from the pending edit rather than from the cached content when one exists (FR-013)
 

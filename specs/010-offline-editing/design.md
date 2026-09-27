@@ -29,6 +29,7 @@ client/core/src/
 │       ├── reconcile.rs                     # Reconcile, ReconcileReport
 │       └── prefetch.rs                      # Prefetch, PrefetchReport
 ├── adapters/
+│   ├── inbound/tauri_commands.rs             # + connection on WorkspaceAccess (see below)
 │   ├── outbound/
 │   │   ├── text_merge.rs                    # DiffyMerge - the ONLY file naming `diffy`
 │   │   └── sqlite/{schema.rs,migrate.rs,mod.rs}
@@ -154,6 +155,18 @@ impl Prefetch {
                        budget would require an eviction; nothing is evicted
         raises:        none - a partial prefetch is an ordinary outcome (FR-029a)
 }
+
+// --- how the command layer knows it is offline ---
+//
+// `WorkspaceAccess` gains `connection: Arc<ObserveConnection>`. It is needed because
+// `CachedWorkspace::connected()` is private and is not on the `WorkspaceProvider` trait, so a
+// Tauri command cannot reach it -- analyze run 6 found that `offline_status` and the offline
+// routing of `file_write` both had no implementation path.
+//
+// The alternative was routing inside `CachedWorkspace::write_file`, which already checks
+// `connected()`. Rejected: it widens the caching layer's job to owning offline retention, and it
+// hides the offline branch from the place that produces the `HeldLocally` outcome the interface
+// switches on. The decision belongs where the outcome is made.
 
 // --- the cache port gains three operations ---
 trait WorkspaceCache {
