@@ -396,3 +396,66 @@ later as a range that never fills.
 - **`browser.keys(array)` loses characters.** It is one WebDriver action sequence; typing
   `// offline edit` through it arrives as `/ oflinedit`. One call per character, or SC-009
   becomes an assertion about the driver.
+
+## Git state in the client (F011)
+
+### Where it lives and why it is keyed by path
+
+One row per `(workspace_id, relative_path)` in the projection, not a column on the tree row.
+F003 built it keyed on the tree's identity for a file, which is the obvious shape and fails one
+case: an **untracked file in a folder the tree has never listed** has no row to hang from, and
+the tree deliberately re-lists nothing. Keying by path is what lets git state exist for a path
+the tree has never heard of. That single case is the whole justification, and
+`git_apply.rs`'s `an_untracked_file_in_a_folder_the_tree_has_never_listed_is_stored` is the only
+test that distinguishes the two designs.
+
+### Why an update commits on its last page
+
+A status too large for a frame arrives as a notification carrying the **first page** and a
+cursor. Applying that notification as it stands marks every path beyond the first page as
+unchanged — and passes every test written against a single message, on every repository small
+enough to fit in one. So pages accumulate in memory and the replacement commits in one
+transaction when the page with no cursor arrives; anything that goes wrong in between leaves
+what was already shown exactly as it was. A partly-correct picture of what has changed is worse
+than a slightly old one, because the developer cannot tell which parts are which.
+
+A refused cursor is never read as "start again". Starting again silently would assemble one
+picture out of two snapshots.
+
+### Applied before the interface hears about it
+
+`git/onStatusUpdate` goes through a decorator on the notification sink that applies it to the
+projection and **then** forwards it. The interface reads git state back through `git_status`, so
+forwarding first would have it read the state the update was about to replace — right often
+enough to look like a rare glitch rather than a race. Applying runs on one worker thread with
+its own runtime, not on the transport's reader thread: a later page's reply arrives on that same
+thread, so applying inline would deadlock on exactly the repositories paging exists for.
+
+### Asking is what subscribes
+
+The engine begins watching a repository when a client first asks about it, so `workspace_open`
+asks once. Without that call the projection stayed empty and no update was ever pushed — a
+client correct in every part and showing nothing. Every unit test starts from an update that had
+already arrived, so none of them could have found it; the end-to-end spec did.
+
+`workspace_resume` says the same things again after a relaunch. The engine outlives its client
+only while it has something to preserve, so with no tasks running it exits when the last client
+goes: the ordinary case on relaunch is an engine that has never heard of this workspace. Without
+resuming, a restored session looked correct and was inert — tree listing cached, git marks
+stored, neither ever updating again.
+
+### Clearing, and when it is right
+
+An outage never clears the projection: offline the client does not know whether anything
+changed, and an empty tree says nothing has. A **bulk invalidation** is the opposite — a
+positive statement that what it knew is now wrong — and is the one case where clearing is
+correct. Nothing is refetched, and cached content and its hashes are untouched: which files
+differ from the repository is not a statement about whether a cached copy matches the host.
+
+### Two channels, not one
+
+Every git state is distinguished by a glyph **and** by luminance. The glyphs are distinct
+letters, so shape alone separates the five with no colour at all; the tokens are then chosen for
+luminance gaps above 20 against each other and above 60 against the window background. A marker
+ten pixels tall is read as a smudge of colour as often as it is read as a letter, so neither
+channel is sufficient alone. The editor gutter does the same with solid, dashed and dotted rules.

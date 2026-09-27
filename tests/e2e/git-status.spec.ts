@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { WORKSPACE, resetWorkspace, openWorkspace } from './editor-harness';
-import { waitForShell, resetSession, dataDir } from './helpers';
+import { waitForShell, resetSession, dataDir, waitForPersisted } from './helpers';
 
 /// The client's own log, which is wiped when the run ends.
 ///
@@ -162,6 +162,8 @@ describe('git status in the tree', () => {
     editOnHost('tracked.rs', 'fn main() { changed(); }\n');
 
     const took = await waitForMark('/tracked.rs', 'modified');
+    // eslint-disable-next-line no-console
+    console.log(`SC-001 host change to mark: ${took} ms (bound ${TWO_SECONDS} ms)`);
     expect(took).toBeLessThan(TWO_SECONDS);
     expect((await markOf('/second.rs')).state).toBeNull();
   });
@@ -175,6 +177,8 @@ describe('git status in the tree', () => {
     git('add', 'tracked.rs');
 
     const took = await waitForMark('/tracked.rs', 'staged');
+    // eslint-disable-next-line no-console
+    console.log(`SC-002 git add to mark: ${took} ms (bound ${TWO_SECONDS} ms)`);
     expect(took).toBeLessThan(TWO_SECONDS);
   });
 
@@ -204,6 +208,8 @@ describe('git status in the tree', () => {
     editOnHost('second.rs', 'b\n');
     await waitForMark('/second.rs', 'modified');
 
+    // eslint-disable-next-line no-console
+    console.log(`SC-003 listings issued rendering git state: ${(await listings()) - before}`);
     expect(await listings()).toBe(before);
   });
 
@@ -231,6 +237,12 @@ describe('git status in the tree', () => {
     await waitForMark('/tracked.rs', 'modified');
     await waitForMark('/brand-new.rs', 'untracked');
 
+    // **Wait for the session to hold the workspace before relaunching.** Opening one records
+    // it asynchronously, so a reload issued immediately can beat the write -- and then the
+    // restored session names no workspace, the tree lists nothing, and the failure reads as
+    // "the marks did not survive" when nothing was ever there to survive. Under load this
+    // suite lost that race about one run in five.
+    await waitForPersisted((sn) => sn.workspace != null, 'the workspace');
     await browser.reloadSession();
     await waitForShell();
     // **`openWorkspace()` is deliberately not called.** It mints a fresh identity every time

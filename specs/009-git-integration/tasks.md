@@ -175,11 +175,11 @@ no stale marks.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T066 [P] Update `docs/engine.md` with the git path: why two watches and not the workspace watcher, why a separate service, what the coalescer bounds, and why the pager holds a snapshot
-- [ ] T067 [P] Update `docs/app-shell.md` with the client side: where git state lives and why it is keyed by path, and why an update commits on its last page
-- [ ] T068 Per `specs/009-git-integration/quickstart.md` §5, run the eight mutation checks and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 2 and 4 matter most — each is a plausible simplification that leaves every other test green
-- [ ] T069 Per `specs/009-git-integration/quickstart.md` §4, audit the eight negative checks and confirm, for each, that the condition which lets it fail is actually present — a real worktree rather than a directory, a real rename, a real burst, genuinely cached files
-- [ ] T070 In `specs/009-git-integration/quickstart.md`, record the seven measurements from §3 in the *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
+- [X] T066 [P] Update `docs/engine.md` with the git path: why two watches and not the workspace watcher, why a separate service, what the coalescer bounds, and why the pager holds a snapshot
+- [X] T067 [P] Update `docs/app-shell.md` with the client side: where git state lives and why it is keyed by path, and why an update commits on its last page
+- [X] T068 Per `specs/009-git-integration/quickstart.md` §5, run the eight mutation checks and record each outcome. Each must fail **with the assertion expected** rather than with a compile error. Mutations 2 and 4 matter most — each is a plausible simplification that leaves every other test green
+- [X] T069 Per `specs/009-git-integration/quickstart.md` §4, audit the eight negative checks and confirm, for each, that the condition which lets it fail is actually present — a real worktree rather than a directory, a real rename, a real burst, genuinely cached files
+- [X] T070 In `specs/009-git-integration/quickstart.md`, record the seven measurements from §3 in the *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
 - [ ] T071 Verify `make gate` is green, then mark F011's six subfeatures in `specs/features-map.md` and run `feature_map.py verify`
 
 ---
