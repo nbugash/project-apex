@@ -238,23 +238,30 @@ changed files, go offline, and confirm those files are readable.
 
 - A file is **deleted on the host** while the developer edited it offline. Covered by US4
   scenario 5: the developer is asked.
-- A file is **deleted locally** by the developer while offline, having previously been cached.
+- A file is **deleted locally** by the developer while offline: not propagated, returns on the
+  next refetch (FR-016a).
 - The **workspace root is gone** when the connection returns — the workspace cannot be
   reconciled at all, and the developer must be told rather than shown an empty tree.
 - The connection **drops during reconciliation**, mid-file or between files.
 - The application is **quit during reconciliation** and relaunched.
-- **Two offline sessions back to back** with no successful reconnection between them: the base
-  is still the last content confirmed with the host, not the previous offline content.
+- **Two offline sessions back to back** with no successful reconnection between them: the base is
+  still the last content confirmed with the host, not the previous offline content (FR-011c).
 - A file is **edited offline and never had a base** because it was created offline.
-- A file is edited offline whose cached content was **evicted** in the meantime.
+- A file is edited offline whose cached content was **evicted** in the meantime: the merge is
+  unaffected, because the base travels with the pending edit rather than being referenced
+  (FR-011b).
 - **Binary or very large files** edited offline: editable, never merged, and always prompting on
   reconnection (FR-017a, FR-025a).
 - **Local storage is full** while persisting an offline edit.
 - An **unsaved buffer** when the application stops offline: lost, exactly as online (FR-011a).
 - **Prefetch meets a full cache** and stops part-way (FR-029a).
-- The **same file is edited offline in two windows** of the application.
+- The **same file is edited offline in two windows** of the application. **N/A**: the application
+  is a single window (§2), so there is no second editor to disagree with. Recorded rather than
+  dropped, because a later multi-window feature inherits the question.
 - The engine's content for a file changed **and changed back** while offline, so the hashes match
-  even though the file was touched.
+  even though the file was touched: **fast-forward is correct** and needs no special handling.
+  Reconciliation compares content, not history, and content is what the developer cares about
+  (FR-019). Recorded because the case invites a fix it does not need.
 - The developer **resolves a conflict and the host changes again** before the resolution is
   written.
 - Reconnection succeeds but the **protocol version is incompatible** (§3.8), so the workspace
@@ -296,6 +303,12 @@ changed files, go offline, and confirm those files are readable.
 - **FR-011a**: An **unsaved** buffer MUST behave offline exactly as it does online: it is not
   retained, and it is lost if the application stops. Offline is not a stronger promise about
   unsaved work than online is.
+- **FR-011b**: The client MUST retain the base **content** alongside its hash, not only the hash.
+  Reconciliation compares three versions and needs the base text; the only other copy of it is
+  the cache, which is evicted and overwritten on its own terms.
+- **FR-011c**: The base MUST be recorded once, when a path first gains offline work, and MUST NOT
+  change on a later offline save of the same file. A base re-derived from the newer local content
+  would make reconciliation compare local against local — a wrong answer rather than an error.
 - **FR-012**: A retained offline edit MUST survive the application being quit and relaunched
   while still offline.
 - **FR-013**: A file opened after being edited offline MUST show the developer's edited content,
@@ -305,6 +318,11 @@ changed files, go offline, and confirm those files are readable.
   work is on the host.
 - **FR-016**: Where an offline edit cannot be retained, the developer MUST be told while the
   work is still in the buffer.
+- **FR-016a**: A file the developer **deletes** while offline MUST NOT be propagated to the host
+  on reconnection. Only content and its base are held (FR-034), so a deletion is not offline work;
+  the file returns on the next refetch, and the developer deletes it again when connected. Stated
+  because the alternative — inferring a deletion from an absence — cannot distinguish "deleted"
+  from "never cached".
 - **FR-017**: Retaining an offline edit MUST NOT change whether cached content is considered
   valid; validity remains a hash comparison and nothing else (§5.3).
 - **FR-017a**: A file the client cannot merge line by line — one it does not hold as text, or one
@@ -362,12 +380,13 @@ changed files, go offline, and confirm those files are readable.
 
 ### Key Entities
 
-- **Pending edit**: a file's locally held content, the hash of the content it was derived from,
-  and when it was retained. Belongs to one workspace and one path. Absent for a file with no
+- **Pending edit**: a file's locally held content, **the content it was derived from** and that
+  content's hash, and when it was retained. Belongs to one workspace and one path. Absent for a file with no
   offline work. The stored thing is always a *pending edit*; "offline edit" is the developer's
   act of making one, and the two are not used interchangeably.
-- **Base revision**: the hash of the content the client last confirmed with the host for a path.
-  Already carried by the write protocol; this feature stores it.
+- **Base revision**: the content the client last confirmed with the host for a path, and its
+  hash. The hash is already carried by the write protocol; this feature stores both, because a
+  three-way merge needs the text and not only the fingerprint.
 - **Reconciliation outcome**: per file, what happened on reconnection — written unchanged,
   combined, conflicted, or not yet attempted.
 - **Conflict**: the three versions of one file — base, local, host — held until the developer
@@ -391,6 +410,9 @@ changed files, go offline, and confirm those files are readable.
   client choosing a side.
 - **SC-006a**: **100%** of offline edits to files the client cannot merge prompt on
   reconnection, including those the host did not change.
+- **SC-002a**: Across **10** files each saved offline at least **3** times before reconnecting,
+  the base used for reconciliation is in **100%** of cases the content the host last confirmed —
+  never an intermediate offline version.
 - **SC-006b**: For a corpus of at least **20** file pairs edited on both sides, the client's
   decision to merge or prompt matches a standard version-control three-way merge in **100%** of
   cases.

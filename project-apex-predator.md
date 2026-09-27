@@ -850,8 +850,13 @@ CREATE TABLE git_branch (
 CREATE TABLE pending_edits (
     workspace_id  TEXT NOT NULL,
     relative_path TEXT NOT NULL,
-    content_blob  BLOB NOT NULL,         -- Zstd level 3, as file_contents
-    base_sha256   TEXT,                  -- NULL for a file created offline
+    content_blob  BLOB NOT NULL,         -- the offline content, Zstd level 3
+    -- The base is stored, not referenced. A three-way merge needs the base TEXT, and the only
+    -- other copy is in file_contents, which is evictable and is overwritten by any refetch --
+    -- so on the path the merge exists for, a referenced base would be gone. Written once, when
+    -- the path first gains a pending edit; a later offline save leaves it untouched.
+    base_blob     BLOB,                  -- NULL for a file created offline
+    base_sha256   TEXT,                  -- hash of base_blob; NULL on the same terms
     mergeable     INTEGER NOT NULL,      -- 0 when not held as text, or over the editor's limit
     retained_at   INTEGER NOT NULL,
     PRIMARY KEY (workspace_id, relative_path),

@@ -119,10 +119,14 @@ trait TextMerge: Send + Sync {
 
 // --- retaining a save made offline ---
 impl RetainEdit {
-    fn save(&self, ws: &WorkspaceId, path: &RelPath, content: &str, base: Option<&Sha256>)
+    fn save(&self, ws: &WorkspaceId, path: &RelPath, content: &str, base: Option<(&str, &Sha256)>)
         -> CacheResult<()>
-        precondition:  the client is not connected; content is what the developer saved
-        postcondition: a pending edit exists for (ws, path); any previous one is replaced
+        precondition:  the client is not connected; content is what the developer saved; base is
+                       the text the client last confirmed with the host and its hash, or None for
+                       a file created offline
+        postcondition: a pending edit exists for (ws, path). A previous one has its content
+                       replaced and its base LEFT ALONE (FR-011c) -- re-deriving the base from
+                       the newer local content makes the merge compare local against local
         raises:        CacheError when the store refuses, so the caller can tell the developer
                        while the work is still in the buffer (FR-016)
 }
@@ -208,6 +212,7 @@ sequenceDiagram
     participant M as TextMerge
     K->>R: Connected
     R->>S: pending_edits(ws)
+    Note over R,S: the row carries local content AND the base content
     R->>P: read_file(path)
     P-->>R: remote content + hash
     alt remote hash == base
@@ -262,7 +267,7 @@ a loss.
 
 | Entity (see [data-model.md](./data-model.md)) | Owning type | Notes |
 |-----------------------------------------------|-------------|-------|
-| Pending edit | `SqliteWorkspaceCache` behind `WorkspaceCache` | One row per `(workspace, path)`; the durable fact |
+| Pending edit | `SqliteWorkspaceCache` behind `WorkspaceCache` | One row per `(workspace, path)`; the durable fact. Carries the base **content** as well as its hash, because the merge needs the text and the cache's copy is evictable |
 | Reconciliation outcome | `ReconcileReport` | In memory, discarded after it is reported |
 | Conflict | `ConflictStore` (webview) | Reconstructed per listing; the remote side is never stored |
 | Prefetch candidate | `Prefetch` | In memory; the cache is the only record of what it achieved |

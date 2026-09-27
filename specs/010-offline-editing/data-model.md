@@ -16,7 +16,8 @@ What the developer has written that the host has not seen.
 | `workspace_id` | TEXT NOT NULL | Part of the key. FK to `workspaces`, `ON DELETE CASCADE` |
 | `relative_path` | TEXT NOT NULL | Part of the key. `/src/main.rs`, rooted, as every other path in this schema |
 | `content_blob` | BLOB NOT NULL | The saved offline content, Zstd level 3, as `file_contents` stores content |
-| `base_sha256` | TEXT | Hash of the content this was derived from. **NULL for a file created offline**, which has nothing to differ from |
+| `base_blob` | BLOB | The content this was derived from, Zstd level 3. **NULL for a file created offline.** Stored, not referenced: a three-way merge needs the base *text*, and the only other copy lives in `file_contents`, which is evictable and is overwritten by any refetch |
+| `base_sha256` | TEXT | Hash of `base_blob`. NULL on the same terms. Kept alongside the content so a fast-forward is a hash comparison and never a decompression |
 | `mergeable` | INTEGER NOT NULL | 0 when the client does not hold the file as text or it exceeds the editor's limit; such a file always prompts (FR-025a) |
 | `retained_at` | INTEGER NOT NULL | Unix seconds. For ordering the reconciliation report, not for deciding anything |
 
@@ -26,6 +27,15 @@ What the developer has written that the host has not seen.
 `file_contents` row, so there is no identity to key on. F011 met this shape from the other side:
 git status was keyed by the tree's identity for a file and could not describe an untracked file in
 a folder the tree had never listed. One instance of that lesson is enough.
+
+**Why the base content is stored rather than referenced.** This was the design's one real hole,
+found by analyze run 2 while tracing the "cached content was evicted" edge case. The first
+version stored `base_sha256` alone, which is enough to detect that the host has not moved but
+**not** enough to merge: a three-way merge needs the base text. The only other copy is in
+`file_contents`, which A-PENDING itself points out is evictable — and which is also overwritten
+whenever the client refetches the path. So on the very path the merge exists for, the base would
+have been gone. All three design artifacts agreed with each other and were wrong together, which
+is why a consistency check did not find it.
 
 **Why a separate table and not columns on `file_contents`.** A pending edit must survive eviction
 of the cached content it came from, must exist where there is no cached content at all, and
@@ -40,6 +50,11 @@ last give me". Recorded in [research.md](./research.md).
   treated as a malformed row.
 - A row exists only while the work is unreconciled. It is deleted in the same transaction that
   commits the write to the host (FR-022).
+- `base_blob` and `base_sha256` are written **once**, when the path first gains a pending edit. A
+  later offline save replaces `content_blob` and leaves both untouched: re-deriving the base from
+  the new local content would make the merge compare local against local, which produces a wrong
+  answer rather than an error (FR-011b).
+- Either both base columns are set or both are NULL. One without the other is a malformed row.
 
 **What this table must never do.** It must not participate in cache validity. §5.3 says a cached
 blob is valid when its hash equals the engine's current hash for the path, and nothing else; a

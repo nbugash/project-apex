@@ -16,7 +16,9 @@ publishes, walks those rows on reconnection and decides per file whether to writ
 to ask. A **prefetcher** fills the cache deliberately while online, and stops rather than evicting.
 
 The one architectural idea worth holding: **the pending edit is the durable fact, and every
-outcome is a statement about one attempt on it**. A row is deleted only when the host has
+outcome is a statement about one attempt on it**. It is self-contained on purpose — it carries the
+base content as well as the local content, so a merge never depends on a cache entry that may have
+been evicted or overwritten. A row is deleted only when the host has
 confirmed a write. Everything else — a lost connection, a conflict, a refused stale write — leaves
 the row alone, which is what makes "nothing is lost" true by construction rather than by care.
 
