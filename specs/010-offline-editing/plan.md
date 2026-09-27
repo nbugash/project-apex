@@ -50,8 +50,14 @@ exactly when spawning processes is least appropriate. Prefetch is background pri
 must never delay interactive traffic. Nothing here may change what makes cached content valid
 (§5.3): validity is a hash comparison and stays one.
 
-**Scale/Scope**: 39 functional requirements, 15 success criteria, 5 user stories, 29 acceptance
-scenarios. One new protocol method, one schema migration, one new client dependency.
+**Scale/Scope**: 5 user stories and 29 acceptance scenarios; the functional-requirement and
+success-criterion inventories are [spec.md](./spec.md)'s and are not counted here. One new
+protocol method, one schema migration, one new client dependency.
+
+The two counts this field used to carry drifted — it said 39 requirements and 15 criteria while
+remediation had taken the spec to 42 and 16, because each run that added a requirement updated
+the spec and not this line. Story and scenario counts stay because they are fixed by the
+reviewer's scope decision rather than by remediation; the rest live in one place.
 
 ## Constitution Check
 

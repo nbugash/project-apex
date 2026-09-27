@@ -26,6 +26,14 @@ runs 10 and 11 each found one of these missing, and F011 shipped four instances 
 — an artifact that exists with nothing pointing at it. The tasks below name the registration
 explicitly wherever they create something.
 
+**Do not restate a count another document derives.** Say "every mutation §5 lists", not "the eight
+mutation checks". Analyze runs 12 and 13 between them found five stale counts — the mutation total,
+the mutation ranking, the requirement and criterion totals in plan.md, the measurement total, and
+the number of tasks sharing a file — every one of them correct when written and wrong after the
+next remediation added something. A count is a derived fact, and Principle II applies to a derived
+fact exactly as it applies to a stored one. The scenario count is the one exception, restated
+deliberately because the reviewer's scope decision fixes it rather than remediation.
+
 ## Phase 1: Setup (Shared Infrastructure)
 
 - [ ] T001 Add `diffy = "0.4"` to `client/core/Cargo.toml` with a comment recording why 0.4 rather than 0.5: 0.5 requires rustc 1.85 and this workspace's MSRV is 1.75, which `cargo add` reports and a reader would otherwise rediscover
@@ -224,7 +232,7 @@ offline, and confirm they are readable.
 - [ ] T075 [P] Update `docs/engine.md` with `git/recentlyChanged`: paths only, capped, not paged, and why a cursor would be the opposite of a bounded prefetch
 - [ ] T076 Per `quickstart.md` §5, run **every** mutation it lists and record each outcome in §8. Each must fail **with the assertion expected** rather than with a compile error. §5 states which matter most and why; that ranking is not repeated here, because it changed twice while this line said otherwise — the count and the ranking live in §5 alone
 - [ ] T077 Per `quickstart.md` §4, audit **every** negative check it lists and confirm for each that the condition which lets it fail is actually present — a real binary rather than a text file named `.bin`, a genuinely untouched host side, a cache genuinely at its budget, an interruption genuinely between two files
-- [ ] T078 In `quickstart.md` §6, record the ten measurements from §3 in the *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
+- [ ] T078 In `quickstart.md` §6, record **every** measurement §3 lists in the *Validation record*, each number beside its bound. A gate that says only PASS tells nobody how much headroom is left
 - [ ] T079 Confirm every one of spec.md's 29 acceptance scenarios is named by at least one test, and every FR and SC is cited by name in a test file. F011 shipped with three requirements tested but uncited, which made a coverage audit read them as gaps
 - [ ] T080 Verify `make gate` is green, then mark F012's five subfeatures in `specs/features-map.md` and run `feature_map.py verify`
 
@@ -262,9 +270,10 @@ result — which is what makes them safe to plan in any order. It does **not** l
 in one file at the same time. Several tasks deliberately add cases to one test file, and the
 convention is: **one writer per file at a time, whatever the marker says.**
 
-This is worth stating rather than fixing by deleting markers. Thirty-eight tasks write a file
-another task also writes, mostly because a test file gathers a story's cases — `reconcile.rs` has
-thirteen, `retain_edit.rs` seven, `git_recent.rs` six. Stripping `[P]` from all of them would lose
+This is worth stating rather than fixing by deleting markers. Most tasks here write a file another
+task also writes, because a test file gathers a story's cases — `reconcile.rs` is written by
+thirteen tasks, `retain_edit.rs` by seven, `git_recent.rs` by six. Stripping `[P]` from all of them
+would lose
 the information that the cases are independent, which is what matters when deciding what to leave
 until later.
 
