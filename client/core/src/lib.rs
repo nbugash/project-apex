@@ -120,6 +120,42 @@ pub fn run() {
             });
             app.manage(wiring.shell);
             app.manage(wiring.workspace);
+
+            // **Open a workspace without an interface for it.** Nothing in the webview calls
+            // `workspace_open` yet -- choosing a directory is a screen a later feature owns --
+            // so a locally built app shows "No workspace open" forever and none of the tree,
+            // editor or git work is reachable by hand. `make local` sets this.
+            //
+            // Debug-only, on the same terms as the seeding and stub-connection commands beside
+            // it: a released build must not open a workspace because of an environment
+            // variable. It calls `workspace_open` rather than repeating what it does, so there
+            // is one sequence for registering a workspace and not two that must agree.
+            #[cfg(debug_assertions)]
+            if let Some(raw) = std::env::var_os("APEX_OPEN_WORKSPACE") {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let path = std::path::PathBuf::from(&raw);
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "workspace".to_string());
+                    let base = path.to_string_lossy().into_owned();
+                    match cmd::workspace_open(
+                        name,
+                        "localhost".to_string(),
+                        base.clone(),
+                        handle.clone(),
+                        handle.state(),
+                        handle.state(),
+                        handle.state(),
+                    )
+                    .await
+                    {
+                        Ok(ws) => logging::info(&format!("opened {base} as {}", ws.id)),
+                        Err(e) => logging::warn(&format!("could not open {base}: {e:?}")),
+                    }
+                });
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

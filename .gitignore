@@ -99,3 +99,6 @@ reports/app.png
 # writes into the repository can destroy work and leaves whatever it forgot to clean up behind.
 .e2e-workspace/
 .e2e-terminal/
+
+# `make local` keeps its session and cache here.
+.local-profile*
