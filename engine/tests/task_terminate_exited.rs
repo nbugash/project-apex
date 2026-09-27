@@ -75,6 +75,7 @@ impl Harness {
             self.fs.as_ref(),
             None,
             Some(&self.service),
+            None,
             &self.codec,
             &body,
         );

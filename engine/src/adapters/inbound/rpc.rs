@@ -986,7 +986,8 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":"3","method":"auth/handshake","params":{"protocol_version":"not a number"}}"#,
             r#"{"jsonrpc":"2.0","id":"4","method":"auth/handshake","params":null}"#,
         ] {
-            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, None, &codec, body)
+            let Action::Reply(reply) =
+                dispatch(&registry, &roots, &fs, None, None, None, &codec, body)
             else {
                 panic!("expected a reply, not a panic or silence: {body}")
             };
@@ -1015,6 +1016,7 @@ mod tests {
             &fs,
             None,
             None,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"1","method":"auth/handshake","params":{}}"#,
         );
@@ -1022,6 +1024,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             None,
             &codec,
@@ -1044,6 +1047,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             None,
             &codec,
@@ -1070,7 +1074,7 @@ mod tests {
         );
         for body in ["this is not json", "", "{}"] {
             assert!(matches!(
-                dispatch(&registry, &roots, &fs, None, None, &codec, body),
+                dispatch(&registry, &roots, &fs, None, None, None, &codec, body),
                 Action::Nothing
             ));
         }

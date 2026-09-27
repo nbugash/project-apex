@@ -88,6 +88,7 @@ fn run(h: &Harness, body: &str) -> Action {
         h.fs.as_ref(),
         None,
         Some(&h.service),
+        None,
         &h.codec,
         body,
     )
@@ -173,6 +174,7 @@ fn an_engine_without_a_task_service_refuses_rather_than_appearing_to_succeed() {
         h.fs.as_ref(),
         None,
         None, // no service composed, as on a non-Linux host
+        None,
         &h.codec,
         &body("1", "build", "."),
     );
