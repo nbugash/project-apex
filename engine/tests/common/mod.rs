@@ -14,6 +14,7 @@ pub mod fake_clock;
 pub mod fake_runner;
 pub mod fake_watcher;
 pub mod frames;
+pub mod repo;
 
 use apex_engine::application::ports::file_system::{FileSystem, RawEntry, RawMeta};
 use std::collections::BTreeMap;

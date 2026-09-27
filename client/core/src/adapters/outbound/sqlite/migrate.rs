@@ -50,6 +50,7 @@ pub fn migrate(
         let ddl = match step {
             1 => schema::V1,
             2 => schema::V2,
+            3 => schema::V3,
             other => {
                 return Err(MigrationFailure::Step {
                     version: other,

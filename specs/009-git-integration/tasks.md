@@ -31,9 +31,9 @@ root.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add a scratch-repository fixture builder in `engine/tests/common/repo.rs` that creates a real repository with a modified file, a staged file, an untracked file, a deleted file, a rename and a conflict — the six shapes research.md verified. Every engine git test builds from this rather than shelling out ad hoc
-- [ ] T002 [P] In `engine/tests/common/repo.rs`, extend the fixture builder to produce a **linked worktree**, where `.git` is a file, because FR-004's whole point is that this case differs and a fixture that cannot produce it cannot test it
-- [ ] T003 [P] Register the git end-to-end specs in the live run in `tests/e2e/wdio.conf.ts`, alongside the editor specs and before `terminal-live.spec.ts`, which must stay last for the reason recorded there
+- [X] T001 Add a scratch-repository fixture builder in `engine/tests/common/repo.rs` that creates a real repository with a modified file, a staged file, an untracked file, a deleted file, a rename and a conflict — the six shapes research.md verified. Every engine git test builds from this rather than shelling out ad hoc
+- [X] T002 [P] In `engine/tests/common/repo.rs`, extend the fixture builder to produce a **linked worktree**, where `.git` is a file, because FR-004's whole point is that this case differs and a fixture that cannot produce it cannot test it
+- [X] T003 [P] Register the git end-to-end specs in the live run in `tests/e2e/wdio.conf.ts`, alongside the editor specs and before `terminal-live.spec.ts`, which must stay last for the reason recorded there
 
 ---
 
@@ -41,11 +41,11 @@ root.
 
 **These block every user story. Nothing in Phase 3 onward can start until they land.**
 
-- [ ] T004 `protocol/src/wire.rs`: `GitStatusParams`, `GitStatusResult`, `GitChange`, `GitDiffParams`, `GitDiffResult` and the five status values, spelled `snake_case` on the wire
-- [ ] T005 `protocol/tests/git_wire.rs`: assert the wire spelling against **hand-written JSON**, not a round trip of the structs. A round trip is symmetric and agrees with itself; only a frame written by hand checks the convention A-WIRECASE records. Include a camelCase frame that must be refused
-- [ ] T006 [P] `engine/src/application/ports/git.rs`: the `Git` port — `status`, `file_diff`, `git_dir` — and `GitFailure` with `NotARepository`, `GitUnavailable` and `Failed`, which the design keeps distinct inside the engine even though the wire collapses the first two
-- [ ] T007 `client/core/src/adapters/outbound/sqlite/schema.rs`: re-key git state from the tree's file identity to (workspace, path), add the per-workspace branch, raise `CURRENT_VERSION`
-- [ ] T008 `client/core/tests/migrate_git_status.rs`: a store at the previous version opens at the new one with its other content intact. Nothing has ever written a git row, so the assertion is that the *rest* of the projection survives — a migration test that only checked the new table would pass for one that dropped the database
+- [X] T004 `protocol/src/wire.rs`: `GitStatusParams`, `GitStatusResult`, `GitChange`, `GitDiffParams`, `GitDiffResult` and the five status values, spelled `snake_case` on the wire
+- [X] T005 `protocol/tests/git_wire.rs`: assert the wire spelling against **hand-written JSON**, not a round trip of the structs. A round trip is symmetric and agrees with itself; only a frame written by hand checks the convention A-WIRECASE records. Include a camelCase frame that must be refused
+- [X] T006 [P] `engine/src/application/ports/git.rs`: the `Git` port — `status`, `file_diff`, `git_dir` — and `GitFailure` with `NotARepository`, `GitUnavailable` and `Failed`, which the design keeps distinct inside the engine even though the wire collapses the first two
+- [X] T007 `client/core/src/adapters/outbound/sqlite/schema.rs`: re-key git state from the tree's file identity to (workspace, path), add the per-workspace branch, raise `CURRENT_VERSION`
+- [X] T008 `client/core/tests/migrate_git_status.rs`: a store at the previous version opens at the new one with its other content intact. Nothing has ever written a git row, so the assertion is that the *rest* of the projection survives — a migration test that only checked the new table would pass for one that dropped the database
 
 ---
 

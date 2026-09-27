@@ -142,13 +142,16 @@ export const config: WebdriverIO.Config = {
   // up for the reviewer rather than papered over: "green in this order" is a weaker claim than
   // "green", and the difference belongs in front of somebody rather than buried here.
   specs: process.env.APEX_E2E_LIVE
-    ? ['./editor-*.spec.ts', './terminal-live.spec.ts']
+    ? ['./editor-*.spec.ts', './git-*.spec.ts', './terminal-live.spec.ts']
     : ['./*.spec.ts'],
   exclude: process.env.APEX_E2E_LIVE
     ? []
     : ['./terminal-live.spec.ts', './editor-local-echo.spec.ts', './editor-open.spec.ts',
        './editor-save.spec.ts', './editor-echo.spec.ts', './editor-large-file.spec.ts',
-       './editor-session.spec.ts', './editor-a11y.spec.ts'],
+       './editor-session.spec.ts', './editor-a11y.spec.ts',
+       // Git status needs a real engine and a real repository, so these are live-only too.
+       './git-status.spec.ts', './git-branch.spec.ts', './git-gutter.spec.ts',
+       './git-branch-switch.spec.ts'],
   // The app is a singleton desktop process and there is one driver on one port.
   maxInstances: 1,
   // Point at the driver started in onPrepare. Without an explicit hostname and port, WDIO
