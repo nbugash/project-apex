@@ -64,10 +64,10 @@ and confirm the tree marks that file and no other.
 - [X] T011 [P] [US1] `engine/tests/git_degrade.rs`: a workspace that is **not a repository** and a host where git **cannot be run** each produce a successful, empty status with no branch — not an error (FR-027, FR-028). Both kinds are asserted, because the engine keeps them distinct internally and only a test says whether the collapse to one client-visible answer actually happens
 - [X] T012 [P] [US1] `engine/tests/git_watch.rs`: a real `git add` — which touches the index and no working-tree file — fires the watch. This is the case the workspace watcher cannot see and the reason A-GITWATCH exists (FR-002, FR-003)
 - [X] T013 [US1] In `engine/tests/git_watch.rs`, a watch established on the **linked worktree** fixture fires too, proving `git_dir` resolution rather than a `<root>/.git` assumption (FR-004)
-- [ ] T014 [US1] In `engine/tests/git_watch.rs`, assert the git watch's events produce **no** `workspace/onFileEvent`. A-GITWATCH's separation is only worth its extra component if this holds, and only a test says whether it does (FR-005)
-- [ ] T015 [P] [US1] `engine/tests/git_coalesce.rs`: fifty index writes inside one second produce **one** status computation, against a fake clock. Count computations, not notifications — a coalescer that emits once while running git fifty times passes the wrong assertion (FR-006b, SC-013)
-- [ ] T016 [US1] In `engine/tests/git_coalesce.rs`, a change arriving *during* a run schedules exactly one re-run, so a burst of any length costs two computations rather than N
-- [ ] T017 [P] [US1] `engine/tests/git_status_paging.rs`: a repository with 5,000 changed paths is served completely across pages, every page holds at most 1000, and the final page alone carries no cursor (FR-006a, SC-012)
+- [X] T014 [US1] In `engine/tests/git_watch.rs`, assert the git watch's events produce **no** `workspace/onFileEvent`. A-GITWATCH's separation is only worth its extra component if this holds, and only a test says whether it does (FR-005)
+- [X] T015 [P] [US1] `engine/tests/git_coalesce.rs`: fifty index writes inside one second produce **one** status computation, against a fake clock. Count computations, not notifications — a coalescer that emits once while running git fifty times passes the wrong assertion (FR-006b, SC-013)
+- [X] T016 [US1] In `engine/tests/git_coalesce.rs`, a change arriving *during* a run schedules exactly one re-run, so a burst of any length costs two computations rather than N
+- [X] T017 [P] [US1] `engine/tests/git_status_paging.rs`: a repository with 5,000 changed paths is served completely across pages, every page holds at most 1000, and the final page alone carries no cursor (FR-006a, SC-012)
 - [ ] T018 [US1] In `engine/tests/git_status_paging.rs`, pages of one cursor chain describe **one snapshot**: changing the repository mid-pull does not change what later pages report. This is the guarantee a per-page re-run would break invisibly
 - [ ] T019 [P] [US1] `client/core/tests/git_apply.rs`: an update whose first page carries a cursor is **not** applied until the final page arrives, and an interrupted pull leaves the previous state exactly as it was. The failing implementation here passes every single-message test (A-GITPAGE) (FR-009, FR-009a, SC-015)
 - [ ] T020 [P] [US1] In `client/core/tests/git_apply.rs`, applying any number of updates leaves the count of cached files and their hashes unchanged (FR-010, §5.3) (FR-010, SC-006)
@@ -79,8 +79,8 @@ and confirm the tree marks that file and no other.
 
 ### Implementation for User Story 1
 
-- [ ] T026 [US1] `engine/src/adapters/outbound/git_cli.rs`: `git_dir` via `rev-parse --git-dir`, resolving a `.git` file to the real directory
-- [ ] T027 [US1] In `engine/src/adapters/outbound/git_cli.rs`, the `--porcelain=v2 -z --branch` invocation and a parser that dispatches on record type — `1`, `2`, `u`, `?`, `!`, `#` — consuming the extra path field for `2`
+- [X] T026 [US1] `engine/src/adapters/outbound/git_cli.rs`: `git_dir` via `rev-parse --git-dir`, resolving a `.git` file to the real directory
+- [X] T027 [US1] In `engine/src/adapters/outbound/git_cli.rs`, the `--porcelain=v2 -z --branch` invocation and a parser that dispatches on record type — `1`, `2`, `u`, `?`, `!`, `#` — consuming the extra path field for `2`
 - [ ] T028 [US1] In `engine/src/adapters/outbound/git_cli.rs`, map the two status characters to one state per data-model.md's derivation rule, and drop any entry whose path escapes the workspace root rather than forwarding it (Principle VI)
 - [ ] T029 [US1] `engine/src/adapters/outbound/git_watch.rs`: two inotify watches on `HEAD` and `index` in the resolved git directory, on **its own inotify instance**, with no reference to the exclusion set — the separation that makes T013 structurally true
 - [ ] T030 [US1] `engine/src/application/use_cases/git_status.rs`: the coalescer — 100 ms trailing edge, at most one computation in flight, at most one queued (plan.md, *Fixed Quantities*)

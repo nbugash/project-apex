@@ -665,7 +665,7 @@ pub struct GitStatusParams {
     pub limit: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitStatusResult {
     pub current_branch: BranchPosition,
     pub changes: Vec<GitChange>,
@@ -676,7 +676,7 @@ pub struct GitStatusResult {
 }
 
 /// What `git/onStatusUpdate` carries: the first page, and a cursor when there is more.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitStatusUpdate {
     pub workspace_id: WorkspaceId,
     pub current_branch: BranchPosition,
