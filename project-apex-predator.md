@@ -959,6 +959,13 @@ Content blobs unopened for **14 days** are deleted; file tree metadata is retain
 never removes rows from `files`, only from `file_contents`, and clears `is_cached`. This keeps
 the tree navigable while bounding disk use.
 
+**`pending_edits` is never evicted** (A-PENDING). It holds work the host has not seen, so
+deleting a row loses the developer's writing rather than a copy of the host's; a row leaves only
+on a write the host confirmed. It is unaffected by the policy above, which touches
+`file_contents` alone, and is named here because this is the section a reader consults to learn
+what eviction may remove — and because a pending edit's whole reason for existing is that it
+outlives the cache entry it came from.
+
 ## 5.6 Compression
 
 Content blobs are Zstd level 3. Level 3 balances ratio against decompression speed, and
@@ -1267,6 +1274,12 @@ project manifests (`go.mod`, `Cargo.toml`, `package.json`, `mix.exs`, `pyproject
 
 Prefetch is background-priority (§4.6) and must never delay interactive traffic.
 
+**Prefetch stops rather than evicting.** It checks the cache budget before each fetch and stops
+when continuing would require eviction, reporting that it stopped as a normal outcome. Speculative
+content must not displace content the developer actually opened, and least-recently-used eviction
+is precisely wrong here: the file opened days ago is the one wanted when the connection drops on
+the train home. This constrains prefetch only — §5.5's own policy is unchanged.
+
 ## 11.5 Reconnection
 
 A tokio loop attempts reconnection on a backoff while offline. On success:
@@ -1287,10 +1300,15 @@ A merge that silently picks a side is a merge nobody can audit, so conflicts pro
 resolve themselves. See Appendix A, A-OFFLINE.
 
 Conflict resolution is in scope. A-OFFLINE reversed the read-only call that had made it moot, so
-this section requires a stored base revision in `file_contents` (§5.2), a three-way merge, and a
-conflict interface. The base revision is not a new protocol concept: `workspace/writeFile`
-already carries `baseSha256` so the engine can refuse a stale write with `-32004`, and offline
-editing reuses exactly that value.
+this section requires a stored base revision, a three-way merge, and a conflict interface. The
+base lives in `pending_edits` (§5.2, A-PENDING), **not** in `file_contents`: the merge needs the
+base's text, and `file_contents` is evictable and is overwritten by any refetch, so a referenced
+base would be missing on exactly the path the merge exists for. It is stored as content and not
+only as a hash, for the same reason — a hash proves the host has not moved and cannot merge.
+
+The hash itself is not a new protocol concept: `workspace/writeFile` already carries
+`baseSha256` so the engine can refuse a stale write with `-32004`, and offline editing reuses
+exactly that value.
 
 ---
 
@@ -2022,8 +2040,16 @@ two — or measurement showing the 1 MiB cap admits an unacceptable head-of-line
 without saying what shape.**
 
 **Decision.** Work saved while offline lives in its own table keyed by `(workspace_id,
-relative_path)`, holding the content, the hash of the content it was derived from, and whether
-the client can merge it as text. Not columns on `file_contents`.
+relative_path)`, holding the content, **the content it was derived from and that content's hash**,
+and whether the client can merge it as text. Not columns on `file_contents`.
+
+**The base as content, not only as a hash.** This record first said "the hash of the content it
+was derived from", and that is not enough: a hash decides whether the host has moved, and a
+three-way merge needs the base's text. The only other copy is in `file_contents`, which this
+record's own rationale calls evictable, and which any refetch overwrites — so on precisely the
+path the merge exists for, a referenced base would be gone. Found by analyze run 2 of F012 while
+tracing what happens after an eviction; every design artifact agreed with every other and they
+were wrong together, which is why cross-checking them found nothing.
 
 **Rationale.** Three facts, any one of which would be enough. A pending edit must **outlive the
 cached content it came from**, which is subject to eviction. It must **exist where there is no
