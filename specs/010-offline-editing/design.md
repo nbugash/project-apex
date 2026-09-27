@@ -151,6 +151,10 @@ struct PrefetchReport { fetched: usize, stopped_at_budget: bool }
 impl Prefetch {
     async fn run(&self, ws: &WorkspaceId) -> PrefetchReport
         precondition:  connected
+        invoked by:    the composition root, on workspace open while connected and on
+                       transition into Connected (FR-029b). Stating the caller and not
+                       only the precondition, because a precondition describes when a
+                       call is valid and never causes one
         postcondition: manifests and recent-commit paths are cached, in that order, until the
                        budget would require an eviction; nothing is evicted
         raises:        none - a partial prefetch is an ordinary outcome (FR-029a)

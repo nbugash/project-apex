@@ -75,6 +75,18 @@ contradiction as a Principle II violation.
 | §13.1 | "An offline workspace ... is read-only" | Readable and writable, with saved work awaiting reconnection |
 | §5.2 | No table for offline work | `pending_edits` added (A-PENDING). `git_status` also corrected to the shape F011 shipped, which had not been propagated either |
 
+- Q: What starts prefetch? → A: A workspace opened while connected, and a transition into
+  connected. Not idleness. Found by analyze run 19: every artifact described what prefetch does
+  when it runs and none said what runs it, which is the shape F011 shipped three times — an
+  emitter with no subscriber, a subscriber with no emitter, a `translate()` with no caller.
+  Scenario 1 had said "connected and idle", which implies a detector §4.6 makes redundant:
+  interactive traffic already wins the race to the wire in both directions, and the starvation
+  that implies is already bounded. A second mechanism for that ordering is what Principle II
+  refuses. **Rejected — also prefetch when HEAD moves**: the recent-commit set does go stale
+  during a long session, and A-GITNUDGE is the precedent for a second trigger, but it couples
+  prefetch to F011's watch and re-runs on every commit in a busy repository. Left to the
+  reviewer as an enhancement rather than taken silently.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Know I am offline, and keep reading (Priority: P1)
@@ -229,7 +241,7 @@ changed files, go offline, and confirm those files are readable.
 
 **Acceptance Scenarios**:
 
-1. **Given** a connected workspace, **When** the client has been connected and idle, **Then**
+1. **Given** a workspace opened while connected, **When** prefetch begins, **Then**
    files changed in recent commits and the project's manifest files are cached without the
    developer asking.
 2. **Given** prefetch in progress, **When** the developer performs any interactive action,
@@ -381,6 +393,11 @@ would mean every insertion silently reassigns the cases after it.
 
 - **FR-029**: While connected, the client MUST cache files changed in a bounded number of recent
   commits, and the project's manifest files, without the developer asking.
+- **FR-029b**: Prefetch MUST begin on two events and no others: a workspace opened while the
+  client is connected, and a transition into the connected state. It MUST NOT wait for the client
+  to be idle: §4.6 already orders background work behind interactive work in both directions and
+  bounds the starvation that implies, so an idleness detector would be a second mechanism for a
+  property the transport already provides.
 - **FR-029a**: Prefetch MUST stop rather than evict. It MUST NOT displace cached content to make
   room for speculative content, and stopping early MUST be an ordinary outcome rather than a
   reported failure.

@@ -227,7 +227,8 @@ offline, and confirm they are readable.
 - [ ] T070 [US5] In `engine/src/adapters/inbound/rpc.rs`, dispatch `git/recentlyChanged`, refusing an unregistered workspace with `-32001` and a non-positive `commits` with `-32602`
 - [ ] T071 [P] [US5] In `client/core/src/application/ports/git_provider.rs` and `client/core/src/adapters/outbound/remote_git.rs`, add `recently_changed` through the transport
 - [ ] T072 [US5] `client/core/src/application/use_cases/prefetch.rs` (declared in `use_cases/mod.rs`): `Prefetch::run` — manifests first, then recent-commit paths, checking the budget before each fetch and stopping rather than evicting. It **returns** design.md's `PrefetchReport` — how many it fetched, and whether it stopped at the budget — for the reason T045 states about `ReconcileReport`: SC-010 is measured against what prefetch says it fetched, and SC-010a against whether it stopped, so a run that logged instead of returning leaves both unmeasurable while looking finished
-- [ ] T073 [US5] In `client/core/src/composition.rs`, run prefetch at background priority (§4.6) so it cannot delay interactive traffic (FR-030)
+- [ ] T073 [US5] In `client/core/src/composition.rs`, invoke `Prefetch::run` on **workspace open while connected** and on **transition into `Connected`** (FR-029b), at background priority (§4.6) so it cannot delay interactive traffic (FR-030). Both triggers, not one: open alone never prefetches a workspace that was open before the connection returned, and reconnect alone never prefetches the first workspace of a session. No idleness detector — §4.6 already orders background behind interactive and bounds the starvation, so detecting idleness here would be the second authority Principle II refuses
+- [ ] T073a [P] [US5] In `client/core/tests/prefetch.rs`, FR-029b: prefetch runs for a workspace opened **after** the application started, and runs again on a reconnection, and does **not** run while disconnected. The first case is the one a startup-only implementation fails, and it fails silently — the cache is merely emptier than expected, which no other US5 test notices
 
 **Checkpoint**: all five subfeatures delivered.
 
@@ -264,7 +265,11 @@ Phase 1 Setup ──▶ Phase 2 Foundational ──┬──▶ Phase 3 US1 ─�
 - **US3** depends on US2 — there is nothing to reconcile until something is retained.
 - **US4** depends on US3: a conflict is an outcome of reconciliation.
 - **US5** is **independent of US1 through US4** and could be built first or last. It is last only
-  because it is P3; it is the one story that degrades rather than breaks the feature by its absence.
+  because it is P3; it is the one story that degrades rather than breaks the feature by its
+  absence. Measured rather than asserted, since this is the claim a decision to defer US5 would
+  rest on: of its eighteen tasks, exactly one writes a file another story owns — T073, in
+  `composition.rs`, which every story necessarily touches — and no task outside US5 touches any
+  file US5 owns. Deferring it removes eighteen tasks and one line of wiring.
 
 ### Within Each User Story
 
@@ -280,10 +285,9 @@ convention is: **one writer per file at a time, whatever the marker says.**
 
 This is worth stating rather than fixing by deleting markers. Most tasks here write a file another
 task also writes, because a test file gathers a story's cases — `reconcile.rs` is written by
-thirteen tasks, `retain_edit.rs` by seven, `git_recent.rs` by six. Stripping `[P]` from all of them
-would lose
-the information that the cases are independent, which is what matters when deciding what to leave
-until later.
+thirteen tasks, `retain_edit.rs` by seven, `git_recent.rs` by six. Stripping `[P]` from all of
+them would lose the information that the cases are independent, which is what matters when
+deciding what to leave until later.
 
 **Genuinely parallel — different files, no shared writer:**
 
