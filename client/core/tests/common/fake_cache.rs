@@ -6,8 +6,8 @@
 #![allow(dead_code)]
 
 use apex_shell::application::ports::workspace_cache::{
-    Attachment, CacheError, CacheResult, EvictionReport, MigrationFailure, PhaseSink, StoreOutcome,
-    WorkspaceCache,
+    Attachment, CacheError, CacheResult, EvictionReport, GitProjection, MigrationFailure,
+    PhaseSink, StoreOutcome, WorkspaceCache,
 };
 use apex_shell::domain::cache::CacheEntry;
 use apex_shell::domain::workspace::{
@@ -57,6 +57,8 @@ pub struct InMemoryCache {
     version: Mutex<u32>,
     /// When set, migration fails deterministically — the case retrying cannot fix.
     migration_fails: Mutex<bool>,
+    /// Git state per workspace, replaced wholesale exactly as the store does.
+    git: Mutex<BTreeMap<String, GitProjection>>,
 }
 
 impl InMemoryCache {
@@ -67,6 +69,31 @@ impl InMemoryCache {
     /// Make every content write fail. For FR-034: a full disk must not fail the read.
     pub fn fail_writes(&self, why: &str) {
         *self.write_fails.lock().unwrap() = Some(CacheError::Store(why.into()));
+    }
+
+    pub fn allow_writes(&self) {
+        *self.write_fails.lock().unwrap() = None;
+    }
+
+    /// Every cached file's identity, content and hash, in one comparable value.
+    ///
+    /// For §5.3: git status must not touch cache validity, and the way to assert "did not
+    /// touch" is to compare everything before and after rather than to check a flag somebody
+    /// has to remember to add.
+    pub fn content_fingerprint(&self) -> Vec<(String, String, Option<String>, Option<usize>)> {
+        self.rows
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|((ws, path), row)| {
+                (
+                    ws.clone(),
+                    path.clone(),
+                    row.hash.as_ref().map(|h| h.as_str().to_string()),
+                    row.bytes.as_ref().map(|b| b.len()),
+                )
+            })
+            .collect()
     }
 
     pub fn set_version(&self, v: u32) {
@@ -348,6 +375,32 @@ impl WorkspaceCache for InMemoryCache {
             }
         }
         Ok(report)
+    }
+
+    fn replace_git_status(&self, ws: &WorkspaceId, git: &GitProjection) -> CacheResult<()> {
+        // Honours `write_fails` like every other write here, so a test can make the commit fail
+        // and check that the previous state survives (FR-009a).
+        if let Some(e) = self.write_fails.lock().unwrap().clone() {
+            return Err(e);
+        }
+        // A workspace this client has not registered has no git state to hold. The store
+        // enforces the same thing with a foreign key, so the behaviour asserted against this
+        // double is the behaviour the real one has (FR-012).
+        if !self.workspaces.lock().unwrap().contains_key(&ws.0) {
+            return Err(CacheError::Store(format!("unknown workspace {}", ws.0)));
+        }
+        self.git.lock().unwrap().insert(ws.0.clone(), git.clone());
+        Ok(())
+    }
+
+    fn git_status(&self, ws: &WorkspaceId) -> CacheResult<GitProjection> {
+        Ok(self
+            .git
+            .lock()
+            .unwrap()
+            .get(&ws.0)
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn schema_version(&self) -> CacheResult<u32> {

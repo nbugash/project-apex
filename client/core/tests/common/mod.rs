@@ -16,6 +16,7 @@
 
 pub mod fake_cache;
 pub mod fake_clock;
+pub mod fake_git;
 pub mod fake_workspace;
 pub mod reconnect;
 

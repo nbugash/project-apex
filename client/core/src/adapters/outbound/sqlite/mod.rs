@@ -549,6 +549,86 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn replace_git_status(
+        &self,
+        ws: &WorkspaceId,
+        git: &crate::application::ports::workspace_cache::GitProjection,
+    ) -> CacheResult<()> {
+        self.with(|c| {
+            let tx = c.unchecked_transaction()?;
+            // Delete then insert, inside the transaction. A path that has stopped differing is
+            // reported by its absence from the new answer, so anything less than a full replace
+            // leaves it marked until the workspace is closed.
+            tx.execute(
+                "DELETE FROM git_status WHERE workspace_id = ?1",
+                rusqlite::params![&ws.0],
+            )?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO git_status (workspace_id, relative_path, status_type)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(workspace_id, relative_path) DO UPDATE SET status_type = ?3",
+                )?;
+                for change in &git.changes {
+                    // `ON CONFLICT` rather than a plain insert, because git reports one state
+                    // per path but the rows come off a wire: a duplicated path from a faulty
+                    // engine must not fail the whole replacement (Principle VI).
+                    stmt.execute(rusqlite::params![
+                        &ws.0,
+                        &change.path,
+                        status_name(&change.status)
+                    ])?;
+                }
+            }
+            // The branch, in the same transaction as the changes it describes.
+            let (kind, value) = branch_columns(&git.branch);
+            tx.execute(
+                "INSERT INTO git_branch (workspace_id, kind, value) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(workspace_id) DO UPDATE SET kind = ?2, value = ?3",
+                rusqlite::params![&ws.0, kind, value],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    fn git_status(
+        &self,
+        ws: &WorkspaceId,
+    ) -> CacheResult<crate::application::ports::workspace_cache::GitProjection> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT relative_path, status_type FROM git_status
+                  WHERE workspace_id = ?1 ORDER BY relative_path",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![&ws.0], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
+            let mut changes = Vec::new();
+            for row in rows {
+                let (path, status) = row?;
+                // A row whose status this build does not know is dropped, not guessed at. A
+                // guess would mark a file with a state git never reported.
+                if let Some(status) = status_from(&status) {
+                    changes.push(apex_protocol::wire::GitChange { path, status });
+                }
+            }
+            let stored = c
+                .query_row(
+                    "SELECT kind, value FROM git_branch WHERE workspace_id = ?1",
+                    rusqlite::params![&ws.0],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+                )
+                .ok();
+            // A workspace with no row has no branch, which is the same answer as a workspace
+            // that is not a repository. The two are indistinguishable here on purpose (FR-027).
+            let branch = stored
+                .and_then(|(kind, value)| branch_from(&kind, value))
+                .unwrap_or_default();
+            Ok(crate::application::ports::workspace_cache::GitProjection { branch, changes })
+        })
+    }
+
     fn schema_version(&self) -> CacheResult<u32> {
         self.with(migrate::read_version)
     }
@@ -589,4 +669,50 @@ fn upper_bound(prefix: &str) -> String {
     let last = bound.pop().expect("a prefix is never empty");
     bound.push((last as u8 + 1) as char);
     bound
+}
+
+/// The stored spelling of a status. The wire's own spelling, deliberately: a second vocabulary
+/// between the table and the protocol would be one more thing to keep in step, for no gain.
+fn status_name(status: &apex_protocol::wire::GitStatusKind) -> &'static str {
+    use apex_protocol::wire::GitStatusKind::*;
+    match status {
+        Modified => "MODIFIED",
+        Untracked => "UNTRACKED",
+        Staged => "STAGED",
+        Deleted => "DELETED",
+        Conflict => "CONFLICT",
+    }
+}
+
+fn status_from(name: &str) -> Option<apex_protocol::wire::GitStatusKind> {
+    use apex_protocol::wire::GitStatusKind::*;
+    Some(match name {
+        "MODIFIED" => Modified,
+        "UNTRACKED" => Untracked,
+        "STAGED" => Staged,
+        "DELETED" => Deleted,
+        "CONFLICT" => Conflict,
+        _ => return None,
+    })
+}
+
+fn branch_columns(branch: &apex_protocol::wire::BranchPosition) -> (&'static str, Option<&str>) {
+    use apex_protocol::wire::BranchPosition::*;
+    match branch {
+        Branch(name) => ("branch", Some(name.as_str())),
+        Detached(commit) => ("detached", Some(commit.as_str())),
+        None => ("none", Option::None),
+    }
+}
+
+fn branch_from(kind: &str, value: Option<String>) -> Option<apex_protocol::wire::BranchPosition> {
+    use apex_protocol::wire::BranchPosition;
+    Some(match (kind, value) {
+        ("branch", Some(v)) => BranchPosition::Branch(v),
+        ("detached", Some(v)) => BranchPosition::Detached(v),
+        ("none", _) => BranchPosition::None,
+        // A named case with no name is a row that cannot mean anything. Reported as no branch
+        // rather than as an empty one, which would render as a blank label (FR-019).
+        _ => return Option::None,
+    })
 }

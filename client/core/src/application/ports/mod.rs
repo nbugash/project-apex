@@ -3,6 +3,7 @@ pub mod clock;
 pub mod connection;
 pub mod credential;
 pub mod deployer;
+pub mod git_provider;
 pub mod handshake;
 pub mod notification_sink;
 pub mod request_sender;

@@ -643,7 +643,7 @@ pub enum GitStatusKind {
 /// Three cases rather than an optional name, because git reports a detached head as the literal
 /// `(detached)` in the name's position — a value that reads as a peculiarly named branch unless
 /// it is given a case of its own (research.md).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "value")]
 pub enum BranchPosition {
     /// Checked out on a named branch.
@@ -651,6 +651,10 @@ pub enum BranchPosition {
     /// Detached, identified by the commit it sits on.
     Detached(String),
     /// Not a repository, or git could not be run. The client's behaviour is identical for both.
+    ///
+    /// The **default**, because a workspace nothing is known about has no branch to name. Any
+    /// other default would put a name on the status bar that no repository ever reported.
+    #[default]
     None,
 }
 
