@@ -156,6 +156,12 @@ pub fn build(
     }
 
     let mut deployer: Option<Arc<SshStreamDeployer>> = None;
+    // Shared between the notification path, which applies what the engine pushes, and
+    // `workspace_open`, which has to **ask** once -- because asking is what makes the engine
+    // start watching. Two constructions would be two pagers accumulating separately.
+    let mut apply_git: Option<
+        Arc<crate::application::use_cases::apply_git_status::ApplyGitStatus>,
+    > = None;
     let mut tasks: Option<Arc<dyn TaskProvider>> = None;
     let mut sender: Option<Arc<dyn crate::application::ports::request_sender::RequestSender>> =
         None;
@@ -193,18 +199,20 @@ pub fn build(
             // interface reads git state back out of the projection, so forwarding first would
             // have it read the state the update was about to replace -- right often enough to
             // look like a rare glitch rather than a race (see `git_notification.rs`).
-            let notifications: Arc<dyn NotificationSink> = Arc::new(
-                crate::adapters::inbound::git_notification::GitNotifications::new(
+            let git = Arc::new(
+                crate::application::use_cases::apply_git_status::ApplyGitStatus::new(
                     Arc::new(
-                        crate::application::use_cases::apply_git_status::ApplyGitStatus::new(
-                            Arc::new(
-                                crate::adapters::outbound::remote_git::RemoteGitProvider::new(
-                                    to_engine.clone(),
-                                ),
-                            ),
-                            ready.get(),
+                        crate::adapters::outbound::remote_git::RemoteGitProvider::new(
+                            to_engine.clone(),
                         ),
                     ),
+                    ready.get(),
+                ),
+            );
+            apply_git = Some(git.clone());
+            let notifications: Arc<dyn NotificationSink> = Arc::new(
+                crate::adapters::inbound::git_notification::GitNotifications::new(
+                    git,
                     notifications,
                 ),
             );
@@ -269,6 +277,7 @@ pub fn build(
     };
     let workspace = WorkspaceAccess {
         cache: ready.get(),
+        git: apply_git,
         register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
         provider: Arc::new(CachedWorkspace::new(
             inner,

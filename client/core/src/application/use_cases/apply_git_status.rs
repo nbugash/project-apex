@@ -62,12 +62,51 @@ impl ApplyGitStatus {
     /// Apply one `git/onStatusUpdate`, pulling any pages it says remain.
     pub async fn apply(&self, update: GitStatusUpdate) -> ApplyOutcome {
         let workspace = WorkspaceId(update.workspace_id.0.clone());
+        self.accumulate(
+            &workspace,
+            update.current_branch,
+            update.changes,
+            update.next_cursor,
+        )
+        .await
+    }
+
+    /// Ask for a workspace's status outright, and apply the answer.
+    ///
+    /// **Asking is also what subscribes.** The engine begins watching a repository when a
+    /// client first asks about it, so without this call nothing is ever watched and no
+    /// `git/onStatusUpdate` is ever sent -- which is a client that is correct in every part and
+    /// shows nothing. Found by the end-to-end spec and by nothing else: every unit test here
+    /// starts from an update that had already arrived.
+    pub async fn refresh(&self, workspace: &WorkspaceId) -> ApplyOutcome {
+        match self.git.status(workspace, None).await {
+            Ok(first) => {
+                self.accumulate(
+                    workspace,
+                    first.current_branch,
+                    first.changes,
+                    first.next_cursor,
+                )
+                .await
+            }
+            Err(e) => ApplyOutcome::Discarded(Discarded::PullFailed(format!("{e:?}"))),
+        }
+    }
+
+    async fn accumulate(
+        &self,
+        workspace: &WorkspaceId,
+        branch: apex_protocol::wire::BranchPosition,
+        first: Vec<GitChange>,
+        first_cursor: Option<String>,
+    ) -> ApplyOutcome {
+        let workspace = workspace.clone();
         let mut accumulated: Vec<GitChange> = Vec::new();
         let mut refused = 0usize;
         let mut pages = 1usize;
 
-        keep(&mut accumulated, &mut refused, update.changes);
-        let mut cursor = update.next_cursor;
+        keep(&mut accumulated, &mut refused, first);
+        let mut cursor = first_cursor;
 
         while let Some(next) = cursor {
             if pages >= MAX_PAGES {
@@ -88,7 +127,7 @@ impl ApplyGitStatus {
 
         let paths = accumulated.len();
         let projection = GitProjection {
-            branch: update.current_branch,
+            branch,
             changes: accumulated,
         };
         // Only now, and in one transaction. Everything above is in memory precisely so that a

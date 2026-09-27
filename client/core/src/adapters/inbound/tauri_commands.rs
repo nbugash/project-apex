@@ -486,6 +486,9 @@ impl From<ProviderError> for WorkspaceFailure {
 /// field that is always `None` before then would put an unwrap in every command.
 pub struct WorkspaceAccess {
     pub provider: Arc<dyn WorkspaceProvider>,
+    /// How git status is asked for and applied. `None` when no engine is configured, which is
+    /// the same condition under which there is nothing to ask.
+    pub git: Option<Arc<crate::application::use_cases::apply_git_status::ApplyGitStatus>>,
     /// Held so the debug-only seeding command can write through the same port the application
     /// reads through, rather than injecting a fixture into the view.
     pub cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
@@ -585,6 +588,16 @@ pub async fn workspace_open(
         )
         .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?;
     let _ = app.emit("workspace:changed", shell.persist.snapshot().workspace);
+
+    // **Ask once, which is also what subscribes.** The engine starts watching a repository when
+    // a client first asks about it, so without this the projection would stay empty and no
+    // update would ever be pushed -- a client correct in every part and showing nothing. The
+    // answer is applied here rather than awaited by the caller: a workspace that is not a
+    // repository answers empty, and neither case is a reason to fail the open (FR-027).
+    if let Some(git) = access.git.as_ref() {
+        let outcome = git.refresh(&ws.id).await;
+        crate::logging::info(&format!("git status on open: {outcome:?}"));
+    }
 
     Ok(WorkspaceDto {
         id: ws.id.0,
