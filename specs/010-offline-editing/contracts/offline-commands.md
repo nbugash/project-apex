@@ -35,8 +35,13 @@ a promise the view cannot check.
 2. **`remote` is read when the list is built**, not stored. A stored remote side can go stale
    while the developer is looking at it, and resolving against a stale remote is how a merge
    silently discards a change that arrived during the conversation.
-3. **A file with no cached text has `base` empty and `local` present.** It is still listed,
-   because FR-025a requires it to prompt.
+3. **`base` is empty only for a file created offline**, which genuinely has nothing it was
+   derived from. Eviction of the cached content does **not** empty it: the base travels with the
+   pending edit rather than being referenced (FR-011b). This guarantee said "a file with no cached
+   text has `base` empty" while the base still came from the cache, and was left behind when that
+   changed — analyze run 4 found it.
+4. **A file the client cannot merge is still listed**, with `base` present or empty on the terms
+   above, because FR-025a requires it to prompt.
 
 ---
 

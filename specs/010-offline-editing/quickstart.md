@@ -52,6 +52,12 @@ Numbers, not verdicts. Each is printed by the command beside it.
 | **SC-010a** cached files evicted by prefetch | same test | **0** |
 | **SC-011** reconciling 100 files | `cargo test -p apex-shell --test reconcile_budget -- --nocapture` | < 10 s |
 | **SC-012** requests issued reading a cached file offline | offline-state spec | **0** |
+| **SC-002a** reconciliations using the host-confirmed base, over 10 files saved 3 times each | `cargo test -p apex-shell --test retain_edit -- --nocapture` | **100%** |
+| **SC-003** offline edits lost across edit, disconnect, relaunch, reconnect | `npm run e2e:live -- --spec tests/e2e/offline-conflict.spec.ts` | **0** |
+| **SC-005** interactions for a non-overlapping host change | `npm run e2e:live -- --spec tests/e2e/offline-reconcile.spec.ts` | **0** |
+| **SC-006** overlapping changes resolved by the client choosing a side | `cargo test -p apex-shell --test reconcile` | **0** |
+| **SC-006a** unmergeable files prompting, including those the host did not change | same test | **100%** |
+| **SC-010** manifests and recent-commit files readable offline after 5 connected minutes | `npm run e2e:live -- --spec tests/e2e/offline-state.spec.ts` | **100%**, or prefetch stopped and said so |
 
 Record each in the *Validation record* below when the feature is implemented.
 
@@ -95,9 +101,17 @@ Break the property, confirm the test fails, restore. A test that passes both way
 7. **Key pending edits by `file_id` instead of by path.** The file-created-offline test must fail.
 8. **Resolve a conflict by preferring the local side.** The conflict test must fail without any
    prompt being shown.
+9. **Read the base from `file_contents` instead of from the pending edit.** The evicted-cache
+   test must fail, and **only** that one — every test where nothing was evicted passes either
+   way, which is exactly why the design carried this hole through two analyze runs.
+10. **Re-derive the base from the new local content on a second offline save.** The
+    base-preservation test must fail on the stored base, not on a merge result.
 
-Mutations 2 and 3 matter most: each is a plausible simplification that leaves every other test
-green, and each corresponds to a decision a reviewer made deliberately.
+**Mutation 10 matters most, and 2, 3 and 9 after it.** Each is a plausible simplification that
+leaves every other test green. Mutation 10 is worse than the rest in kind: the others make a test
+fail or a feature go quiet, whereas re-deriving the base makes the merge compare local against
+local and return a **clean merge that is wrong**. No assertion about success notices, and the
+developer is handed a file nobody wrote.
 
 ---
 

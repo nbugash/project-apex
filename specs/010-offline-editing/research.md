@@ -83,7 +83,15 @@ deliberately rather than inheriting a shape chosen for prefetch.
 ## Where pending edits live: a new table, not new columns
 
 **Decision.** A new `pending_edits` table keyed by `(workspace_id, relative_path)`, holding the
-saved content, the base hash, and when it was retained. Schema version 4.
+saved content, **the base content and its hash**, whether the file can be merged as text, and when
+it was retained. Schema version 4.
+
+**The base content, not only its hash.** The first version of this decision stored the hash alone,
+which is enough to detect that the host has not moved and **not** enough to merge — a three-way
+merge needs the base text, and the only other copy is in `file_contents`, which this very section
+points out is evictable, and which any refetch overwrites. Analyze run 2 found it by asking where
+the base text would come from after an eviction; every artifact agreed with every other and they
+were wrong together.
 
 **Rationale.** Three reasons, in order of weight.
 

@@ -26,7 +26,10 @@ lines apart merge). See [research.md](./research.md).
 this feature adds. Verified to build under MSRV 1.75 (0.5 requires 1.85 and is not used).
 
 **Storage**: the existing client projection (§5.2), migrated to **schema version 4**, adding a
-`pending_edits` table keyed by `(workspace_id, relative_path)`. Engine stores nothing new.
+`pending_edits` table keyed by `(workspace_id, relative_path)` and holding the offline content,
+**the base content** and its hash. The base is stored rather than referenced because a three-way
+merge needs the base text and `file_contents` is evictable — analyze run 2 found that a referenced
+base would be gone on exactly the path the merge exists for. Engine stores nothing new.
 
 **Testing**: `cargo test` for engine and client core; `vitest` for pure webview logic; WebdriverIO
 against a real engine and a real workspace for the end-to-end scenarios, in the **live** suite
@@ -151,6 +154,7 @@ boundary is the property SC-006b pins down.
 | `diffy` dependency | SC-006b requires agreement with a standard merge tool; hand-writing one makes agreement an intention rather than a property | Writing the merge; `git2`; shelling out to `git merge-file` — all in research.md |
 | New protocol method `git/recentlyChanged` | Nothing in §4.8 reports history, and prefetch's value is files the developer has *not* opened | Prefetching only opened files plus manifests, which drops half of FR-029 |
 | Schema version 4 | A pending edit outlives its cache entry and can exist with no cache entry at all | Columns on `file_contents`; a directory of files |
+| Two compressed copies per pending edit | The base content must be stored, not referenced: the merge needs its text and the cache's copy is evicted and overwritten on its own terms | Pinning the cached blob against eviction, which couples two tables' lifetimes that A-PENDING separated, and still loses to a refetch. Accepted because pending edits are few and short-lived, so the cost is bounded by how much unreconciled offline work exists |
 | Conflict interface not in the prototype | FR-021 requires prompting, and a prompt needs somewhere to happen | Recorded as a deviation rather than resolved silently |
 
 **Scope note, carried from spec.md.** This cycle builds all five subfeatures where A-OFFLINE

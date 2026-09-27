@@ -97,7 +97,7 @@ classDiagram
 | `Reconcile` | use case | Per file on reconnection: write, combine, or ask |
 | `ReconcileReport` | record | What happened to each file, for the developer |
 | `Prefetch` | use case | Bounded speculative caching that never evicts |
-| `PendingEdit` | record | The durable fact: content, base hash, mergeable |
+| `PendingEdit` | record | The durable fact: local content, **base content**, base hash, mergeable. Self-contained, so a merge never depends on a cache entry that may be gone |
 | `OfflineStore` | class (TS) | What the interface reads to know it is offline |
 | `ConflictStore` | class (TS) | Outstanding conflicts and their three sides |
 
@@ -262,6 +262,8 @@ a loss.
 | File is not held as text | Never merged; always `Conflicted` | Conflict panel (FR-025a) |
 | Prefetch would evict | Stop, report `stopped_at_budget` | Log; not an error |
 | Merge produces `Conflict` | No write at all for that file | Conflict panel |
+| Workspace root gone on reconnect | Every file `Failed`; the tree is not emptied | Reconciliation report. Distinct from "host unreachable": the host answers, the root does not exist |
+| One base column set without the other | Treat the row as unmergeable, log once | Log; the file prompts rather than being merged against half a base |
 
 ## Persistence Mapping
 
