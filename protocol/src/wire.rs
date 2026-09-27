@@ -614,6 +614,107 @@ pub struct ExitParams {
     pub signal: Option<SignalName>,
 }
 
+// ---- git (§4.8, F011) ----
+
+/// One changed path and the single state §4.8 allows it.
+///
+/// One state and not two: git reports the staged and unstaged condition separately, and the
+/// collapse happens on the engine where both characters are still in hand. A client that needed
+/// both would be a protocol change, made deliberately rather than by widening this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitChange {
+    pub path: String,
+    pub status: GitStatusKind,
+}
+
+/// §4.8's five, and no sixth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum GitStatusKind {
+    Modified,
+    Untracked,
+    Staged,
+    Deleted,
+    Conflict,
+}
+
+/// Where the repository is, which is not always a branch.
+///
+/// Three cases rather than an optional name, because git reports a detached head as the literal
+/// `(detached)` in the name's position — a value that reads as a peculiarly named branch unless
+/// it is given a case of its own (research.md).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum BranchPosition {
+    /// Checked out on a named branch.
+    Branch(String),
+    /// Detached, identified by the commit it sits on.
+    Detached(String),
+    /// Not a repository, or git could not be run. The client's behaviour is identical for both.
+    ///
+    /// The **default**, because a workspace nothing is known about has no branch to name. Any
+    /// other default would put a name on the status bar that no repository ever reported.
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatusParams {
+    pub workspace_id: WorkspaceId,
+    /// Absent asks for the first page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Absent takes the default, which is also the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitStatusResult {
+    pub current_branch: BranchPosition,
+    pub changes: Vec<GitChange>,
+    /// Present **exactly** when more remain. Absent means this page is the last, and only then
+    /// may a client apply what it has accumulated (A-GITPAGE).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// What `git/onStatusUpdate` carries: the first page, and a cursor when there is more.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitStatusUpdate {
+    pub workspace_id: WorkspaceId,
+    pub current_branch: BranchPosition,
+    pub changes: Vec<GitChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitDiffParams {
+    pub workspace_id: WorkspaceId,
+    pub relative_path: String,
+}
+
+/// Line coordinates only. There is no field here for content and there must never be one
+/// (§12.3, FR-021).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitDiffResult {
+    /// Ranges present now and not before, as one-based inclusive `[start, end]`.
+    pub added: Vec<[u32; 2]>,
+    /// Positions where lines were removed. A position and not a range: the removed lines are
+    /// not in the new file, so there is nothing to give an end.
+    pub deleted: Vec<u32>,
+    /// Ranges that changed in place.
+    pub modified: Vec<[u32; 2]>,
+}
+
+/// The largest page of changes one message may carry (plan.md, *Fixed Quantities*).
+///
+/// `workspace/readDirectory`'s figure, deliberately. Status is the same shape of problem — a
+/// list whose length is a property of the user's data rather than of the protocol — and a second
+/// number would be a second thing to justify and to keep in step.
+pub const MAX_GIT_STATUS_PAGE: u32 = 1000;
+
 #[cfg(test)]
 mod tests {
     use super::*;

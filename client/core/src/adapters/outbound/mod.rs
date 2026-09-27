@@ -7,6 +7,7 @@ pub mod local_engine;
 pub mod local_tasks;
 pub mod local_workspace;
 pub mod openssh;
+pub mod remote_git;
 pub mod remote_tasks;
 pub mod remote_workspace;
 pub mod sqlite;

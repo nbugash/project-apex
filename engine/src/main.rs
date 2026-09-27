@@ -7,10 +7,13 @@
 use apex_engine::adapters::inbound::rpc::{self, Action};
 use apex_engine::adapters::outbound::engine_socket::{self, Claim};
 use apex_engine::adapters::outbound::frame_writer::FrameWriter;
+use apex_engine::adapters::outbound::git_cli::GitCli;
+use apex_engine::adapters::outbound::git_watchers::GitWatchers;
 use apex_engine::adapters::outbound::std_fs::StdFileSystem;
 use apex_engine::adapters::outbound::task_threads::TaskService;
 use apex_engine::adapters::outbound::watchers::{WatcherFactory, Watchers};
 use apex_engine::application::ports::file_system::FileSystem;
+use apex_engine::application::use_cases::git_status::GitService;
 use apex_engine::application::use_cases::workspace::InMemoryRoots;
 use apex_engine::session::SessionRegistry;
 use apex_protocol::framing::{FrameCodec, FrameError};
@@ -53,19 +56,6 @@ fn main() {
     // thread F004 adds is the second, and §4.6 makes this one pipe and one queue.
     let writer = Arc::new(FrameWriter::to_stdout());
 
-    // How a watcher is made for one workspace. A closure so this file decides, and so the
-    // engine still builds and runs on a host with no inotify -- where the factory yields
-    // nothing, `workspace/watch` is refused, and FR-027's degradation applies: browsing and
-    // reading continue, and the loss is stated rather than silent.
-    // Linux gets a watcher; anything else gets none, and `workspace/watch` is refused with a
-    // reason rather than appearing to succeed (FR-027, A-WATCHLOCAL). The concrete library is
-    // named only inside its own adapter, which is what `inotify_confinement.rs` enforces.
-    #[cfg(target_os = "linux")]
-    let factory: WatcherFactory = apex_engine::adapters::outbound::inotify_watcher::factory();
-    #[cfg(not(target_os = "linux"))]
-    let factory: WatcherFactory = Box::new(|_root| None);
-    let watchers = Watchers::new(factory, Arc::clone(&fs), Arc::clone(&writer), codec.clone());
-
     // One clock, shared. `Arc` rather than `Box` because the chunker reads it on every reader
     // thread while the escalation thread and the stop path read it too -- a `Box` can be handed
     // to exactly one of them.
@@ -83,6 +73,53 @@ fn main() {
     ));
     #[cfg(not(target_os = "linux"))]
     let tasks: Option<TaskService> = None;
+
+    // Git, on every platform. Unlike the watcher and the pty runner there is nothing here to
+    // cfg on: the adapter shells out to `git`, and a host without it is not a broken engine but
+    // a workspace with no git state -- which `status_or_nothing` already turns into a
+    // successful empty answer (FR-027, FR-028). Gating it by platform would replace a runtime
+    // fact the client can be told about with a compile-time one it cannot.
+    // Linux gets a real git watch; anything else gets none, and git is then answered on
+    // request rather than pushed -- FR-027's degradation applied to the push half. The loss is
+    // stated by the shape of what happens, not hidden: `git/getStatus` still works.
+    #[cfg(target_os = "linux")]
+    let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> =
+        Some(apex_engine::adapters::outbound::inotify_watcher::git_watch());
+    #[cfg(not(target_os = "linux"))]
+    let git_watch: Option<Arc<dyn apex_engine::application::ports::git_watch::GitWatch>> = None;
+
+    let git = Arc::new(GitWatchers::new(
+        git_watch,
+        Arc::new(GitService::new(Arc::new(GitCli::default()))),
+        Arc::clone(&clock),
+        Arc::clone(&writer),
+        codec.clone(),
+    ));
+
+    // How a watcher is made for one workspace. A closure so this file decides, and so the
+    // engine still builds and runs on a host with no inotify -- where the factory yields
+    // nothing, `workspace/watch` is refused, and FR-027's degradation applies: browsing and
+    // reading continue, and the loss is stated rather than silent.
+    // Linux gets a watcher; anything else gets none, and `workspace/watch` is refused with a
+    // reason rather than appearing to succeed (FR-027, A-WATCHLOCAL). The concrete library is
+    // named only inside its own adapter, which is what `inotify_confinement.rs` enforces.
+    //
+    // Constructed **after** git, because A-GITNUDGE makes the workspace watcher a trigger for
+    // git status as well as a source of client notifications, and it needs something to tell.
+    #[cfg(target_os = "linux")]
+    let factory: WatcherFactory = apex_engine::adapters::outbound::inotify_watcher::factory();
+    #[cfg(not(target_os = "linux"))]
+    let factory: WatcherFactory = Box::new(|_root| None);
+    let watchers = Watchers::new(
+        factory,
+        Arc::clone(&fs),
+        Arc::clone(&writer),
+        codec.clone(),
+        Some(Arc::clone(&git)
+            as Arc<
+                dyn apex_engine::application::ports::git_watch::StatusNudge,
+            >),
+    );
 
     // A restart is announced, never inferred. The client learns about it because it was told,
     // and the identity it carries is what distinguishes a restart from a new session.
@@ -102,6 +139,7 @@ fn main() {
         fs.as_ref(),
         &watchers,
         tasks.as_ref(),
+        Some(git.as_ref()),
         &mut codec,
         &writer,
     );
@@ -170,6 +208,7 @@ fn main() {
             fs.as_ref(),
             &watchers,
             tasks.as_ref(),
+            Some(git.as_ref()),
             &mut codec,
             &writer,
         );
@@ -216,6 +255,7 @@ fn serve(
     fs: &dyn FileSystem,
     watchers: &Watchers,
     tasks: Option<&TaskService>,
+    git: Option<&GitWatchers>,
     codec: &mut FrameCodec,
     writer: &Arc<FrameWriter>,
 ) {
@@ -229,8 +269,16 @@ fn serve(
         loop {
             match codec.decode(&mut buf) {
                 Ok(Some(frame)) => {
-                    match rpc::dispatch(registry, roots, fs, Some(watchers), tasks, codec, &frame.0)
-                    {
+                    match rpc::dispatch(
+                        registry,
+                        roots,
+                        fs,
+                        Some(watchers),
+                        tasks,
+                        git,
+                        codec,
+                        &frame.0,
+                    ) {
                         Action::Reply(reply) => {
                             let _ = writer.write_interactive(&reply);
                         }

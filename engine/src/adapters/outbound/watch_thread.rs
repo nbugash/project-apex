@@ -25,6 +25,7 @@ use crate::application::exclusions::ExclusionSet;
 use crate::application::ports::clock::{Clock, Millis};
 use crate::application::ports::file_system::FileSystem;
 use crate::application::ports::file_watcher::FileWatcher;
+use crate::application::ports::git_watch::StatusNudge;
 use crate::application::use_cases::watch::{release_all, unwatch_paths, watch_paths};
 use crate::domain::path::CanonicalRoot;
 use crate::domain::watch::{EventKind, FileEvent, WatchSet};
@@ -63,6 +64,7 @@ impl WatchService {
         exclusions: Arc<ExclusionSet>,
         writer: Arc<FrameWriter>,
         codec: FrameCodec,
+        nudge: Option<Arc<dyn StatusNudge>>,
     ) -> Self {
         let (tx, rx): (Sender<Command>, Receiver<Command>) = channel();
         let running = Arc::new(AtomicBool::new(true));
@@ -123,6 +125,17 @@ impl WatchService {
                 match coalescer.drain_due(clock.now()) {
                     Emission::Batch(events) if events.is_empty() => {}
                     Emission::Batch(events) => {
+                        // A-GITNUDGE's second trigger, before the events are turned into a
+                        // notification. An ordinary save writes neither `HEAD` nor `index`, so
+                        // without this the most common change of all reaches the client as a
+                        // file event with no git state to go with it.
+                        //
+                        // **Nothing about the events is passed.** The signal is the workspace
+                        // and no more, which is what stops this becoming a path by which git
+                        // could ever produce a workspace event (A-GITWATCH).
+                        if let Some(git) = nudge.as_ref() {
+                            git.nudge(&workspace);
+                        }
                         let params = FileEventParams {
                             workspace_id: workspace.clone(),
                             events: events.iter().map(to_wire).collect(),
@@ -134,6 +147,11 @@ impl WatchService {
                         }
                     }
                     Emission::InvalidateAll => {
+                        // A branch switch or a large pull arrives here rather than as a batch,
+                        // and is exactly when git status is most wrong.
+                        if let Some(git) = nudge.as_ref() {
+                            git.nudge(&workspace);
+                        }
                         let params = InvalidateAllParams {
                             workspace_id: workspace.clone(),
                         };
@@ -186,6 +204,25 @@ impl Drop for WatchService {
     }
 }
 
+/// The spelling every other method uses: rooted at `/`.
+///
+/// **The watcher's own paths are root-relative and unrooted** -- `strip_prefix` of the root
+/// produces `src/main.rs`, not `/src/main.rs` -- because internally they are joined back onto
+/// the root to stat a file and matched against the exclusion set. On the wire that spelling is
+/// wrong: §4.8's schema writes `/src/controllers/user.go`, `workspace/readDirectory` answers
+/// with a leading slash, and the client's own `RelPath` normalises to one.
+///
+/// The mismatch was invisible for two features because nothing in the client consumed these
+/// events: it appeared the moment F011 needed a created file's row to line up with a git path,
+/// and presented as a tree row whose path no other subsystem could match.
+fn rooted(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    }
+}
+
 /// Domain event to wire event. Metadata on created and modified only: a deleted path has
 /// nothing to describe, and a rename describes a move rather than a file now there (FR-013a).
 fn to_wire(e: &FileEvent) -> WireEvent {
@@ -198,9 +235,9 @@ fn to_wire(e: &FileEvent) -> WireEvent {
             EventKind::Deleted => FileEventKind::Deleted,
             EventKind::Renamed { .. } => FileEventKind::Renamed,
         },
-        relative_path: e.relative_path.clone(),
+        relative_path: rooted(&e.relative_path),
         to_path: match &e.kind {
-            EventKind::Renamed { to } => Some(to.clone()),
+            EventKind::Renamed { to } => Some(rooted(to)),
             _ => None,
         },
         kind: describes.then_some(if e.is_directory {

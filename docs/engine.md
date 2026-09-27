@@ -331,3 +331,93 @@ The client refuses a frame it cannot encode and bounds the same content independ
 VI: a client-side check protects against bugs in our own interface, and the engine's protects
 against a stale or hostile one. Neither substitutes for the other, and the engine's limit is
 deliberately not reachable through a conforming client — it guards the other kind.
+
+## Git status (F011)
+
+Two independent signals wake one computation, and neither of them is the obvious one.
+
+### Why not the workspace watcher
+
+`git add`, `git reset` and `git stash` alter the index and touch **no working-tree file**, so
+nothing in the workspace watcher ever fires for them. A client driven by ordinary file events
+would show staged and unstaged colouring that stayed stale until some unrelated file happened to
+change — a defect that presents as flakiness and is very hard to attribute. Hence A-GITWATCH's
+two watches on `HEAD` and `index`, inside the resolved git directory.
+
+### Why not only those two watches either
+
+They are necessary and **not sufficient**, which is the sentence the original decision record
+did not contain. Saving a tracked file writes neither of them, so the two watches alone left the
+primary scenario of the whole feature — *see which files I have changed* — reporting nothing.
+A-GITNUDGE adds the workspace's own file events as a second trigger, through a port that carries
+a workspace and no event detail: with no event type in the signature there is nothing a git
+event could be turned into, so A-GITWATCH's separation holds by construction rather than by
+care. The direction is one-way, workspace to git, and `git_watch.rs` asserts on the source that
+the git half names no workspace event type at all.
+
+### Why the watches are on the directory, not on the files
+
+git replaces `index` by writing `index.lock` and renaming it over the target. A watch on the
+file follows the old inode, which after the first rename is an unlinked file nothing will ever
+touch again: the watch fires exactly once and then goes quiet forever, on a repository that
+looks perfectly healthy. The directory is watched and events are filtered by name.
+
+### A workspace inside a repository
+
+`rev-parse` walks upward, so a workspace on `services/checkout` gets the enclosing repository's
+answers: paths relative to the **repository** root, and files from everywhere else in it.
+Reported unchanged, that marks paths which do not exist in this workspace and misses the ones
+that do — while the branch indicator reads correctly, which is what makes it dangerous. A
+partial success that lights up the most visible signal actively recruits trust.
+
+The first version of this feature refused the case for that reason. Opening a subdirectory of a
+monorepo is an ordinary way to work, though, so it is served instead: `rev-parse --show-prefix`
+gives `services/checkout/`, the status is scoped with `-- .`, and the prefix is stripped from
+every path on the way out. A path that does not carry the prefix is dropped rather than
+re-rooted — stripping whatever prefix a path happens to have would put another team's file in
+this tree.
+
+**Scoping is for cost, not correctness.** The prefix strip is what keeps other subtrees out;
+removing the pathspec changes no result, which a mutation confirmed. What it changes is how much
+of a monorepo git walks on every refresh, and the coalescer runs this often.
+
+Two consequences were found by testing rather than by reasoning. git collapses a wholly
+untracked directory to one entry, so a workspace *on* an untracked directory receives a single
+path that strips to the empty string and disappears — every file new, nothing marked. Untracked
+files are therefore expanded when there is a prefix. They are left collapsed at the repository
+root, where expanding is unbounded and `? node_modules/` as one entry is what the tree wants
+anyway.
+
+### What the coalescer bounds, and what it does not
+
+A trailing edge alone is not enough. A rebase writes the index repeatedly over *seconds*, so
+every 100 ms gap would start another full-repository status. Holding one run in flight and
+collapsing everything that arrives during it into a single follow-up bounds a burst of **any**
+length at two computations: the one already running, and one more reflecting everything that
+happened while it ran. Measured on a 2,000-file branch switch: one status update.
+
+What it does not bound is the cost of a status itself, which is git's. `--no-optional-locks` is
+passed for a reason that is not performance: an ordinary `git status` refreshes the index stat
+cache and **writes `.git/index`**, which is one of the two watched files — so every run woke the
+watch that scheduled the next one, a loop the coalescer bounds to a low rate and never ends.
+
+### Why the pager holds a snapshot
+
+A status too large for a frame is served in pages, and a cursor is a position in a result
+**already computed** rather than an offset git is asked to re-derive. Re-running per page would
+interleave two repository states, and the client would assemble one picture out of two without
+any way to know. Cursors carry a process-wide generation: per-workspace numbering was the first
+attempt and was wrong, because two workspaces each holding their first snapshot both had
+generation 1, so a cursor minted for one validated against the other.
+
+### Coordinates, never content
+
+`git/getFileDiff` returns line numbers and has no field for text. The guarantee is asserted on
+the **payload** rather than on the parser, because a parser that discards text and a result that
+carries it look identical from the parser's side. `--unified=0` removes context lines so the
+hunk headers are exact; a count of 1 is **elided** in those headers, so `@@ -2 +2 @@` carries two
+numbers where a reader expecting four finds two — and mis-reads every single-line change.
+
+An untracked file is diffed against `/dev/null` with `--no-index`, which reports a difference by
+exiting 1. Without that, `git diff` says nothing about a path it does not track and a new file
+opened in the editor showed no marks at all.

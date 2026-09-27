@@ -50,10 +50,14 @@ async function invoke(command: string, args: unknown): Promise<unknown> {
   );
 }
 
-/// Register the scratch directory as the workspace. Awaited, because the engine refuses every
-/// file request for a workspace it has not been told about.
-export async function openWorkspace(): Promise<void> {
-  await invoke('workspace_open', { name: 'apex', host: 'localhost', basePath: WORKSPACE });
+/// Register a directory as the workspace. Awaited, because the engine refuses every file
+/// request for a workspace it has not been told about.
+///
+/// `base` defaults to the scratch directory. It is a parameter because `.e2e-workspace` lives
+/// **inside this project's own checkout**, so it can never be a non-repository: testing that
+/// case needs somewhere outside the tree entirely (FR-003a).
+export async function openWorkspace(base: string = WORKSPACE): Promise<void> {
+  await invoke('workspace_open', { name: 'apex', host: 'localhost', basePath: base });
 }
 
 /// Open a file the way a developer does: by clicking it in the tree.

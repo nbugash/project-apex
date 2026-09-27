@@ -9,7 +9,7 @@
 use rusqlite::Connection;
 
 /// What shape this build reads and writes.
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 /// Pragmas that must be set on **every** connection, not only at creation.
 ///
@@ -113,6 +113,37 @@ END;
 /// Adding the two columns disturbs none of the three triggers on its own: `ADD COLUMN` fires
 /// no trigger, and each trigger names `rowid`, `relative_path` and `name` explicitly rather
 /// than using `*`, so the external-content rowids are untouched.
+/// Version 3: git state keyed by path, and somewhere to keep the branch (F011).
+///
+/// `git_status` is **dropped and recreated** rather than altered. F003 created it keyed on
+/// `file_id` with a foreign key into `files`, in anticipation of this feature — good foresight,
+/// and the wrong key: an untracked file in a folder nobody has expanded has no `files` row, and a
+/// deleted file's row is removed by the indexer. Keying on the tree would silently drop exactly
+/// the two states a developer most wants to see.
+///
+/// Dropping is safe because **nothing has ever written a row**: F003 created the table and no
+/// code before this feature inserts into it. That makes this a schema edit rather than a data
+/// migration, which is why no row-copying step appears here.
+pub const V3: &str = r#"
+DROP INDEX IF EXISTS idx_git_status_lookup;
+DROP TABLE IF EXISTS git_status;
+
+CREATE TABLE git_status (
+    workspace_id  TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    status_type   TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, relative_path),
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+
+CREATE TABLE git_branch (
+    workspace_id TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,
+    value        TEXT,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+"#;
+
 pub const V2: &str = r#"
 ALTER TABLE files         ADD COLUMN stale    INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE file_contents ADD COLUMN unproven INTEGER NOT NULL DEFAULT 0;

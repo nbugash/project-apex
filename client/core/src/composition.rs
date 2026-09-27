@@ -144,7 +144,24 @@ pub fn build(
     // rather than an unconfigured one.
     // Built alongside the transport, because a deployer without a connection has nothing to
     // deploy over — both are absent together when no host is configured.
+    // The projection, migrated and evicted before any provider exists. `ReadyCache` is the only
+    // thing that hands out a cache and the only way to obtain one runs maintenance first, so the
+    // ordering FR-018c and FR-026a require is checked by the compiler rather than by review.
+    let ready = prepare_cache(
+        data_dir.clone(),
+        Arc::new(|phase| crate::logging::info(&format!("cache maintenance: {phase:?}"))),
+    );
+    if ready.report.rebuilt {
+        crate::logging::warn("the workspace cache was rebuilt; cached content will be refetched");
+    }
+
     let mut deployer: Option<Arc<SshStreamDeployer>> = None;
+    // Shared between the notification path, which applies what the engine pushes, and
+    // `workspace_open`, which has to **ask** once -- because asking is what makes the engine
+    // start watching. Two constructions would be two pagers accumulating separately.
+    let mut apply_git: Option<
+        Arc<crate::application::use_cases::apply_git_status::ApplyGitStatus>,
+    > = None;
     let mut tasks: Option<Arc<dyn TaskProvider>> = None;
     let mut sender: Option<Arc<dyn crate::application::ports::request_sender::RequestSender>> =
         None;
@@ -169,6 +186,37 @@ pub fn build(
                 }
             };
             let transport = Arc::new(SshTransport::new(spawner, spec));
+
+            // The sender is built here rather than after `connect`, because git status has to
+            // be applied from the moment the first notification can arrive -- and the first one
+            // can arrive before this function returns. `TransportSender` needs the transport,
+            // not a live connection; a request made before there is one fails, which is the
+            // same answer it would give during an outage.
+            let to_engine: Arc<dyn crate::application::ports::request_sender::RequestSender> =
+                Arc::new(TransportSender::new(transport.clone()));
+
+            // `git/onStatusUpdate` is applied to the projection **and then** forwarded. The
+            // interface reads git state back out of the projection, so forwarding first would
+            // have it read the state the update was about to replace -- right often enough to
+            // look like a rare glitch rather than a race (see `git_notification.rs`).
+            let git = Arc::new(
+                crate::application::use_cases::apply_git_status::ApplyGitStatus::new(
+                    Arc::new(
+                        crate::adapters::outbound::remote_git::RemoteGitProvider::new(
+                            to_engine.clone(),
+                        ),
+                    ),
+                    ready.get(),
+                ),
+            );
+            apply_git = Some(git.clone());
+            let notifications: Arc<dyn NotificationSink> = Arc::new(
+                crate::adapters::inbound::git_notification::GitNotifications::new(
+                    git,
+                    notifications,
+                ),
+            );
+
             // Before connecting, so the reader thread starts with somewhere to put the first
             // frame. Set afterwards, a task started immediately would produce output the
             // transport dropped -- the original defect, reintroduced as a race.
@@ -184,9 +232,6 @@ pub fn build(
                     if let Err(e) = transport.connect() {
                         crate::logging::warn(&format!("the engine did not start: {e}"));
                     } else {
-                        let to_engine: Arc<
-                            dyn crate::application::ports::request_sender::RequestSender,
-                        > = Arc::new(TransportSender::new(transport.clone()));
                         tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
                         sender = Some(to_engine);
                     }
@@ -203,17 +248,6 @@ pub fn build(
         None => stub.clone(),
     };
     let connection = Arc::new(ObserveConnection::new(source.clone()));
-
-    // The projection, migrated and evicted before any provider exists. `ReadyCache` is the only
-    // thing that hands out a cache and the only way to obtain one runs maintenance first, so the
-    // ordering FR-018c and FR-026a require is checked by the compiler rather than by review.
-    let ready = prepare_cache(
-        data_dir.clone(),
-        Arc::new(|phase| crate::logging::info(&format!("cache maintenance: {phase:?}"))),
-    );
-    if ready.report.rebuilt {
-        crate::logging::warn("the workspace cache was rebuilt; cached content will be refetched");
-    }
 
     // The engine-backed provider, when there is an engine to back it.
     //
@@ -243,6 +277,7 @@ pub fn build(
     };
     let workspace = WorkspaceAccess {
         cache: ready.get(),
+        git: apply_git,
         register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
         provider: Arc::new(CachedWorkspace::new(
             inner,

@@ -111,3 +111,37 @@ export const railSelect = (destinationId: string): Promise<ToolWindowState> =>
 export const toolWindowResize = (width: number): Promise<void> =>
   invoke('tool_window_resize', { width });
 export const railDestinations = (): Promise<RailDestination[]> => invoke('rail_destinations');
+
+/// What a watch request achieved, including what it could not do.
+///
+/// A refusal is data rather than an error: the workspace stays browsable when the host cannot
+/// watch everything, and the loss has to be stated rather than silent (FR-005, FR-005a).
+export interface WatchOutcome {
+  watching: number;
+  refused: string[];
+}
+
+/// Declare the change to the watched set.
+///
+/// One call carrying both halves, because they are one intention. Sending an add without its
+/// matching remove is how a client drifts out of step with the engine a folder at a time.
+export const workspaceWatch = (add: string[], remove: string[]): Promise<WatchOutcome> =>
+  invoke('workspace_watch', { add, remove });
+
+/// Tell the core to make a restored workspace live again.
+///
+/// Returns false when the session names a workspace this client no longer holds, which is what
+/// a deleted workspace leaves behind rather than an error.
+export const workspaceResume = (workspaceId: string): Promise<boolean> =>
+  invoke('workspace_resume', { workspaceId });
+
+/// Line coordinates only. There is no field here for content and there must never be one
+/// (§12.3, FR-021).
+export interface FileDiffDto {
+  added: Array<[number, number]>;
+  modified: Array<[number, number]>;
+  deleted: number[];
+}
+
+export const gitFileDiff = (path: string): Promise<FileDiffDto> =>
+  invoke('git_file_diff', { path });

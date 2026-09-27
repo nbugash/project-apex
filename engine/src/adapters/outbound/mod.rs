@@ -1,5 +1,7 @@
 pub mod engine_socket;
 pub mod frame_writer;
+pub mod git_cli;
+pub mod git_watchers;
 #[cfg(target_os = "linux")]
 pub mod inotify_watcher;
 #[cfg(target_os = "linux")]

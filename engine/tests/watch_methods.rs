@@ -53,6 +53,7 @@ fn harness(capacity: Option<usize>) -> Harness {
             Arc::clone(&shared),
             Arc::new(FrameWriter::new(Box::new(std::io::sink()))),
             codec.clone(),
+            None,
         ),
         codec,
     }
@@ -65,6 +66,7 @@ fn call(h: &Harness, method: &str, params: serde_json::Value) -> serde_json::Val
         &h.roots,
         h.fs.as_ref() as &dyn FileSystem,
         Some(&h.watchers),
+        None,
         None,
         &h.codec,
         &body.to_string(),
@@ -226,6 +228,7 @@ fn a_build_that_cannot_watch_says_so_rather_than_appearing_to() {
         &SessionRegistry::new(),
         &roots,
         fs.as_ref() as &dyn FileSystem,
+        None,
         None,
         None,
         &codec,

@@ -749,13 +749,23 @@ request would leave it diverged. Principle VI puts the check on both sides of th
 
 | Method | Kind | Params | Result |
 |---|---|---|---|
-| `git/getStatus` | request | `workspaceId` | `{currentBranch, changes[]}` |
-| `git/onStatusUpdate` | notification | `workspaceId`, `currentBranch`, `changes[]` | — |
+| `git/getStatus` | request | `workspaceId`, `cursor?`, `limit?` | `{currentBranch, changes[], nextCursor?}` |
+| `git/onStatusUpdate` | notification | `workspaceId`, `currentBranch`, `changes[]`, `nextCursor?` | — |
 | `git/getFileDiff` | request | `workspaceId`, `relativePath` | `{added[], deleted[], modified[]}` |
 
 `changes[]` entries are `{path, status}` where status is `MODIFIED`, `UNTRACKED`, `STAGED`,
 `DELETED` or `CONFLICT`. Diffs return line coordinates only, never file contents — the client
 already holds the text and only needs gutter decorations.
+
+Status is **paged**, on the same terms as `workspace/readDirectory`: `limit` defaults to and is
+capped at 1000 entries, and `nextCursor` is present exactly when more remain. A repository in the
+middle of a rebase, or one just reformatted wholesale, reports far more changed paths than §4.1's
+frame cap can carry, and an unbounded list would be refused at the codec — leaving the tree
+showing nothing changed, which is the most misleading answer available.
+
+`git/onStatusUpdate` is a notification and cannot be answered, so it carries the branch and the
+**first** page. When it sets `nextCursor`, the remaining pages are pulled with `git/getStatus`.
+See A-GITPAGE for what this means for applying an update, which is not what it first appears.
 
 ---
 
@@ -1160,7 +1170,10 @@ The exclusion set is the repository's own `.gitignore` files plus a fixed built-
 set is computed per workspace and used by **both** the indexer and the watcher, so disagreement
 is impossible by construction: an indexer that indexes what the watcher ignores returns search
 results for files whose changes are never noticed. No per-workspace user configuration in v1.
-See Appendix A, A-IGNORE.
+See Appendix A, A-IGNORE, and A-GITWATCH for the two paths inside `.git/` that the git subsystem
+watches for status refresh and that reach neither the indexer nor the workspace watcher, and
+A-GITNUDGE for the workspace file events that wake the same refresh for changes those two paths
+do not record.
 
 The client sets no OS watches in remote mode. It receives `workspace/onFileEvent` and acts only
 on paths it is currently displaying.
@@ -1260,7 +1273,9 @@ The engine watches `.git/HEAD` and `.git/index`. On change it runs
 branch and a list of changed paths.
 
 The client applies the update in one transaction: clear the workspace's `git_status` rows,
-insert the new set, done.
+insert the new set, done. Status is paged (§4.8), so "the new set" means every page: the
+replacement commits when the page with no `nextCursor` arrives, and a pull that breaks partway
+discards what it had rather than committing a fragment. See A-GITPAGE.
 
 It does **not** touch `is_cached`. See §5.3 — the file the user just saved is `MODIFIED`, and
 invalidating on that signal destroys the cache for exactly the files in active use.
@@ -2363,6 +2378,11 @@ the dominant memory cost on a reference instance.
 (`.git/`, `node_modules/`, `target/`, `dist/`, `build/`, `.venv/`, `__pycache__/`). One
 resolved set is computed per workspace and used by both the indexer and the file watcher. No
 per-workspace user configuration in v1.
+
+**Amended by A-GITWATCH (2026-09-26).** Two paths inside `.git/` — `HEAD` and `index` — are
+watched by the git subsystem for status refresh. They are indexed by nothing and their events
+never reach the workspace watcher, so the agreement this record exists to guarantee holds; but
+"one set, no exceptions" is no longer the whole truth and the exception is recorded there.
 
 **Rationale.** The item's own note says this "affects indexer and watcher agreement", and
 agreement is the entire point: an indexer that indexes what the watcher ignores produces search
@@ -3542,3 +3562,139 @@ property of watching plus writing, not of editing.
 
 **Reversal condition.** A measurement showing the per-event `stat` is material, or a protocol
 change that lets the engine mark the events its own request caused.
+
+---
+
+## A-GITWATCH — Git status is refreshed from two watches inside `.git/`, which the exclusion set otherwise removes (2026-09-26)
+
+**Amends A-IGNORE.**
+
+**Decision.** The engine watches exactly two paths inside `.git/` — `HEAD` and `index` — for the
+purpose of refreshing git status, and nothing else. Their events are consumed by the git
+subsystem and are **never** emitted as `workspace/onFileEvent`. Everything else under `.git/`
+stays excluded, for the indexer and for the workspace watcher alike.
+
+**Rationale.** §12.2 requires the engine to notice when git status changes. The two facts it
+must notice live in those two files: `HEAD` changes on a branch switch, `index` changes on every
+`git add`, `git reset` and `git stash`. Neither is reachable any other way — an index-only
+change alters no working-tree file, so nothing in the workspace watcher ever fires for it.
+
+**What this costs A-IGNORE.** A-IGNORE says one resolved set is used by both the indexer and the
+watcher, "so disagreement is impossible by construction". That sentence is no longer literally
+true, and pretending otherwise would leave the next person to read it believing something false.
+The precise statement is now: one resolved set governs the indexer and the workspace watcher,
+and the git subsystem holds two watches outside it whose events never reach either. The
+invariant A-IGNORE actually protects — that the indexer never indexes what the watcher ignores —
+is untouched, because these two paths are indexed by neither.
+
+**Alternatives rejected.** Polling `git status` on a timer: leaves A-IGNORE untouched and pays
+for it in latency and in running git across a large repository when nothing has changed, which
+is the pointless work §12.1 moved to the engine to avoid, not to relocate. Refreshing from the
+existing workspace file events: free, and silently wrong for every index-only change — staged
+and unstaged colouring would stay stale until some unrelated file happened to change, a defect
+that presents as flakiness and is very hard to attribute.
+
+**Why this binds beyond F011.** Anyone extending the exclusion set, the watcher or the indexer
+(F013's search, and any later feature that adds a watch) needs to know that `.git/` is not
+uniformly unwatched, and that the two exceptions are deliberate and narrow. A second feature
+adding a third watch inside `.git/` should have to justify it against this record rather than
+discover the precedent by accident.
+
+**Scope (2026-09-27).** "The repository" is the one `rev-parse` finds by walking upward, which
+for a workspace on a subdirectory is the enclosing project. Its status is scoped to the subtree
+and every path re-rooted to the workspace; the branch is the repository's. F011's spec records
+the reasoning and FR-003a and FR-003b state the rules.
+
+**Amended by A-GITNUDGE (2026-09-27).** These two watches are necessary and **not sufficient**.
+An ordinary save to a tracked file writes neither of them, so the two watches alone leave the
+most common change of all unreported. The workspace's own file events are a second trigger for
+the same refresh; the separation this record protects is unchanged, because the direction added
+is workspace-to-git and nothing travels the other way.
+
+**Reversal condition.** A host where two extra inotify watches per workspace are material, or a
+git version that offers a cheaper change signal than the files themselves.
+
+---
+
+## A-GITNUDGE — Workspace file events are the second trigger for a git status refresh (2026-09-27)
+
+**Amends A-GITWATCH.**
+
+**Decision.** A git status refresh is woken by **either** of two independent signals: a write to
+`HEAD` or `index` in the resolved git directory (A-GITWATCH), or an ordinary workspace file event
+for that workspace. Both feed the same coalescer, so the cost of a refresh is unchanged and a
+change seen by both signals still costs one git run. The workspace-to-git direction carries **no
+event detail** — the signal says only that something changed, exactly as A-GITWATCH's does, and
+the git subsystem's answer to either is the same: ask git again.
+
+**Rationale.** A-GITWATCH's rationale establishes that `HEAD` and `index` are the only way to
+notice an index-only change. It does not establish, and was read as though it did, that they are
+the only changes worth noticing. They are not: saving a tracked file writes neither, so a
+developer editing code in another terminal — the primary scenario of F011's first user story —
+would see nothing marked at all. The defect was found by a test asserting the engine speaks
+first, which passed for `git add` and failed for a plain save.
+
+**What this costs.** Nothing measurable. The workspace watcher is already established, already
+coalescing, and already delivering these events to the client; this adds one call on a path that
+was already running. No new descriptor, no new thread, no new watch.
+
+**What it does not cover.** Workspace watches are scoped to the paths a client asked to watch,
+which is what it is displaying. A change in a folder the client has never opened is therefore not
+noticed by this trigger, and waits for the next `HEAD` or `index` write or an explicit
+`git/getStatus`. This is accepted: the marks that matter are on rows a developer can see, and a
+client that is not displaying a folder has nothing to mark.
+
+**Alternatives rejected.** A recursive working-tree watch owned by the git subsystem: complete
+coverage regardless of what is displayed, and it costs a descriptor per directory on every
+repository while duplicating the recursive watch F013's indexer will also want — two independent
+recursive watchers over one tree, to be kept in step forever. A timed refresh as a floor: bounded
+and simple, but A-GITWATCH rejected polling in terms that apply unchanged, and it spends git runs
+on repositories where nothing happened. Narrowing the specification so an ordinary save is not
+expected to mark: honest, and it gives up the user story the feature exists to serve.
+
+**Why this binds beyond F011.** Anyone changing what the workspace watcher watches, or the scope
+of `workspace/watch`, is also changing when git status refreshes — a coupling that is invisible
+from either side alone. F013's search watcher in particular must not assume it is the only
+consumer of these events.
+
+**Reversal condition.** A workspace watcher that stops being scoped to displayed paths, which
+would make this trigger complete and the coverage note above obsolete.
+
+---
+
+## A-GITPAGE — Paged status, and what that does to the "single transaction" (2026-09-26)
+
+**Decision.** Git status is paged like `workspace/readDirectory`: `limit` defaults to and is
+capped at 1000 entries, `nextCursor` is present exactly when more remain, and
+`git/onStatusUpdate` carries the first page because a notification cannot be answered. The
+client replaces a workspace's status **when the last page has arrived**, not when the first has.
+
+**Rationale.** §4.1 caps a frame at 1 MiB. A repository mid-rebase, or one just reformatted
+wholesale, reports far more changed paths than that. An unbounded list is refused at the codec,
+so the failure is not a truncated tree but *no status at all* — the tree shows nothing changed,
+which is the most misleading answer the feature could give. Paging was chosen over a cap with a
+"partial" flag because a partial status is a tree that is quietly wrong about specific files,
+and there is no way for the developer to tell which.
+
+**What it does to the transaction, which is the part worth recording.** §12.2 says the client
+applies an update in one transaction: clear the workspace's rows, insert the new set. Read
+naively against a paged source, that becomes "clear, insert page one" — and the tree then shows
+the first thousand changed files and swears the rest are clean. The correct reading is that the
+transaction spans the *whole* update: pages accumulate, and the replacement commits once the
+page with no `nextCursor` has arrived. Until then the previously applied status stays visible,
+because a stale complete picture is more useful than a fresh fragment.
+
+A page that never arrives — the connection drops mid-pull — must therefore discard the partial
+accumulation rather than commit it.
+
+**Alternatives rejected.** A cap with a "partial" marker: one round trip and bounded memory, and
+it makes the tree silently wrong for an arbitrary subset. Unbounded: no decision and no code, and
+it fails totally and silently at exactly the moment a developer most wants to see what changed.
+
+**Why this binds beyond F011.** Any later feature that carries a list whose length is a property
+of the user's data rather than of the protocol inherits the same three-way choice, and the same
+trap: the transaction boundary is the whole sequence, not the first message. F013's search
+results are the next instance.
+
+**Reversal condition.** A frame cap large enough that the biggest plausible status fits, or a
+transport that streams a single logical response across frames.

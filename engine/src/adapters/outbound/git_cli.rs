@@ -1,0 +1,484 @@
+//! Git, as a subprocess.
+//!
+//! Everything git-specific lives here: which arguments, which output format, and how to read it.
+//! The use case above sees `StatusSnapshot` and `GitDiffResult` and never a `Command`.
+//!
+//! **What git prints is untrusted input.** It is a program the engine did not write, reading a
+//! repository the engine does not control, and a path it reports goes on to key a row in the
+//! client's projection. So paths are contained here before they are emitted, exactly as a path
+//! arriving off the wire is (Principle VI).
+
+use crate::application::ports::git::{Git, GitFailure, StatusSnapshot};
+use crate::domain::path::ResolvedPath;
+use apex_protocol::wire::{BranchPosition, GitChange, GitDiffResult, GitStatusKind};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub struct GitCli {
+    program: String,
+}
+
+impl Default for GitCli {
+    fn default() -> Self {
+        Self::new("git")
+    }
+}
+
+impl GitCli {
+    pub fn new(program: &str) -> Self {
+        Self {
+            program: program.to_string(),
+        }
+    }
+
+    /// Every line as added, when the path is untracked; three empty lists when it is merely
+    /// unchanged.
+    ///
+    /// `--no-index` against `/dev/null` rather than counting lines here: a file with no
+    /// trailing newline, or one git considers binary, are both cases git already decides
+    /// correctly and a line count would get wrong in the same way twice.
+    fn whole_file_if_untracked(&self, root: &Path, rel: &str) -> Result<GitDiffResult, GitFailure> {
+        // Tracked paths are unchanged, which is the ordinary case and the cheap answer.
+        if self
+            .run(root, &["ls-files", "--error-unmatch", "--", rel])
+            .is_ok()
+        {
+            return Ok(GitDiffResult::default());
+        }
+        // `--no-index` reports a difference by **exiting 1**, which is success for our purpose
+        // and a failure to `run`. Tolerated here and nowhere else.
+        let out = Command::new(&self.program)
+            .args(Self::PINNED)
+            .args([
+                "diff",
+                "--unified=0",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-index",
+                "--",
+                "/dev/null",
+                rel,
+            ])
+            .current_dir(root)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => GitFailure::GitUnavailable,
+                _ => GitFailure::Failed(e.to_string()),
+            })?;
+        match out.status.code() {
+            // 0: identical to nothing, so the file is empty. 1: it differs, which is the case
+            // this exists for. Anything else -- including a path that is not there -- is an
+            // empty diff rather than a failure, because a file the developer cannot see is not
+            // a file with unknown git state.
+            Some(0) | Some(1) => Ok(parse_diff(&String::from_utf8_lossy(&out.stdout))),
+            _ => Ok(GitDiffResult::default()),
+        }
+    }
+
+    /// Where this workspace sits inside its repository, as a path prefix.
+    ///
+    /// Empty when the workspace root **is** the working tree's top level, which is the ordinary
+    /// case. Otherwise `services/checkout/`, straight from `rev-parse --show-prefix` rather
+    /// than computed by subtracting one path from another — git already knows, and path
+    /// arithmetic across symlinks and case-insensitive filesystems is a source of defects with
+    /// no upside here.
+    ///
+    /// **Why a subdirectory is supported rather than refused.** `rev-parse` walks upward, so a
+    /// workspace inside a checkout gets the enclosing repository's answers: paths relative to
+    /// the *repository* root, and files from elsewhere in it. Reported unchanged, that marks
+    /// paths which do not exist in this workspace and misses the ones that do. The first
+    /// version of this feature refused the case for exactly that reason. A workspace on a
+    /// subdirectory of a monorepo is an ordinary way to work, though, so the scoping and
+    /// re-rooting are done here instead: `-- .` limits the status to this subtree, and the
+    /// prefix is stripped from every path on the way out.
+    fn workspace_prefix(&self, root: &Path) -> Result<String, GitFailure> {
+        Ok(self
+            .run(root, &["rev-parse", "--show-prefix"])?
+            .trim()
+            .to_string())
+    }
+
+    /// Settings pinned on every invocation, and the **only** ones.
+    ///
+    /// This used to be `GIT_CONFIG_GLOBAL=/dev/null` plus the same for system config, on the
+    /// reasoning that a developer's own configuration must not change what the engine reads.
+    /// The reasoning was right and the instrument was far too blunt: it also discarded
+    /// `core.excludesFile`, so the tree marked files the developer's own `git status` ignores.
+    /// Found by running the application against this repository, where `.claude/` is excluded
+    /// globally — and findable no other way, because every fixture in the suite creates a
+    /// pristine repository with no user configuration at all.
+    ///
+    /// Measured rather than assumed, against git 2.43: `status.relativePaths` and
+    /// `core.quotePath` have **no effect** on `--porcelain=v2 -z` output, even from a
+    /// subdirectory with a non-ASCII filename, because `-z` disables quoting and porcelain
+    /// paths are always repository-relative. An alias cannot shadow a built-in command. So the
+    /// blanket pin was buying nothing on the format side and costing correctness on the
+    /// content side.
+    ///
+    /// What is pinned is what would break a **stated requirement**:
+    ///
+    /// - `status.showUntrackedFiles` — set to `no`, it hides every untracked path, and
+    ///   reporting untracked files is FR-009b and SC-014. This overrides a user preference
+    ///   deliberately, because the feature's job is to report them.
+    ///
+    /// `diff.external` is the other hazard and cannot be neutralised here: `-c diff.external=`
+    /// makes git try to run the empty string. `--no-ext-diff` is the documented way and is
+    /// passed at the diff call sites instead.
+    ///
+    /// Everything else — `core.excludesFile` above all — is the developer's to decide. The
+    /// client should agree with the terminal beside it.
+    const PINNED: [&'static str; 2] = ["-c", "status.showUntrackedFiles=normal"];
+
+    /// Run git and classify what happened.
+    fn run(&self, dir: &Path, args: &[&str]) -> Result<String, GitFailure> {
+        let out = Command::new(&self.program)
+            .args(Self::PINNED)
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => GitFailure::GitUnavailable,
+                _ => GitFailure::Failed(e.to_string()),
+            })?;
+
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        // Distinguished here and nowhere else: both reach the client as an empty status, but the
+        // engine's own diagnostics should not report an ordinary non-repository as a fault.
+        if err.contains("not a git repository") || err.contains("Not a git repository") {
+            Err(GitFailure::NotARepository)
+        } else {
+            Err(GitFailure::Failed(err.trim().to_string()))
+        }
+    }
+}
+
+impl Git for GitCli {
+    fn git_dir(&self, root: &ResolvedPath) -> Result<PathBuf, GitFailure> {
+        // `rev-parse --git-dir`, never `<root>/.git`. In a linked worktree or a submodule that
+        // path is a *file* holding a `gitdir:` pointer, and the directory with `HEAD` and `index`
+        // in it is elsewhere entirely — verified against git 2.43 in research.md.
+        //
+        // Not gated on the workspace being the repository's top level: a subdirectory
+        // workspace is watched through the same `HEAD` and `index`, because they are the
+        // repository's and a subtree does not have its own.
+        let out = self.run(root.as_path(), &["rev-parse", "--git-dir"])?;
+        let raw = out.trim();
+        if raw.is_empty() {
+            return Err(GitFailure::Failed("git-dir was empty".into()));
+        }
+        let p = PathBuf::from(raw);
+        Ok(if p.is_absolute() {
+            p
+        } else {
+            root.as_path().join(p)
+        })
+    }
+
+    fn status(&self, root: &ResolvedPath) -> Result<StatusSnapshot, GitFailure> {
+        let prefix = self.workspace_prefix(root.as_path())?;
+        // **A wholly untracked subdirectory collapses to itself.** git reports `? sub/` rather
+        // than its contents, and for a workspace *on* `sub/` that strips to the empty string
+        // and vanishes -- so a developer who opened a new, unadded directory inside a
+        // repository would see no untracked markers at all. Asking for every file expands it.
+        //
+        // Only where there is a prefix. At the repository root collapsing is what keeps
+        // `? node_modules/` one entry instead of thousands, and the cost of expanding is
+        // unbounded there; under a prefix it is bounded by the workspace itself.
+        let untracked = if prefix.is_empty() {
+            "--untracked-files=normal"
+        } else {
+            "--untracked-files=all"
+        };
+        let raw = self.run(
+            root.as_path(),
+            // `--no-optional-locks` first, and it is not a micro-optimisation: an ordinary
+            // `git status` refreshes the index stat cache and **writes `.git/index`**, which
+            // is one of the two files A-GITWATCH watches. Without this, every status run wakes
+            // the watch that schedules the next one -- a loop the coalescer bounds to a low
+            // rate but never ends, on every open repository, forever. It also means a status
+            // computation is no longer distinguishable from a developer staging a file.
+            &[
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                untracked,
+                // **Scoping is for cost, not for correctness.** The prefix strip below is what
+                // keeps another team's files out; removing this pathspec changes no result,
+                // which a mutation confirmed. What it changes is how much of a monorepo git
+                // walks on every refresh, and the coalescer runs this often.
+                "--",
+                ".",
+            ],
+        )?;
+        parse_status_in(&raw, &prefix)
+    }
+
+    fn file_diff(&self, root: &ResolvedPath, relative: &str) -> Result<GitDiffResult, GitFailure> {
+        // No prefix arithmetic here: every git invocation below runs with the workspace root as
+        // its working directory, and a pathspec is resolved relative to that. The coordinates
+        // that come back are line numbers, which no amount of nesting changes.
+        let rel = relative.trim_start_matches('/');
+        // `--unified=0` removes context lines, so the hunk headers are exact and the changed
+        // lines that follow them are discarded here rather than transmitted (§12.3).
+        let raw = self.run(
+            root.as_path(),
+            // `--no-ext-diff` because `diff.external` replaces the diff driver wholesale:
+            // with one configured, this returns no hunk headers at all and every file looks
+            // unchanged. Measured, not assumed.
+            &[
+                "diff",
+                "--unified=0",
+                "--no-color",
+                "--no-ext-diff",
+                "--",
+                rel,
+            ],
+        )?;
+        if raw.trim().is_empty() {
+            // Silence means one of two things and they are not the same answer. **Unchanged**
+            // is three empty lists; **untracked** is every line added, because nothing has been
+            // recorded for the file to differ from (contracts/git-status.md guarantee 5).
+            //
+            // `git diff` says nothing about a path it does not track, so the two are
+            // indistinguishable here without asking. The previous version returned empty for
+            // both and left a comment saying the caller would resolve it from the status --
+            // no caller did, and a new file opened in the editor showed no gutter marks at all.
+            return self.whole_file_if_untracked(root.as_path(), rel);
+        }
+        Ok(parse_diff(&raw))
+    }
+}
+
+/// Turn a workspace-relative path from git into the rooted form the client keys on.
+///
+/// Returns `None` for anything that escapes, which is dropped rather than forwarded: git should
+/// never print such a path, and if it does, the entry is not one this workspace owns.
+/// A path git reported, as a workspace-relative path -- or nothing.
+///
+/// **A check, not a normalisation.** The previous version split on `/` and reassembled, which
+/// rejected `..` and quietly reinterpreted an absolute path: `/etc/passwd` and `etc/passwd`
+/// both came out as `/etc/passwd`, the first silently re-read as though it were relative to the
+/// workspace. git reports repository-relative paths, so an absolute one means something is
+/// wrong upstream, and reinterpreting it is exactly the repair Principle VI forbids --
+/// contracts/git-status.md guarantee 7 says the entry is *dropped*.
+///
+/// `prefix` is where the workspace sits inside the repository, so "relative to the repository"
+/// and "inside the workspace" are two different questions and this answers both: strip the
+/// prefix, or drop the entry when it does not have one.
+fn contained(raw: &str, prefix: &str) -> Option<String> {
+    if raw.is_empty() || raw.contains('\0') {
+        return None;
+    }
+    // Absolute on the host. Dropped rather than re-read as workspace-relative.
+    if raw.starts_with('/') {
+        return None;
+    }
+    // Outside this workspace, whatever else it may be inside.
+    let raw = if prefix.is_empty() {
+        raw
+    } else {
+        raw.strip_prefix(prefix)?
+    };
+    let mut out = String::from("/");
+    for part in raw.split('/') {
+        match part {
+            "" | "." => continue,
+            ".." => return None,
+            p => {
+                if out.len() > 1 {
+                    out.push('/');
+                }
+                out.push_str(p);
+            }
+        }
+    }
+    (out.len() > 1).then_some(out)
+}
+
+/// One state from the two characters git reports.
+///
+/// The worktree character wins unless it is `.`, in which case the index character gives
+/// `STAGED`. A staged file with further edits still holds work recorded nowhere, and reporting
+/// it as staged would say the opposite (spec.md, *Clarifications*).
+fn collapse(xy: &str) -> Option<GitStatusKind> {
+    let mut chars = xy.chars();
+    let index = chars.next()?;
+    let worktree = chars.next()?;
+    Some(match (index, worktree) {
+        (_, 'M') | (_, 'T') => GitStatusKind::Modified,
+        (_, 'D') => GitStatusKind::Deleted,
+        (_, 'A') => GitStatusKind::Untracked,
+        ('M', '.') | ('A', '.') | ('R', '.') | ('C', '.') | ('T', '.') => GitStatusKind::Staged,
+        ('D', '.') => GitStatusKind::Deleted,
+        _ => return None,
+    })
+}
+
+/// Parse the whole of a `--porcelain=v2 -z --branch` stream.
+///
+/// **By record type, not by splitting into equal pieces.** Each type declares how many
+/// NUL-terminated fields it consumes, and a `2` record consumes one extra for the path it came
+/// from. Treating every field as a record start produces a phantom entry for that old path and
+/// then misreads everything after it.
+///
+/// A record this build cannot read rejects the whole snapshot. A partial status is
+/// indistinguishable from a repository where the missing files are clean, so the alternative to
+/// an error is telling the developer their changes do not exist.
+/// Parse a status whose paths are already workspace-relative.
+///
+/// Kept so that the parser's own tests, which feed it captured output from a workspace at the
+/// repository root, say what they mean rather than passing an empty prefix on every line.
+pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
+    parse_status_in(raw, "")
+}
+
+/// Parse a status reported relative to the **repository** root, for a workspace sitting at
+/// `prefix` inside it.
+///
+/// `prefix` is empty for the ordinary case and `services/checkout/` for a subdirectory
+/// workspace. Every path is re-rooted on the way out, and one that does not begin with the
+/// prefix is **dropped**: with `-- .` scoping the status that should not arise, and if it does
+/// it names a file outside this workspace, which contracts/git-status.md guarantee 7 says is
+/// dropped rather than forwarded.
+pub fn parse_status_in(raw: &str, prefix: &str) -> Result<StatusSnapshot, GitFailure> {
+    let mut fields = raw.split('\0').filter(|f| !f.is_empty()).peekable();
+    let mut branch = BranchPosition::None;
+    let mut oid: Option<String> = None;
+    let mut changes: Vec<GitChange> = Vec::new();
+
+    while let Some(field) = fields.next() {
+        let (kind, rest) = field.split_at(field.find(' ').unwrap_or(field.len()));
+        let rest = rest.trim_start();
+        match kind {
+            "#" => {
+                // `# branch.oid <sha>` and `# branch.head <name>`.
+                let mut it = rest.splitn(2, ' ');
+                match (it.next(), it.next()) {
+                    (Some("branch.oid"), Some(v)) => oid = Some(v.trim().to_string()),
+                    (Some("branch.head"), Some(v)) => {
+                        let v = v.trim();
+                        // The literal git writes where a name goes when there is no branch.
+                        branch = if v == "(detached)" {
+                            BranchPosition::Detached(String::new())
+                        } else {
+                            BranchPosition::Branch(v.to_string())
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            "1" | "2" => {
+                // `<XY> <sub> <mH> <mI> <mW> <hH> <hI> [<score>] <path>`
+                let parts: Vec<&str> = rest.splitn(if kind == "2" { 9 } else { 8 }, ' ').collect();
+                let expected = if kind == "2" { 9 } else { 8 };
+                if parts.len() != expected {
+                    return Err(GitFailure::Failed(format!(
+                        "unreadable `{kind}` record: {field}"
+                    )));
+                }
+                let xy = parts[0];
+                let path = parts[expected - 1];
+                if kind == "2" {
+                    // The extra field: where this file came from. Consumed so it cannot be read
+                    // as the next record, and otherwise unused — a rename is reported under the
+                    // path the file has now.
+                    if fields.next().is_none() {
+                        return Err(GitFailure::Failed(
+                            "a rename record without its original path".into(),
+                        ));
+                    }
+                }
+                if let (Some(status), Some(p)) = (collapse(xy), contained(path, prefix)) {
+                    changes.push(GitChange { path: p, status });
+                }
+            }
+            "u" => {
+                // `<xy> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`
+                let parts: Vec<&str> = rest.splitn(10, ' ').collect();
+                if parts.len() != 10 {
+                    return Err(GitFailure::Failed(format!(
+                        "unreadable `u` record: {field}"
+                    )));
+                }
+                if let Some(p) = contained(parts[9], prefix) {
+                    changes.push(GitChange {
+                        path: p,
+                        status: GitStatusKind::Conflict,
+                    });
+                }
+            }
+            "?" => {
+                if let Some(p) = contained(rest, prefix) {
+                    changes.push(GitChange {
+                        path: p,
+                        status: GitStatusKind::Untracked,
+                    });
+                }
+            }
+            // Ignored files are not a state §4.8 carries, and asking for them costs work.
+            "!" => {}
+            other => {
+                return Err(GitFailure::Failed(format!(
+                    "unknown status record type `{other}`"
+                )))
+            }
+        }
+    }
+
+    if let (BranchPosition::Detached(_), Some(o)) = (&branch, &oid) {
+        // The commit stands in for the name a detached head does not have. Carried **whole**:
+        // shortening is presentation, and a wire that shortened would leave no way to identify
+        // the commit from what arrived -- the interface shows seven characters and puts the
+        // full id where it can be read (FR-018, `branch.ts`). This shortened here first, which
+        // made the status bar's tooltip repeat its own label.
+        branch = BranchPosition::Detached(o.trim().to_string());
+    }
+
+    Ok(StatusSnapshot { branch, changes })
+}
+
+/// Read `@@` hunk headers into coordinates, discarding everything else.
+///
+/// The counts are **elided when they are 1**, so `@@ -2 +2 @@` and `@@ -4,0 +5 @@` are both
+/// well-formed and a parser assuming two numbers per side mishandles the first (research.md).
+///
+/// Content lines are skipped rather than collected: this function has no return path through
+/// which text could reach a caller, which is how FR-021 is kept by construction.
+pub fn parse_diff(raw: &str) -> GitDiffResult {
+    let mut out = GitDiffResult::default();
+    for line in raw.lines().filter(|l| l.starts_with("@@")) {
+        let Some(body) = line.strip_prefix("@@ ").and_then(|r| r.split(" @@").next()) else {
+            continue;
+        };
+        let mut sides = body.split_whitespace();
+        let (Some(old), Some(new)) = (sides.next(), sides.next()) else {
+            continue;
+        };
+        let (_, old_count) = parse_side(old);
+        let (new_start, new_count) = parse_side(new);
+
+        match (old_count, new_count) {
+            (0, n) if n > 0 => out.added.push([new_start, new_start + n - 1]),
+            (o, 0) if o > 0 => out.deleted.push(new_start),
+            (_, n) if n > 0 => out.modified.push([new_start, new_start + n - 1]),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// `-4,0` or `+5`. A missing count means one line, which is why it may be absent at all.
+fn parse_side(s: &str) -> (u32, u32) {
+    let s = s.trim_start_matches(['-', '+']);
+    let mut it = s.splitn(2, ',');
+    let start = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let count = it.next().map_or(1, |v| v.parse().unwrap_or(1));
+    (start, count)
+}

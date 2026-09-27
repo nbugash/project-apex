@@ -6,15 +6,24 @@
 SHELL := /bin/bash
 SHOT ?= reports/app.png
 
+# Which directory `make local` opens as the workspace. Anything git knows about: the default
+# is this repository, so a first run has real branches, real changes and a real history to look
+# at rather than an empty fixture.
+WS ?= $(CURDIR)
+# Where a local run keeps its session and its cache. Separate from a real profile so that
+# experimenting -- opening an odd workspace, corrupting state on purpose -- costs nothing.
+LOCAL_PROFILE ?= .local-profile
+
 .DEFAULT_GOAL := help
 
-.PHONY: help setup dev run shot test gate clean next verify pipeline no-network
+.PHONY: help setup dev run local local-shot local-reset shot test gate clean next verify pipeline no-network
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[1m%-10s\033[0m %s\n", $$1, $$2}'
 	@echo
+	@echo "  Run it with a workspace open: make local   (WS=/path/to/a/repo)"
 	@echo "  On a machine with a display:  make dev"
-	@echo "  On this headless box:         make shot   (writes $(SHOT))"
+	@echo "  On this headless box:         make local-shot   (writes $(SHOT))"
 	@echo "  Where the backlog stands:     make next   (add F=F005 for one feature)"
 
 setup: ## Install dependencies (run once after cloning)
@@ -29,6 +38,48 @@ run: ## Build and run the app once — needs a display
 	npm run build
 	cargo build --workspace
 	./target/debug/apex-shell
+
+local: ## Run a local copy with an engine and a workspace already open (WS=/path/to/repo)
+	@# Three things a bare `make dev` does not do, each of which leaves the app looking
+	@# broken rather than unconfigured.
+	@#
+	@# 1. APEX_LOCAL_ENGINE. Without it `engine_target()` finds no engine, every workspace
+	@#    call answers Offline, and the tree, the editor and git are all empty -- which is
+	@#    indistinguishable from a real outage, because it *is* the outage path.
+	@# 2. APEX_OPEN_WORKSPACE. Nothing in the interface calls `workspace_open`: choosing a
+	@#    directory is a screen a later feature owns, so without this the app shows
+	@#    "No workspace open" and nothing else, forever.
+	@# 3. Its own profile, so an experiment never touches a real one.
+	@#
+	@# All three are debug-only. A released build ignores the last two.
+	@test -d "$(WS)" || { echo "WS=$(WS) is not a directory"; exit 1; }
+	@test -d "$(WS)/.git" || echo "note: $(WS) is not a git repository -- the tree works, git shows nothing (FR-027)"
+	npm run ds:sync
+	npm run build
+	cargo build --workspace
+	@mkdir -p "$(LOCAL_PROFILE)"
+	@echo "engine:    $(CURDIR)/target/debug/ide-engine"
+	@echo "workspace: $(WS)"
+	@echo "profile:   $(CURDIR)/$(LOCAL_PROFILE)   (log: $(LOCAL_PROFILE)/shell.log)"
+	APEX_LOCAL_ENGINE=$(CURDIR)/target/debug/ide-engine \
+	APEX_OPEN_WORKSPACE=$(WS) \
+	APEX_DATA_DIR=$(CURDIR)/$(LOCAL_PROFILE) \
+	$(XVFB) ./target/debug/apex-shell
+
+local-shot: ## Photograph a local run with a workspace open — works headless (WS=/path/to/repo)
+	@# The answer for this box, which has no display. `make local` runs the app where nobody
+	@# can see it; this runs the same thing and writes a PNG. The capture harness overrides
+	@# APEX_DATA_DIR with its own profile, so this leaves $(LOCAL_PROFILE) alone.
+	@test -d "$(WS)" || { echo "WS=$(WS) is not a directory"; exit 1; }
+	npm run ds:sync
+	npm run build
+	cargo build --workspace
+	APEX_LOCAL_ENGINE=$(CURDIR)/target/debug/ide-engine \
+	APEX_OPEN_WORKSPACE=$(WS) \
+	$(XVFB) node scripts/screenshot.mjs $(SHOT)
+
+local-reset: ## Throw away the local run's session and cache
+	rm -rf "$(LOCAL_PROFILE)"
 
 shot: ## Photograph the running app to $(SHOT) — works headless
 	npm run ds:sync

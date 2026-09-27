@@ -155,6 +155,7 @@ export class WorkspaceTree {
   async #load(path: string, depth: number): Promise<void> {
     if (this.#pending.has(path)) return;
     this.#pending.add(path);
+    recordListing(path);
     try {
       const items = await invoke<Entry[]>('workspace_read_directory', {
         workspaceId: this.workspaceId,
@@ -179,6 +180,19 @@ export class WorkspaceTree {
       this.#pending.delete(path);
     }
   }
+}
+
+/// Every listing this tree has asked for, for the suite to count.
+///
+/// Recorded here rather than inferred from timing, following `sink.ts`: SC-002 and F011's
+/// "marks arrive with no request" are claims about a **number**, and a spec that asserted
+/// `toBeGreaterThanOrEqual(0)` instead would pass for an implementation that re-listed the
+/// whole tree on every git update. There are several such assertions already in this suite and
+/// they are why this counter exists.
+function recordListing(path: string): void {
+  const w = window as unknown as { __apexListings?: string[] };
+  w.__apexListings = w.__apexListings ?? [];
+  w.__apexListings.push(path);
 }
 
 /** One change, as the tree sees it. Carries no content — an event never does (FR-013). */

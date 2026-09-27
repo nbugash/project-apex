@@ -86,6 +86,7 @@ impl Harness {
             self.fs.as_ref(),
             None,
             Some(&self.service),
+            None,
             &self.codec,
             &body,
         ) else {
@@ -184,6 +185,7 @@ fn a_listing_does_not_carry_the_environment_either() {
         h.fs.as_ref(),
         None,
         Some(&h.service),
+        None,
         &h.codec,
         &body,
     ) else {

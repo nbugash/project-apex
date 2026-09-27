@@ -43,9 +43,28 @@ pub fn shell_ready(shell: State<'_, Shell>) -> Result<(), ShellError> {
     })
 }
 
+/// The restored session, and the workspace identity that comes with it.
+///
+/// **The restore also tells the core which workspace is current.** `workspace_open` sets that,
+/// and a relaunch does not call it -- the session restores the workspace instead. Without this
+/// the core came back up not knowing which workspace it had, so every command that resolves the
+/// workspace itself (Principle VI) answered `UnknownWorkspace` until the developer opened one
+/// by hand. It showed as git marks that survived a restart in the database and not on screen.
+///
+/// The engine outlives the client (A-ENGINELIFE), so its own registration is still there; what
+/// was missing was only this side's memory of which one it was.
 #[tauri::command]
-pub fn session_get(shell: State<'_, Shell>) -> SessionSnapshot {
-    shell.persist.snapshot()
+pub fn session_get(shell: State<'_, Shell>, tasks: State<'_, Tasks>) -> SessionSnapshot {
+    let snapshot = shell.persist.snapshot();
+    if let Some(ws) = snapshot.workspace.as_ref() {
+        let mut current = tasks.current.lock().expect("current workspace");
+        // Only when nothing has been opened since. A restore must never displace a workspace
+        // the developer opened in this session.
+        if current.is_none() {
+            *current = Some(ws.id.clone());
+        }
+    }
+    snapshot
 }
 
 #[tauri::command]
@@ -486,6 +505,9 @@ impl From<ProviderError> for WorkspaceFailure {
 /// field that is always `None` before then would put an unwrap in every command.
 pub struct WorkspaceAccess {
     pub provider: Arc<dyn WorkspaceProvider>,
+    /// How git status is asked for and applied. `None` when no engine is configured, which is
+    /// the same condition under which there is nothing to ask.
+    pub git: Option<Arc<crate::application::use_cases::apply_git_status::ApplyGitStatus>>,
     /// Held so the debug-only seeding command can write through the same port the application
     /// reads through, rather than injecting a fixture into the view.
     pub cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
@@ -585,6 +607,16 @@ pub async fn workspace_open(
         )
         .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?;
     let _ = app.emit("workspace:changed", shell.persist.snapshot().workspace);
+
+    // **Ask once, which is also what subscribes.** The engine starts watching a repository when
+    // a client first asks about it, so without this the projection would stay empty and no
+    // update would ever be pushed -- a client correct in every part and showing nothing. The
+    // answer is applied here rather than awaited by the caller: a workspace that is not a
+    // repository answers empty, and neither case is a reason to fail the open (FR-027).
+    if let Some(git) = access.git.as_ref() {
+        let outcome = git.refresh(&ws.id).await;
+        crate::logging::info(&format!("git status on open: {outcome:?}"));
+    }
 
     Ok(WorkspaceDto {
         id: ws.id.0,
@@ -702,4 +734,243 @@ mod workspace_tests {
             "a log must read as a schedule rather than a bug: {json}"
         );
     }
+}
+
+// ---- Git (F011) ----
+
+/// One changed path, as the tree reads it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChangeDto {
+    pub path: String,
+    /// One of `modified`, `untracked`, `staged`, `deleted`, `conflict`. Lowercase here and
+    /// UPPERCASE on the wire, because these are two different boundaries with two different
+    /// conventions and pretending otherwise would put a wire spelling in a CSS class name.
+    pub status: String,
+}
+
+/// Where the repository is, as three cases rather than an optional name.
+///
+/// A detached head is reported by git as the literal `(detached)` where a name goes, so an
+/// optional string would put that text on the status bar as though it were a branch (FR-019).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum GitBranchDto {
+    Branch { name: String },
+    Detached { commit: String },
+    None,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusDto {
+    pub branch: GitBranchDto,
+    pub changes: Vec<GitChangeDto>,
+}
+
+/// The git state this client has for the current workspace.
+///
+/// **Reads the projection; never the engine.** An outage therefore costs nothing and times out
+/// never, and the last state the client knew stays on screen rather than clearing (FR-029).
+///
+/// The workspace is resolved in the core, not accepted from the webview. A workspace identity
+/// arriving from the view is an identity the view could choose, which is the shape F010 and
+/// F006 both refused for the same reason (Principle VI).
+#[tauri::command]
+pub async fn git_status(
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<GitStatusDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let git = access
+        .cache
+        .git_status(&ws)
+        .map_err(|_| WorkspaceFailure::UnknownWorkspace)?;
+    Ok(GitStatusDto {
+        branch: match git.branch {
+            apex_protocol::wire::BranchPosition::Branch(name) => GitBranchDto::Branch { name },
+            apex_protocol::wire::BranchPosition::Detached(commit) => {
+                GitBranchDto::Detached { commit }
+            }
+            apex_protocol::wire::BranchPosition::None => GitBranchDto::None,
+        },
+        changes: git
+            .changes
+            .into_iter()
+            .map(|c| GitChangeDto {
+                path: c.path,
+                status: status_slug(&c.status).to_string(),
+            })
+            .collect(),
+    })
+}
+
+fn status_slug(status: &apex_protocol::wire::GitStatusKind) -> &'static str {
+    use apex_protocol::wire::GitStatusKind::*;
+    match status {
+        Modified => "modified",
+        Untracked => "untracked",
+        Staged => "staged",
+        Deleted => "deleted",
+        Conflict => "conflict",
+    }
+}
+
+// ---- Watching (F004's wiring, which F011 depends on) ----
+
+/// What a watch request achieved, as the interface sees it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchOutcomeDto {
+    /// The size of the requested set after the call, **not** the number of host descriptors.
+    pub watching: u32,
+    /// Paths the host could not watch. Data rather than an error: FR-005a keeps the workspace
+    /// browsable when watching fails, and FR-005 requires the loss be stated rather than silent.
+    pub refused: Vec<String>,
+}
+
+/// Ask the engine to watch these paths, and to stop watching those.
+///
+/// **One command taking both halves**, because they are one intention: the interface declares
+/// the set it wants watched, and the difference is what travels. Two commands would let a
+/// client send an add without its matching remove and drift out of step with the engine a
+/// folder at a time.
+///
+/// Folder paths for expanded folders and **file** paths for open editors, exactly as the port
+/// documents: the engine derives the directories. A caller that resolved that itself could not
+/// tell unwatching on a collapse from unwatching on a tab close, so collapsing a folder would
+/// silently stop reporting a file still open inside it (FR-003c, A-WATCHSCOPE).
+#[tauri::command]
+pub async fn workspace_watch(
+    add: Vec<String>,
+    remove: Vec<String>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<WatchOutcomeDto, WorkspaceFailure> {
+    // Resolved in the core, never accepted from the webview (Principle VI).
+    let ws = current_workspace(&tasks)?;
+
+    let mut watching = 0u32;
+    let mut refused: Vec<String> = Vec::new();
+
+    if !remove.is_empty() {
+        let paths = parse_paths(&remove)?;
+        // Unwatched first. Doing it the other way round means the peak set is the union of
+        // before and after, which on a large collapse-and-expand is twice what was ever wanted.
+        let outcome = access.provider.unwatch(&ws, &paths).await?;
+        watching = outcome.watching;
+    }
+    if !add.is_empty() {
+        let paths = parse_paths(&add)?;
+        let outcome = access.provider.watch(&ws, &paths).await?;
+        watching = outcome.watching;
+        refused = outcome
+            .refused
+            .into_iter()
+            .map(|r| r.path.as_str().to_string())
+            .collect();
+    }
+    Ok(WatchOutcomeDto { watching, refused })
+}
+
+/// Untrusted input, refused rather than repaired into something that parses.
+fn parse_paths(raw: &[String]) -> Result<Vec<RelPath>, WorkspaceFailure> {
+    raw.iter().map(|p| editor_path(p)).collect()
+}
+
+/// Make a restored workspace live again.
+///
+/// **A relaunch commonly meets an engine that has never heard of this workspace.** The engine
+/// outlives its client, but only while it has something to preserve: with no tasks running it
+/// exits when the last client goes (A-ENGINELIFE rule 3). So the ordinary case is a fresh
+/// engine, and everything `workspace_open` told it has to be said again -- registration first,
+/// because a watch and a status both name a workspace the engine must already know.
+///
+/// Without this a restored session looked correct and was inert: the tree showed its cached
+/// listing, git showed its stored marks, and nothing would ever update either of them again.
+/// That is the most misleading state this application can be in, because it is
+/// indistinguishable from a host where nothing has changed.
+///
+/// Idempotent, and safe against an engine that *does* still know the workspace: registration is
+/// keyed on the identity, and asking for a status the engine already has costs one computation.
+#[tauri::command]
+pub async fn workspace_resume(
+    workspace_id: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<bool, WorkspaceFailure> {
+    let ws = WorkspaceId(workspace_id);
+    // The root path is not in the session -- it records an identity and a display name -- so it
+    // comes from this client's own projection, which is where the workspace was recorded when
+    // it was opened.
+    let Some(known) = access
+        .cache
+        .workspace(&ws)
+        .map_err(|e| WorkspaceFailure::Transport(format!("{e:?}")))?
+    else {
+        // Nothing to resume. Not an error: a session naming a workspace this client no longer
+        // holds is what a deleted workspace leaves behind.
+        return Ok(false);
+    };
+    let base = match &known.location {
+        crate::domain::workspace::Location::Remote { base, .. } => base.clone(),
+        crate::domain::workspace::Location::Local { base } => base.clone(),
+    };
+
+    if let Some(sender) = tasks.sender.as_ref() {
+        crate::adapters::inbound::task_commands::register_with_engine(sender, &ws.0, &base).await;
+        *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
+    }
+    // Asking is also what makes the engine start watching this repository, so this is not
+    // merely a refresh: without it nothing would be pushed for the rest of the session.
+    if let Some(git) = access.git.as_ref() {
+        let outcome = git.refresh(&ws).await;
+        crate::logging::info(&format!("git status on resume: {outcome:?}"));
+    }
+    Ok(true)
+}
+
+/// Line coordinates only, for one file.
+///
+/// **There is no field here for content and there must never be one** (§12.3, FR-021). The
+/// guarantee is asserted on the payload in `git_diff.rs`, because a caller that discards text
+/// and a result that carries it look identical from the caller's side.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffDto {
+    pub added: Vec<[u32; 2]>,
+    pub modified: Vec<[u32; 2]>,
+    /// Positions where lines were removed. A position, not a range: the removed lines are not
+    /// in this file, so there is nothing to draw a range over.
+    pub deleted: Vec<u32>,
+}
+
+/// Which lines of one file differ.
+///
+/// Goes to the engine rather than to the projection, unlike `git_status`: a diff is per file
+/// and per open editor, so caching every one would hold the whole repository's diffs for the
+/// sake of the one file on screen. An outage therefore makes this unavailable, which is the
+/// truth -- and the gutter shows nothing rather than stale marks.
+#[tauri::command]
+pub async fn git_file_diff(
+    path: String,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<GitDiffDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    // Contained here as well as on the engine. A path from the webview is untrusted exactly as
+    // a path from the wire is (Principle VI).
+    let rel = editor_path(&path)?;
+    let Some(git) = access.git.as_ref() else {
+        // No engine configured. An empty diff rather than an error: a gutter with no marks is
+        // the correct rendering of "nothing is known", and a failure would put an error beside
+        // a file the developer can read perfectly well.
+        return Ok(GitDiffDto::default());
+    };
+    let diff = git.file_diff(&ws, rel.as_str()).await?;
+    Ok(GitDiffDto {
+        added: diff.added,
+        modified: diff.modified,
+        deleted: diff.deleted,
+    })
 }

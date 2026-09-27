@@ -150,6 +150,7 @@ pub fn dispatch(
     fs: &dyn crate::application::ports::file_system::FileSystem,
     watchers: Option<&crate::adapters::outbound::watchers::Watchers>,
     tasks: Option<&crate::adapters::outbound::task_threads::TaskService>,
+    git: Option<&crate::adapters::outbound::git_watchers::GitWatchers>,
     codec: &FrameCodec,
     body: &str,
 ) -> Action {
@@ -322,6 +323,12 @@ pub fn dispatch(
             if let Some(w) = watchers {
                 w.forget(&p.workspace_id);
             }
+            // And its git watch, and the snapshot the pager was holding for it. Kept together
+            // with the line above because they are the same fact about a closed workspace:
+            // nothing is looking at it any more.
+            if let Some(g) = git {
+                g.forget(&p.workspace_id);
+            }
 
             if let Some(service) = tasks {
                 // Every task signalled before the response is written, and **not** every task
@@ -478,6 +485,18 @@ pub fn dispatch(
                 ));
             };
             if method == "workspace/watch" {
+                // **A newly watched folder may already differ.** Status was last computed when
+                // the client asked, and anything that happened between then and this call
+                // produced no trigger at all -- the git-directory watch does not see an
+                // ordinary save, and the workspace watch did not exist yet. Without this the
+                // miss is permanent: nothing recomputes until something else happens.
+                //
+                // Coalesced like any other signal, so a client establishing watches folder by
+                // folder still costs one status computation (A-GITNUDGE).
+                if let Some(g) = git {
+                    use crate::application::ports::git_watch::StatusNudge;
+                    g.nudge(&req.workspace_id);
+                }
                 match watchers.watch(&req.workspace_id, &root, exclusions, req.paths) {
                     Some(result) => reply_or_nothing(encode_result(codec, id, &result)),
                     None => {
@@ -557,6 +576,138 @@ pub fn dispatch(
                             )),
                         }
                     }
+                    Err(refusal) => {
+                        let (code, message) = refusal.wire();
+                        reply_or_nothing(encode_error(codec, id, code, &message))
+                    }
+                },
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "git/getStatus" => {
+            let Some(watchers) = git else {
+                // No git service composed. An empty status rather than an error, for the same
+                // reason a workspace without a repository gets one: a client that cannot read
+                // git is not a client whose workspace has failed (FR-027, FR-028).
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::GitStatusResult {
+                        current_branch: apex_protocol::wire::BranchPosition::None,
+                        changes: Vec::new(),
+                        next_cursor: None,
+                    },
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::GitStatusParams>(params) {
+                Ok(req) => {
+                    let service = watchers.service();
+                    let limit = req
+                        .limit
+                        .unwrap_or(apex_protocol::wire::MAX_GIT_STATUS_PAGE);
+                    // A cursor addresses a snapshot already held; its absence asks for a fresh
+                    // one. Reading a stale cursor as "start again" would assemble one picture
+                    // from two snapshots, so it is refused (contracts/git-status.md).
+                    let answer = match req.cursor.as_deref() {
+                        Some(cursor) => service
+                            .page(&req.workspace_id.0, Some(cursor), limit)
+                            .map_err(|_| ()),
+                        None => match roots.resolve(&req.workspace_id.0) {
+                            Ok(root) => {
+                                match crate::domain::path::ResolvedPath::resolve(&root, ".", fs) {
+                                    Ok(path) => {
+                                        // Asking once is what subscribes. A client that had to
+                                        // request a subscription separately could read a status
+                                        // and then never hear about it changing, which is the
+                                        // failure FR-002 and FR-003 describe; and `observe` is
+                                        // idempotent, so asking again costs a map lookup.
+                                        watchers.observe(&req.workspace_id, &path);
+                                        service
+                                            .refresh(&req.workspace_id.0, &path, limit)
+                                            .map_err(|_| ())
+                                    }
+                                    Err(_) => Err(()),
+                                }
+                            }
+                            Err(_) => {
+                                return reply_or_nothing(encode_error(
+                                    codec,
+                                    id,
+                                    codes::WORKSPACE_NOT_REGISTERED,
+                                    "workspace is not registered with this engine",
+                                ))
+                            }
+                        },
+                    };
+                    match answer {
+                        Ok(result) => reply_or_nothing(encode_result(codec, id, &result)),
+                        Err(()) => reply_or_nothing(encode_error(
+                            codec,
+                            id,
+                            INVALID_PARAMS,
+                            "unknown or expired cursor",
+                        )),
+                    }
+                }
+                Err(e) => {
+                    reply_or_nothing(encode_error(codec, id, INVALID_PARAMS, &format!("{e}")))
+                }
+            }
+        }
+        "git/getFileDiff" => {
+            let Some(service) = git.map(|w| w.service()) else {
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::GitDiffResult::default(),
+                ));
+            };
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            match serde_json::from_value::<apex_protocol::wire::GitDiffParams>(params) {
+                Ok(req) => match workspace::resolve_request(
+                    roots,
+                    fs,
+                    &req.workspace_id.0,
+                    &req.relative_path,
+                ) {
+                    // Contained before git is asked, so a path that escapes is refused rather
+                    // than diffed (Principle VI).
+                    Ok(_) => match roots.resolve(&req.workspace_id.0) {
+                        Ok(root) => {
+                            match crate::domain::path::ResolvedPath::resolve(&root, ".", fs) {
+                                Ok(path) => match service.file_diff(&path, &req.relative_path) {
+                                    Ok(d) => reply_or_nothing(encode_result(codec, id, &d)),
+                                    Err(e) => reply_or_nothing(encode_error(
+                                        codec,
+                                        id,
+                                        INVALID_PARAMS,
+                                        &format!("{e:?}"),
+                                    )),
+                                },
+                                Err(_) => reply_or_nothing(encode_error(
+                                    codec,
+                                    id,
+                                    codes::NOT_FOUND,
+                                    "workspace root is gone",
+                                )),
+                            }
+                        }
+                        Err(_) => reply_or_nothing(encode_error(
+                            codec,
+                            id,
+                            codes::WORKSPACE_NOT_REGISTERED,
+                            "workspace is not registered with this engine",
+                        )),
+                    },
                     Err(refusal) => {
                         let (code, message) = refusal.wire();
                         reply_or_nothing(encode_error(codec, id, code, &message))
@@ -862,7 +1013,8 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":"3","method":"auth/handshake","params":{"protocol_version":"not a number"}}"#,
             r#"{"jsonrpc":"2.0","id":"4","method":"auth/handshake","params":null}"#,
         ] {
-            let Action::Reply(reply) = dispatch(&registry, &roots, &fs, None, None, &codec, body)
+            let Action::Reply(reply) =
+                dispatch(&registry, &roots, &fs, None, None, None, &codec, body)
             else {
                 panic!("expected a reply, not a panic or silence: {body}")
             };
@@ -891,6 +1043,7 @@ mod tests {
             &fs,
             None,
             None,
+            None,
             &codec,
             r#"{"jsonrpc":"2.0","id":"1","method":"auth/handshake","params":{}}"#,
         );
@@ -898,6 +1051,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             None,
             &codec,
@@ -920,6 +1074,7 @@ mod tests {
             &registry,
             &roots,
             &fs,
+            None,
             None,
             None,
             &codec,
@@ -946,7 +1101,7 @@ mod tests {
         );
         for body in ["this is not json", "", "{}"] {
             assert!(matches!(
-                dispatch(&registry, &roots, &fs, None, None, &codec, body),
+                dispatch(&registry, &roots, &fs, None, None, None, &codec, body),
                 Action::Nothing
             ));
         }

@@ -105,6 +105,25 @@ mod tests {
         fn evict(&self, _: i64) -> CacheResult<EvictionReport> {
             unreachable!("search must not evict")
         }
+        fn workspace(
+            &self,
+            _: &WorkspaceId,
+        ) -> CacheResult<Option<crate::domain::workspace::Workspace>> {
+            unreachable!()
+        }
+        fn replace_git_status(
+            &self,
+            _: &WorkspaceId,
+            _: &crate::application::ports::workspace_cache::GitProjection,
+        ) -> CacheResult<()> {
+            unreachable!()
+        }
+        fn git_status(
+            &self,
+            _: &WorkspaceId,
+        ) -> CacheResult<crate::application::ports::workspace_cache::GitProjection> {
+            unreachable!()
+        }
         fn schema_version(&self) -> CacheResult<u32> {
             unreachable!()
         }

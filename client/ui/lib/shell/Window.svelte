@@ -13,11 +13,18 @@
   import { terminals } from '../terminal/terminals.svelte';
   import { installTerminalHarness } from '../terminal/harness';
   import { listenToEngine } from '../terminal/engine';
+  import { GitStatusStore } from '../git/status.svelte';
+  import { WatchRequester, watchedPaths } from '../workspace/watched.svelte';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
   import EditorPanel from '../editor/EditorPanel.svelte';
   import { onMount } from 'svelte';
-  import { startFileEvents } from '../editor/events';
+  import {
+    startFileEvents,
+    onHostFileEvents,
+    onWorkspaceInvalidated,
+    type HostFileEvent,
+  } from '../editor/events';
   import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
@@ -111,6 +118,116 @@
   // background tab is exactly the case FR-024 is about.
   onMount(() => startFileEvents());
 
+  /// A wholesale invalidation dims the tree and re-reads nothing (§10.4, FR-017, FR-026a).
+  onMount(() => onWorkspaceInvalidated(() => workspaceTree.invalidateAll()));
+
+  /// The tree's half of a host file event.
+  ///
+  /// `deliver` reaches open buffers only, and a buffer knows nothing about rows -- so without
+  /// this a file created on the host stays invisible until something re-lists its folder, on a
+  /// tree whose whole design is to re-list nothing (FR-014). Registered once for the window,
+  /// like the two above.
+  onMount(() =>
+    onHostFileEvents((events: HostFileEvent[]) => {
+      for (const e of events) {
+        const path = e.relative_path;
+        const isDirectory = e.kind === 'directory';
+        switch (e.event) {
+          case 'created':
+            workspaceTree.applyEvent({
+              kind: 'created',
+              path,
+              isDirectory,
+              size: e.size ?? 0,
+              modified: e.modified ?? 0,
+            });
+            break;
+          case 'modified':
+            workspaceTree.applyEvent({
+              kind: 'modified',
+              path,
+              size: e.size ?? 0,
+              modified: e.modified ?? 0,
+            });
+            break;
+          case 'deleted':
+            workspaceTree.applyEvent({ kind: 'deleted', path });
+            break;
+          case 'renamed':
+            if (e.to_path) {
+              workspaceTree.applyEvent({ kind: 'renamed', path, toPath: e.to_path });
+            }
+            break;
+          default:
+            // A kind this build does not know changes nothing. Guessing would insert a row
+            // for a file that may not exist.
+            break;
+        }
+      }
+    }),
+  );
+
+  /// What the engine is asked to watch.
+  ///
+  /// **Built in F004 and connected here**, which is the whole of this change: `WatchRequester`,
+  /// `watchedPaths` and `delta` were written, unit-tested and reachable from nothing, so the
+  /// client asked the engine to watch no path at any time. The consequence was not a crash --
+  /// the tree simply never heard about a change on the host, which is indistinguishable from a
+  /// host where nothing changed.
+  ///
+  /// F011 depends on it: an ordinary save writes neither `HEAD` nor `index`, so the workspace's
+  /// own file events are the only signal that a tracked file was edited (A-GITNUDGE, FR-002a).
+  const watcher = new WatchRequester((change) => {
+    void ipc
+      .workspaceWatch(change.add, change.remove)
+      .then((outcome) => recordWatch({ asked: change, outcome }))
+      .catch((e: unknown) => {
+        // A refused path is reported **in** the outcome; a thrown error means the request
+        // itself did not land, which is a different fact and one that used to vanish here.
+        recordWatch({ asked: change, error: String(e) });
+      });
+  });
+
+  /// What each watch request asked for and what came back.
+  ///
+  /// Recorded for the suite, for the reason `tree.svelte.ts` records listings: F004's watch
+  /// specs assert `toBeGreaterThanOrEqual(0)`, which passes for a client whose every watch
+  /// request failed -- and did. A swallowed failure and a working watch look identical from
+  /// the DOM.
+  function recordWatch(entry: unknown): void {
+    const w = window as unknown as { __apexWatch?: unknown[] };
+    w.__apexWatch = w.__apexWatch ?? [];
+    w.__apexWatch.push(entry);
+  }
+
+  /// Folder paths for expanded folders and **file** paths for open tabs, deliberately: the
+  /// engine derives the directories. Resolving that here would make a folder holding an open
+  /// file one path for two reasons, and collapsing it would stop reporting a file still open
+  /// inside it (FR-003c, A-WATCHSCOPE).
+  function declareWatched(expanded: string[]): void {
+    // The root is always in the set. It is displayed from the moment a workspace opens --
+    // `open()` lists it and the tree shows its children -- so it is watched on the same terms
+    // as any folder the developer expanded. `expandedFolders()` cannot report it, because the
+    // root is not a row.
+    watcher.update(
+      watchedPaths(['/', ...expanded], session.documents.map((d) => d.path)),
+    );
+  }
+
+  /// The window's git state, subscribed once, for the same reason as the line above.
+  ///
+  /// The project panel is unmounted whenever another rail destination is selected, so a
+  /// subscription owned by the tree would stop hearing about changes the moment the developer
+  /// looked at something else -- and the marks would be silently stale on return (F011,
+  /// FR-002).
+  const git = new GitStatusStore();
+  $effect(() => {
+    const started = git.start();
+    return () => {
+      void started.then(() => git.stop()).catch(() => {});
+    };
+  });
+
   /// Bind the tree to whichever workspace is open, and fetch its root.
   ///
   /// One listing, on open, and none afterwards: `open()` asks for the root only, and a folder's
@@ -121,6 +238,20 @@
     const id = shellState.workspace?.id;
     if (!id || id === workspaceTree.workspaceId) return;
     workspaceTree.workspaceId = id;
+    // A restored session names a workspace the engine has probably never heard of -- it exits
+    // when the last client goes and nothing is left to preserve. Re-registering is what makes
+    // the rest of this effect mean anything; without it the watch below is refused and the
+    // workspace is inert while looking entirely normal.
+    void ipc.workspaceResume(id).catch(() => {
+      // A resume that fails leaves the cached projection readable, which is the offline
+      // behaviour the developer already understands.
+    });
+    // **Before the listing, not after it.** The root is watched because the workspace is open,
+    // not because its contents have arrived, and asking afterwards leaves a window -- the
+    // listing round trip plus this requester's debounce -- in which a change on the host is
+    // seen by nothing. It is a window a developer hits by editing a file immediately after
+    // opening a workspace, which is an ordinary thing to do.
+    declareWatched([]);
     void workspaceTree.open();
   });
   let focusedId = $state(session.focused_document_id);
@@ -235,6 +366,8 @@
         <FileTree
           tree={workspaceTree}
           selected={activeDocument?.path ?? ''}
+          gitStatus={(path) => git.stateOf(path)}
+          onWatchedChanged={declareWatched}
           onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
         />
       {:else}
@@ -266,7 +399,7 @@
                model swapped underneath it. The buffer behind it is not remounted: it lives in
                `buffers.svelte.ts` precisely so a tab switch cannot lose it. -->
           {#key activeDocument.id}
-            <EditorPanel path={activeDocument.path} {autosave} />
+            <EditorPanel path={activeDocument.path} {autosave} gitRevision={git.revision} />
           {/key}
         {:else}
           <p class="empty">No document open</p>
@@ -305,6 +438,7 @@
   <StatusBar
     connection={shellState.connection}
     workspace={shellState.workspace}
+    branch={git.branch}
     {persistenceFailed}
   />
 </div>

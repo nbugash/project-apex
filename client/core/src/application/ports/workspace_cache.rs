@@ -74,10 +74,29 @@ pub type PhaseSink<'a> = &'a mut dyn FnMut(MaintenancePhase);
 
 /// The projection. Synchronous: the adapter crosses `spawn_blocking` at its own boundary, which
 /// keeps the blocking call off a runtime worker without putting a channel in the middle.
+/// One workspace's git state, as the tree and the status bar read it.
+///
+/// Held together because it is replaced together. A branch stored apart from the changes it
+/// describes could be updated while they were not, and the status bar would name a branch the
+/// marked files no longer belong to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GitProjection {
+    pub branch: apex_protocol::wire::BranchPosition,
+    pub changes: Vec<apex_protocol::wire::GitChange>,
+}
+
 pub trait WorkspaceCache: Send + Sync {
     // ---- registration ----
     fn register(&self, ws: &Workspace, now: i64) -> CacheResult<Attachment>;
     fn forget(&self, ws: &WorkspaceId) -> CacheResult<()>;
+
+    /// One workspace as it was registered, or `None` if this client has never seen it.
+    ///
+    /// Needed because a restored session carries an identity and a display name but **not the
+    /// root path**, and the engine has to be told the path again: it exits when nothing is left
+    /// to preserve (A-ENGINELIFE), so a relaunch commonly meets an engine that has never heard
+    /// of this workspace.
+    fn workspace(&self, ws: &WorkspaceId) -> CacheResult<Option<Workspace>>;
 
     // ---- tree ----
     /// One indexed query, no join. Ordered as §5.4's sidebar query orders.
@@ -161,6 +180,23 @@ pub trait WorkspaceCache: Send + Sync {
     // ---- maintenance ----
     /// Remove content only. Never removes a `files` row (C4, FR-027, §5.5).
     fn evict(&self, before: i64) -> CacheResult<EvictionReport>;
+
+    /// Replace this workspace's git state **wholesale**, in one transaction.
+    ///
+    /// Wholesale rather than a delta, because git status is a whole answer: a path that has
+    /// stopped differing is reported by its absence, and merging would leave it marked forever.
+    /// One transaction, because a half-applied replacement is a tree that marks some files from
+    /// the new state and some from the old, with nothing to say which (FR-009).
+    ///
+    /// **It must not touch cached content or its hashes** (§5.3, FR-010). Git status says what
+    /// differs from the repository, which is not a statement about whether a cached copy still
+    /// matches the host.
+    fn replace_git_status(&self, ws: &WorkspaceId, git: &GitProjection) -> CacheResult<()>;
+
+    /// What was last applied. Empty for a workspace with no git state, which is also what a
+    /// workspace that is not a repository has -- the two are indistinguishable here, and
+    /// deliberately so (FR-027).
+    fn git_status(&self, ws: &WorkspaceId) -> CacheResult<GitProjection>;
 
     fn schema_version(&self) -> CacheResult<u32>;
 

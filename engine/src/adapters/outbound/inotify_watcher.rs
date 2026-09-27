@@ -194,3 +194,110 @@ pub fn factory() -> crate::adapters::outbound::watchers::WatcherFactory {
         Some((Box::new(watcher) as Box<dyn FileWatcher>, clock))
     })
 }
+
+// ---- The git directory watch (F011, A-GITWATCH) ----
+
+/// Two watches inside a repository's git directory, and nothing else.
+///
+/// A **second type with its own inotify instance**, not a mode of the watcher above. A-GITWATCH
+/// requires that these events never become `workspace/onFileEvent`, and the way to guarantee
+/// that is for there to be no code path between them: this type knows nothing about the
+/// exclusion set, emits no `RawEvent`, and is reached through a different port.
+///
+/// It lives in this file because this is the one file permitted to name the library
+/// (`inotify_confinement.rs`), not because it belongs to the watcher above.
+pub struct InotifyGitWatch;
+
+/// The directory is watched, and events filtered by name — **not** the two files directly.
+///
+/// git replaces `index` by writing `index.lock` and renaming it over the target. A watch on the
+/// file follows the old inode, which after the first rename is an unlinked file nothing will
+/// ever touch again: the watch would fire exactly once and then go quiet forever, on a
+/// repository that looks perfectly healthy.
+fn is_interesting(name: &std::ffi::OsStr) -> bool {
+    matches!(name.to_str(), Some("HEAD") | Some("index"))
+}
+
+struct GitWatchThread {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl crate::application::ports::git_watch::GitWatchHandle for GitWatchThread {}
+
+impl Drop for GitWatchThread {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl crate::application::ports::git_watch::GitWatch for InotifyGitWatch {
+    fn watch(
+        &self,
+        git_dir: &std::path::Path,
+        on_change: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<
+        Box<dyn crate::application::ports::git_watch::GitWatchHandle>,
+        crate::application::ports::git::GitFailure,
+    > {
+        use crate::application::ports::git::GitFailure;
+
+        let inner = Inotify::init()
+            .map_err(|e| GitFailure::Failed(format!("git watch could not start: {e}")))?;
+        inner
+            .watches()
+            .add(
+                git_dir,
+                WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::CREATE,
+            )
+            .map_err(|e| GitFailure::Failed(format!("git watch could not attach: {e}")))?;
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let handle = std::thread::Builder::new()
+            .name("apex-git-watch".into())
+            .spawn(move || {
+                let mut inner = inner;
+                let mut buffer = [0u8; 4096];
+                while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    // A blocking read would never notice the stop flag. A short timeout costs a
+                    // wakeup per interval on an idle repository and makes shutdown prompt.
+                    match inner.read_events(&mut buffer) {
+                        Ok(events) => {
+                            let mut fire = false;
+                            for e in events {
+                                if e.name.is_some_and(is_interesting) {
+                                    fire = true;
+                                }
+                            }
+                            if fire {
+                                on_change();
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(25));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+            .map_err(|e| GitFailure::Failed(format!("git watch thread: {e}")))?;
+
+        Ok(Box::new(GitWatchThread {
+            stop,
+            handle: Some(handle),
+        }))
+    }
+}
+
+/// How the composition root obtains the git watch without naming this library.
+///
+/// The same reason `factory` above exists, and found the same way: the composition root named
+/// `InotifyGitWatch` directly, and `inotify_confinement.rs` failed. A guard that catches the
+/// second file on the day it appears is worth more than one that is argued with afterwards.
+pub fn git_watch() -> std::sync::Arc<dyn crate::application::ports::git_watch::GitWatch> {
+    std::sync::Arc::new(InotifyGitWatch)
+}
