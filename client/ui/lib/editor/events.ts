@@ -54,6 +54,25 @@ function recordHostEvents(events: HostFileEvent[]): void {
   w.__apexHostEvents.push(...events);
 }
 
+/// Consumers of a wholesale invalidation (§10.4, FR-017).
+///
+/// It was routed nowhere: the engine emits `workspace/invalidateAll`, no client listener
+/// existed, and the suite's synthetic `apex:test:invalidate-all` event had none either -- so
+/// `file-watch.spec.ts` dispatched into silence and asserted a tautology about the result.
+const onInvalidate: Array<() => void> = [];
+
+export function onWorkspaceInvalidated(fn: () => void): () => void {
+  onInvalidate.push(fn);
+  return () => {
+    const at = onInvalidate.indexOf(fn);
+    if (at >= 0) onInvalidate.splice(at, 1);
+  };
+}
+
+export function invalidateAll(): void {
+  for (const fn of onInvalidate) fn();
+}
+
 /// Extra consumers of a batch, beyond the open buffers.
 ///
 /// The tree is one: a file created on the host has no row until something inserts it, and the
@@ -88,6 +107,10 @@ export function startFileEvents(): () => void {
 
   void listen<{ method: string; body: string }>(ENGINE_EVENT, (m) => {
     recordMethod(m.payload.method);
+    if (m.payload.method === 'workspace/invalidateAll') {
+      invalidateAll();
+      return;
+    }
     if (m.payload.method !== 'workspace/onFileEvent') return;
     let events: HostFileEvent[] = [];
     try {
@@ -110,6 +133,9 @@ export function startFileEvents(): () => void {
     };
     window.addEventListener('apex:test:file-event', handler);
     stops.push(() => window.removeEventListener('apex:test:file-event', handler));
+    const invalidated = (): void => invalidateAll();
+    window.addEventListener('apex:test:invalidate-all', invalidated);
+    stops.push(() => window.removeEventListener('apex:test:invalidate-all', invalidated));
   }
 
   return () => stops.forEach((s) => s());

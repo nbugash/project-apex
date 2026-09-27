@@ -19,7 +19,12 @@
   import { describeEnding } from '../terminal/ending';
   import EditorPanel from '../editor/EditorPanel.svelte';
   import { onMount } from 'svelte';
-  import { startFileEvents, onHostFileEvents, type HostFileEvent } from '../editor/events';
+  import {
+    startFileEvents,
+    onHostFileEvents,
+    onWorkspaceInvalidated,
+    type HostFileEvent,
+  } from '../editor/events';
   import DockTabs from '../chrome/DockTabs.svelte';
   import * as ipc from '../ipc';
   import type { SessionSnapshot } from '../ipc';
@@ -112,6 +117,9 @@
   // the window, not per editor: the panel is unmounted whenever its tab is not focused, and a
   // background tab is exactly the case FR-024 is about.
   onMount(() => startFileEvents());
+
+  /// A wholesale invalidation dims the tree and re-reads nothing (§10.4, FR-017, FR-026a).
+  onMount(() => onWorkspaceInvalidated(() => workspaceTree.invalidateAll()));
 
   /// The tree's half of a host file event.
   ///
