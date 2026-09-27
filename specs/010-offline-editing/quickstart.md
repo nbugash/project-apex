@@ -79,6 +79,7 @@ catch. F011 shipped three such checks and found them only by mutation.
 | A conflict is lost by going offline again (FR-025) | The second disconnection is real and the conflict is **left unresolved**, not resolved and re-created |
 | Reconciliation writes a file it should have prompted about | The assertion reads the **host's bytes**, not the client's report of what it did |
 | An interrupted reconciliation loses work (FR-028) | The interruption lands **between two files**, which needs more than one file with retained work |
+| The merge library escapes its adapter | The guard asserts the adapter **does** name `diffy` as well as that nothing else does, so removing the adapter fails the guard instead of satisfying it |
 
 ---
 
@@ -106,6 +107,9 @@ Break the property, confirm the test fails, restore. A test that passes both way
    way, which is exactly why the design carried this hole through two analyze runs.
 10. **Re-derive the base from the new local content on a second offline save.** The
     base-preservation test must fail on the stored base, not on a merge result.
+11. **Remove `diffy` from the adapter entirely.** The confinement guard must fail. A guard
+    carrying only the "no other file names it" half passes here, having found nothing to
+    complain about, which is how F011 shipped three guards that asserted nothing.
 
 **Mutation 10 matters most, and 2, 3 and 9 after it.** Each is a plausible simplification that
 leaves every other test green. Mutation 10 is worse than the rest in kind: the others make a test
