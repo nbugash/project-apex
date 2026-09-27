@@ -220,3 +220,35 @@ fn an_empty_status_is_a_clean_repository_and_not_an_error() {
     assert!(snap.changes.is_empty());
     assert_eq!(snap.branch, BranchPosition::Branch("main".into()));
 }
+
+// ---- Containment (contracts/git-status.md guarantee 7, Principle VI) ----
+
+#[test]
+fn a_path_that_escapes_the_workspace_is_dropped_rather_than_forwarded() {
+    // The guarantee says *dropped*. Anything else asks the client to be the only check, which
+    // is the one-sided boundary Principle VI exists to prevent.
+    let snap = parse_status(
+        "# branch.head main\u{0}1 .M N... 100644 100644 100644 aa bb ../outside.rs\u{0}\
+         1 .M N... 100644 100644 100644 aa bb inside.rs\u{0}",
+    )
+    .expect("parse");
+    let paths: Vec<&str> = snap.changes.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(paths, vec!["/inside.rs"], "an escaping path was forwarded");
+}
+
+#[test]
+fn an_absolute_path_is_dropped_rather_than_read_as_workspace_relative() {
+    // The hole the previous normaliser left: it split on `/` and reassembled, so `/etc/passwd`
+    // and `etc/passwd` both came out as `/etc/passwd` -- the first silently re-read as though
+    // it named a file inside the workspace. git reports repository-relative paths, so an
+    // absolute one means something upstream is wrong, and repairing it is not this layer's job.
+    let snap = parse_status(
+        "# branch.head main\u{0}1 .M N... 100644 100644 100644 aa bb /etc/passwd\u{0}",
+    )
+    .expect("parse");
+    assert!(
+        snap.changes.is_empty(),
+        "an absolute path was reinterpreted as workspace-relative: {:?}",
+        snap.changes
+    );
+}

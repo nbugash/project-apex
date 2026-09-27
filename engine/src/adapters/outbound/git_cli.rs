@@ -31,6 +31,40 @@ impl GitCli {
         }
     }
 
+    /// Is this directory **itself** a repository's working tree?
+    ///
+    /// `rev-parse` walks upward, so a plain directory inside a checkout answers every git
+    /// question with the enclosing repository's -- and that is not a workspace's git state, it
+    /// is somebody else's. Verified against git directly: from a subdirectory,
+    /// `--porcelain=v2` prints paths relative to the **repository** root and lists files
+    /// outside the workspace entirely, so a workspace opened inside a larger repository would
+    /// mark paths that do not exist in it and miss the ones that do.
+    ///
+    /// So the rule is equality, not ancestry: the workspace root must be the working tree's top
+    /// level. Anything else degrades as a non-repository, which FR-027 already describes
+    /// exactly -- no branch, no marks, workspace fully usable.
+    ///
+    /// The case this refuses is real and wanted -- a subdirectory of a monorepo as a workspace
+    /// -- and refusing it cleanly is better than serving it wrongly. Supporting it means
+    /// scoping the status and re-rooting every path, which is a feature rather than a check.
+    fn is_the_top_level(&self, root: &Path) -> Result<(), GitFailure> {
+        let out = self.run(root, &["rev-parse", "--show-toplevel"])?;
+        let top = PathBuf::from(out.trim());
+        // Compared canonically: the root has already been canonicalised, and git answers with a
+        // resolved path, but a symlinked temporary directory makes the two differ textually
+        // while naming one directory.
+        let same = std::fs::canonicalize(&top)
+            .ok()
+            .zip(std::fs::canonicalize(root).ok())
+            .map(|(a, b)| a == b)
+            .unwrap_or(false);
+        if same {
+            Ok(())
+        } else {
+            Err(GitFailure::NotARepository)
+        }
+    }
+
     /// Run git and classify what happened.
     ///
     /// The environment is pinned so that a developer's own git configuration cannot change what
@@ -68,6 +102,7 @@ impl Git for GitCli {
         // `rev-parse --git-dir`, never `<root>/.git`. In a linked worktree or a submodule that
         // path is a *file* holding a `gitdir:` pointer, and the directory with `HEAD` and `index`
         // in it is elsewhere entirely — verified against git 2.43 in research.md.
+        self.is_the_top_level(root.as_path())?;
         let out = self.run(root.as_path(), &["rev-parse", "--git-dir"])?;
         let raw = out.trim();
         if raw.is_empty() {
@@ -82,6 +117,7 @@ impl Git for GitCli {
     }
 
     fn status(&self, root: &ResolvedPath) -> Result<StatusSnapshot, GitFailure> {
+        self.is_the_top_level(root.as_path())?;
         let raw = self.run(
             root.as_path(),
             // `--no-optional-locks` first, and it is not a micro-optimisation: an ordinary
@@ -102,6 +138,7 @@ impl Git for GitCli {
     }
 
     fn file_diff(&self, root: &ResolvedPath, relative: &str) -> Result<GitDiffResult, GitFailure> {
+        self.is_the_top_level(root.as_path())?;
         let rel = relative.trim_start_matches('/');
         // `--unified=0` removes context lines, so the hunk headers are exact and the changed
         // lines that follow them are discarded here rather than transmitted (§12.3).
@@ -122,8 +159,25 @@ impl Git for GitCli {
 ///
 /// Returns `None` for anything that escapes, which is dropped rather than forwarded: git should
 /// never print such a path, and if it does, the entry is not one this workspace owns.
+/// A path git reported, as a workspace-relative path -- or nothing.
+///
+/// **A check, not a normalisation.** The previous version split on `/` and reassembled, which
+/// rejected `..` and quietly reinterpreted an absolute path: `/etc/passwd` and `etc/passwd`
+/// both came out as `/etc/passwd`, the first silently re-read as though it were relative to the
+/// workspace. git reports repository-relative paths, so an absolute one means something is
+/// wrong upstream, and reinterpreting it is exactly the repair Principle VI forbids --
+/// contracts/git-status.md guarantee 7 says the entry is *dropped*.
+///
+/// Containment is a real property here because `is_the_top_level` establishes that the
+/// repository root and the workspace root are the same directory. Without that, "relative to
+/// the repository" and "inside the workspace" are different questions and this function could
+/// not answer either.
 fn contained(raw: &str) -> Option<String> {
     if raw.is_empty() || raw.contains('\0') {
+        return None;
+    }
+    // Absolute on the host. Dropped rather than re-read as workspace-relative.
+    if raw.starts_with('/') {
         return None;
     }
     let mut out = String::from("/");
@@ -257,9 +311,12 @@ pub fn parse_status(raw: &str) -> Result<StatusSnapshot, GitFailure> {
     }
 
     if let (BranchPosition::Detached(_), Some(o)) = (&branch, &oid) {
-        // The commit stands in for the name a detached head does not have. Shortened where git
-        // gave a full object id, because a status bar shows a position, not a hash.
-        branch = BranchPosition::Detached(o.chars().take(7).collect());
+        // The commit stands in for the name a detached head does not have. Carried **whole**:
+        // shortening is presentation, and a wire that shortened would leave no way to identify
+        // the commit from what arrived -- the interface shows seven characters and puts the
+        // full id where it can be read (FR-018, `branch.ts`). This shortened here first, which
+        // made the status bar's tooltip repeat its own label.
+        branch = BranchPosition::Detached(o.trim().to_string());
     }
 
     Ok(StatusSnapshot { branch, changes })

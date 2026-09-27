@@ -45,6 +45,18 @@ Where this document fixes something the system specification leaves open, it say
   file events was rejected because an index-only change — `git add`, `git reset`, `git stash` —
   alters no working-tree file, so staged and unstaged state would stay stale until some
   unrelated file happened to change.
+- Q: What is "the workspace's repository" when the workspace root sits *inside* a checkout
+  rather than being one? → A: **Only the root itself counts.** `rev-parse --show-toplevel` must
+  equal the workspace root; anything else degrades as a non-repository under FR-027 — no branch,
+  no marks, workspace fully usable. `rev-parse` walks upward, so without this a plain directory
+  inside a checkout answered every git question with the enclosing project's. Verified against
+  git: from a subdirectory `--porcelain=v2` prints paths relative to the **repository** root and
+  lists files outside the workspace, so serving it would mark paths that do not exist in this
+  workspace and miss the ones that do. A subdirectory of a monorepo as a workspace is a real
+  case and is refused cleanly rather than served wrongly; supporting it means scoping the status
+  and re-rooting every path, which is a feature rather than a check. **Decided 2026-09-27,
+  during implementation, after an end-to-end fixture living inside this project's own checkout
+  was told it was on `feature/F011-git-integration`.**
 - Q: What wakes a refresh when a developer simply saves a tracked file, which writes neither
   `HEAD` nor `index`? → A: **The workspace's own file events, as a second trigger alongside the
   two watches**, recorded as A-GITNUDGE. The answer above rejected workspace events as the
@@ -240,6 +252,9 @@ bulk invalidation rather than one event per file, and that stale git state is go
   computation.
 - **FR-003**: A change that alters the index but no working-tree file — staging, unstaging,
   stashing — MUST refresh status.
+- **FR-003a**: The engine MUST treat a workspace as a repository only when the workspace root
+  **is** the working tree's top level. A root inside some other repository is a non-repository
+  for this feature's purposes and degrades under FR-027.
 - **FR-004**: The engine MUST resolve the repository's actual git directory rather than assuming
   `<root>/.git` is a directory, so that linked worktrees and submodules are watched correctly.
 - **FR-005**: The two watched paths MUST NOT be reported as workspace file events (A-GITWATCH).
@@ -363,8 +378,11 @@ Named here in the spec's own words, with the name [data-model.md](./data-model.m
 - **The developer performs git operations elsewhere.** F010 gives them a terminal on the same
   host; this feature reads the result. No requirement here implies a button that changes the
   repository.
-- **One repository per workspace root.** Nested repositories below the root are not enumerated;
-  a submodule is watched only when it is itself the workspace root.
+- **One repository per workspace root, and the root must be its top level.** Nested repositories
+  below the root are not enumerated; a submodule is watched only when it is itself the workspace
+  root. A workspace root *below* a repository is likewise not that repository's workspace — see
+  the clarification dated 2026-09-27 and FR-003a. The assumption originally covered only the
+  first direction, and the second is where the defect was.
 - **The status bar is the right home for the branch**, on the strength of §12.3, even though the
   prototype has no such indicator. Recorded as a design deviation above.
 - **`git` on the host is current enough to report status in a machine-readable form.** Where it

@@ -116,3 +116,64 @@ fn a_genuine_failure_is_still_a_failure() {
     assert!(GitFailure::NotARepository.is_absence());
     assert!(GitFailure::GitUnavailable.is_absence());
 }
+
+// ---- A workspace inside somebody else's repository ----
+
+#[test]
+fn a_directory_inside_a_repository_is_not_itself_a_repository() {
+    // **`rev-parse` walks upward.** A plain directory inside a checkout answers every git
+    // question with the enclosing repository's -- which is not this workspace's git state, it
+    // is another project's. Found by an end-to-end test whose fixture happened to live inside
+    // this project's own checkout and was told it was on `feature/F011-git-integration`.
+    let repo = Repo::new();
+    let inside = repo.root.join("src");
+    assert!(inside.is_dir(), "the fixture has a subdirectory");
+
+    assert_eq!(
+        GitCli::default().status(&resolved(&inside)),
+        Err(GitFailure::NotARepository),
+        "a subdirectory reported the enclosing repository's status"
+    );
+}
+
+#[test]
+fn a_subdirectory_workspace_degrades_rather_than_reporting_the_wrong_paths() {
+    // What the alternative costs, stated as a test. From a subdirectory `--porcelain=v2`
+    // prints paths relative to the **repository** root and lists files outside the workspace,
+    // so serving it would mark paths that do not exist in this workspace and miss the ones
+    // that do. An empty status is wrong about nothing (FR-027).
+    let repo = Repo::new();
+    repo.write("src/a.txt", "changed\n");
+    repo.write("kept.txt", "also changed\n");
+
+    let inside = repo.root.join("src");
+    let service = GitService::new(Arc::new(GitCli::default()));
+    let page = service
+        .refresh("w1", &resolved(&inside), 1_000)
+        .expect("an absence is a successful empty status");
+
+    assert_eq!(page.current_branch, BranchPosition::None);
+    assert!(
+        page.changes.is_empty(),
+        "a subdirectory workspace was given the enclosing repository's changes: {:?}",
+        page.changes
+    );
+}
+
+#[test]
+fn the_repository_root_itself_still_works() {
+    // The other side of the rule. An equality check that was accidentally never true would
+    // turn every repository into a non-repository, and every test above would still pass.
+    let repo = Repo::new();
+    repo.write("src/a.txt", "changed\n");
+    let service = GitService::new(Arc::new(GitCli::default()));
+    let page = service
+        .refresh("w1", &resolved(&repo.root), 1_000)
+        .expect("status");
+    assert_eq!(page.current_branch, BranchPosition::Branch("main".into()));
+    assert!(
+        page.changes.iter().any(|c| c.path == "/src/a.txt"),
+        "the repository root must still report its own changes: {:?}",
+        page.changes
+    );
+}

@@ -121,7 +121,7 @@ the host and confirm it follows.
 - [X] T046 [US2] In `engine/src/adapters/outbound/git_cli.rs`, parse the branch header into the three-case position data-model.md defines
 - [X] T047 [US2] In `client/core/src/application/use_cases/apply_git_status.rs` and the cache, store the branch per workspace alongside the state replacement
 - [X] T048 [US2] `client/ui/lib/statusbar/StatusBar.svelte`: the branch indicator, built from design-system tokens only. This surface is **not in the prototype** and is recorded as a deviation in spec.md; a designer must be able to move it without unpicking an improvised value
-- [ ] T049 [US2] `tests/e2e/git-branch.spec.ts`: the branch shows, follows a switch, is absent for a non-repository, and identifies the commit when HEAD is detached. For the non-repository case also assert the workspace stays fully usable and surfaces **zero** errors (SC-007) — the engine's half of that is T011's, and a successful empty status still reaches a client that could render it as a failure
+- [X] T049 [US2] `tests/e2e/git-branch.spec.ts`: the branch shows, follows a switch, is absent for a non-repository, and identifies the commit when HEAD is detached. For the non-repository case also assert the workspace stays fully usable and surfaces **zero** errors (SC-007) — the engine's half of that is T011's, and a successful empty status still reaches a client that could render it as a failure
 
 ---
 
