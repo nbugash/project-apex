@@ -26,7 +26,7 @@ history sets the shape the rest inherit.
    is the engine's, as §4.1's frame cap is: a request for ten thousand commits on a monorepo is
    not a request the engine should honour just because it was made.
 3. **Paths are workspace-relative and contained**, on exactly the terms `git/getStatus` gives —
-   including FR-003a's subdirectory rule, so a workspace on a subtree receives its own paths
+   including F011's FR-003a subdirectory rule, so a workspace on a subtree receives its own paths
    re-rooted and nothing from elsewhere in the repository.
 4. **Deduplicated.** A file changed in five of the last twenty commits appears once. The caller is
    building a set.

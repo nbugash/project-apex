@@ -70,3 +70,21 @@ always prompt — and it **removed** a restriction rather than adding one, so no
 checklist regressed. FR-017a and FR-025a carry it, and SC-006a makes the "always prompts, even
 when the host did not change it" half measurable, which is the half an implementation would
 otherwise quietly drop.
+
+## Sample verification (analyze run 18)
+
+The cycle skill requires two items to be confirmed true of the artifact rather than merely
+ticked, because a checklist counts items and not whether they hold. Two were sampled:
+
+- **Success criteria are technology-agnostic.** Holds. No success criterion names a tool,
+  library or language. SC-006b is the one that could have: it says "matches a standard
+  version-control three-way merge", not "matches `git merge-file`". The tool name appears only
+  in quickstart.md's measurement command, which is where a command belongs.
+- **No implementation details leak into specification.** Holds for requirements and criteria: no
+  functional requirement names a table, a crate or a language. `pending_edits` does appear twice
+  in this spec — in the `## Clarifications` entry that records the reviewer's answer, and in the
+  table of system-specification subsections this feature corrected. Both are records of decisions
+  rather than requirements, and a spec that must say which table §5.2 gained cannot avoid naming
+  it. The item stays checked on that reading, stated here so the next sampler need not re-derive
+  it.
+
