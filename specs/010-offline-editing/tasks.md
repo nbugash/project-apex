@@ -25,6 +25,8 @@ File Layout* and must match it; where they disagree, one of the two documents is
 
 ---
 
+- [ ] T001a In `tests/e2e/wdio.conf.ts`, add `'./offline-*.spec.ts'` to the **live** `specs` list and to the ordinary suite's `exclude` list, beside the git and editor entries. Without it these three specs match no live pattern, so they would run in the ordinary suite — where there is no engine to disconnect from, which is the one thing they all require — and never run in the live one. F011 had to do exactly this for `git-*.spec.ts`; the registration is invisible until the suite quietly runs the wrong set
+
 ## Phase 2: Foundational (Blocking Prerequisites)
 
 **Everything here blocks more than one user story. Nothing here delivers user value on its own.**
