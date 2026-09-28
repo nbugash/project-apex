@@ -50,7 +50,13 @@ pub struct Tasks {
     /// rather than a convenience: a `workspaceId` accepted from the interface is a caller
     /// naming which workspace a command runs in, and the interface has no business choosing
     /// that. The core registered it, so the core knows it.
-    pub current: std::sync::Mutex<Option<String>>,
+    /// Which workspace the interface is looking at.
+    ///
+    /// `Arc` because F012's reconciliation trigger reads it too: the connection returning is not a
+    /// command, so it has no `State` to reach this through, and a second copy of "which workspace is
+    /// open" is the kind of duplicate Principle II exists to refuse. Every `.lock()` call site is
+    /// unchanged -- an `Arc` derefs to the mutex.
+    pub current: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 /// Tell the engine about a workspace. Best effort, and says so.

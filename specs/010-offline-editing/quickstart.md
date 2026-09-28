@@ -107,8 +107,14 @@ Break the property, confirm the test fails, restore. A test that passes both way
 8. **Resolve a conflict by preferring the local side.** The conflict test must fail without any
    prompt being shown.
 9. **Read the base from `file_contents` instead of from the pending edit.** The evicted-cache
-   test must fail, and **only** that one — every test where nothing was evicted passes either
-   way, which is exactly why the design carried this hole through two analyze runs.
+   test must fail. **Measured during implementation: five of thirteen fail, and that is correct.**
+   The prediction "and only that one" was too strong — the suite also contains a file created
+   offline, a file the host deleted, and a file in a workspace whose root is gone, none of which
+   has a cached base either. What matters is the contrast, and it holds: the eight tests whose
+   base *is* in `file_contents` pass either way, because there the two sources agree. Getting that
+   contrast took fixing a fixture — the helper that cached a base called `put_listing` once per
+   file, which replaces a parent's children, so every multi-file test was quietly uncached and the
+   mutation failed eight tests instead of five.
 10. **Re-derive the base from the new local content on a second offline save.** The
     base-preservation test must fail on the stored base, not on a merge result.
 11. **Report a `-32004` refusal as `Failed` instead of `Conflicted`.** The stale-base test must

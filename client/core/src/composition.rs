@@ -28,6 +28,7 @@ use crate::application::use_cases::persist_session::PersistSession;
 use crate::application::use_cases::register_workspace::RegisterWorkspace;
 use crate::application::use_cases::restore_session::RestoreSession;
 use crate::composition_workspace::prepare_cache;
+use crate::domain::connection::ConnectionState;
 use crate::domain::rail::RailCatalogue;
 use crate::domain::workspace::{
     ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId,
@@ -39,6 +40,12 @@ use std::sync::Arc;
 
 pub struct Wiring {
     pub shell: Shell,
+    /// Which workspace the interface is looking at, shared with `Tasks`.
+    ///
+    /// Owned here because two things need it and neither owns the other: the commands, which set
+    /// it when a workspace opens, and F012's reconciliation trigger, which reads it when the
+    /// connection returns and has no `State` to reach it through.
+    pub current_workspace: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// The workspace provider the interface reaches, with maintenance already run.
     ///
     /// Always present: a workspace command must be answerable before a host is configured, and
@@ -248,6 +255,8 @@ pub fn build(
         None => stub.clone(),
     };
     let connection = Arc::new(ObserveConnection::new(source.clone()));
+    let source_for_reconcile = source.clone();
+    let current_workspace = std::sync::Arc::new(std::sync::Mutex::new(None));
 
     // The engine-backed provider, when there is an engine to back it.
     //
@@ -305,8 +314,86 @@ pub fn build(
         rail,
     };
 
+    // ---- F012: reconcile the work the host has not seen, once the connection returns ----
+    //
+    // `DiffyMerge` is constructed **here** and injected as `Reconcile`'s `TextMerge`. This is the
+    // only place that hands the adapter to anything, so without it the reconciler would have a port
+    // and no implementation. Naming the *type* here does not breach the confinement
+    // `tests/merge_confinement.rs` enforces: that rule is about the `diffy` crate, and
+    // `engine/src/main.rs` sets the precedent by naming `inotify_watcher::git_watch()` in its own
+    // composition root.
+    let reconcile = Arc::new(crate::application::use_cases::reconcile::Reconcile::new(
+        workspace.cache.clone(),
+        workspace.provider.clone(),
+        Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new()),
+    ));
+
+    // **Driven by the published connection state, not by a timer and not by the first successful
+    // request** (A-RECONNECT). A timer would be a second detector of a state that is already
+    // published, which is the defect F011 paid for when the git watch and the workspace watch
+    // answered different questions about one repository. The first-successful-request trigger was
+    // rejected in research.md for a different reason: it makes reconciliation a side effect of
+    // whatever the developer happened to do next.
+    {
+        let reconcile = reconcile.clone();
+        let current = current_workspace.clone();
+        // `StateSink` is a `Fn`, so the memory of the last state needs interior mutability. A
+        // mutex rather than a `Cell`, because the sink must be `Send + Sync`.
+        let previous = std::sync::Mutex::new(ConnectionState::Unknown);
+        source_for_reconcile.subscribe(Box::new(move |state| {
+            // Once per *transition into* Connected. The sink is invoked with the current state on
+            // subscribe and on every change, so without this comparison a reconnection that
+            // reported `Connected` twice would reconcile twice -- reading every file again and
+            // writing nothing, which is harmless and still wrong.
+            let entered = {
+                let Ok(mut last) = previous.lock() else {
+                    return;
+                };
+                let entered =
+                    state == ConnectionState::Connected && *last != ConnectionState::Connected;
+                *last = state;
+                entered
+            };
+            if !entered {
+                return;
+            }
+            let Some(ws) = current
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .map(crate::domain::workspace::WorkspaceId)
+            else {
+                // No workspace open: nothing to reconcile, and nothing to say about it.
+                return;
+            };
+            let reconcile = reconcile.clone();
+            // A thread with its own runtime rather than `tokio::spawn`, for the reason
+            // `SshTransport::subscribe` gives: this is reached from the composition root during
+            // startup, which is not guaranteed to be inside a runtime, and a `spawn` that panicked
+            // there would take the connection reporting down with it.
+            std::thread::spawn(move || {
+                let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    crate::logging::warn("could not reconcile offline work: no runtime");
+                    return;
+                };
+                rt.block_on(async move {
+                    let report = reconcile.run(&ws).await;
+                    // Logged per file, never with content: a file being edited may hold a
+                    // credential, which is the reason F006 gives for the same rule.
+                    for (path, outcome) in &report.files {
+                        crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
+                    }
+                });
+            });
+        }));
+    }
+
     Wiring {
         shell,
+        current_workspace,
         workspace,
         stub,
         deployer,

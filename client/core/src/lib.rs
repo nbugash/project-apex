@@ -120,7 +120,7 @@ pub fn run() {
             app.manage(adapters::inbound::task_commands::Tasks {
                 provider: wiring.tasks,
                 sender: wiring.sender,
-                current: std::sync::Mutex::new(None),
+                current: wiring.current_workspace.clone(),
             });
             app.manage(wiring.shell);
             app.manage(wiring.workspace);
