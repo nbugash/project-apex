@@ -48,8 +48,15 @@
     /// A number rather than the diff itself: the diff is per file and fetched per editor, and
     /// passing it in would make the window hold every open file's diff to hand one of them down.
     gitRevision?: number;
+    /// Whether this file carries work the host has not seen (F012, FR-015).
+    ///
+    /// Passed in rather than read here, for the reason `gitRevision` is passed in: the projection
+    /// belongs to whoever owns it, and a component that fetched its own would be a second reader of
+    /// a state the window already holds. A boolean rather than the pending list, because this panel
+    /// shows one file.
+    heldLocally?: boolean;
 }
-  let { path = null, autosave = false, gitRevision = 0 }: Props = $props();
+  let { path = null, autosave = false, gitRevision = 0, heldLocally = false }: Props = $props();
 
   let host = $state<HTMLDivElement | null>(null);
   // Reactive, so the effect below re-runs once Monaco has finished loading. As plain variables
@@ -334,6 +341,18 @@
     </p>
   {/if}
 
+  {#if heldLocally}
+    <!-- FR-015: a file whose work is held locally is distinguishable from one whose work is on the
+         host. Persistent, not the save notice: `ending` describes the last save attempt and clears,
+         whereas this is true of the file until it reconciles -- including on a file opened in a
+         later session that has never been saved in this one. An icon and a word, so the state is
+         not carried by styling alone. -->
+    <p class="notice held" role="status" data-testid="editor-held-locally">
+      <i class="ph ph-hard-drives" aria-hidden="true"></i>
+      <span>Held on this machine, not yet on the host</span>
+    </p>
+  {/if}
+
   {#if ending}
     <p class="notice" role="status" data-testid="editor-ending" data-tone={ending.tone}>
       <span>{ending.title}</span>
@@ -434,6 +453,13 @@
   }
 
   .detail {
+    color: var(--color-neutral-300);
+  }
+
+  .held {
+    /* The neutral ramp, and the same token the status bar's held-locally indicator uses, so one
+       state reads the same wherever a developer meets it. Work held locally is what saving offline
+       is supposed to do, not a fault. */
     color: var(--color-neutral-300);
   }
 

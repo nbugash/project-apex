@@ -9,6 +9,7 @@ use crate::application::ports::workspace_cache::WorkspaceCache;
 use crate::application::use_cases::edit_file::{EditFile, WriteOutcome};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
+use crate::application::use_cases::retain_edit::RetainEdit;
 use crate::domain::connection::ConnectionState;
 use crate::domain::layout::RegionId;
 use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
@@ -205,16 +206,22 @@ pub struct ChunkDto {
     pub offset: u64,
 }
 
-/// What a save produced, as four cases the interface switches on.
+/// What a save produced, as five cases the interface switches on.
 ///
 /// Carried in the success channel deliberately. Three of these are failures, but they are
 /// failures the interface must *branch* on rather than merely report, and splitting them across
 /// `Ok` and `Err` would push the caller back to inspecting an error to find out which it was --
 /// which is what the typed variants exist to prevent.
+///
+/// `HeldLocally` is F012's, and it is a **success**: the work is on this machine and will reconcile
+/// when the connection returns. It sits here for the same reason as the rest -- the interface must
+/// branch on it -- and putting it in `Err` would have made a retained save arrive through the
+/// failure path, which is the confusion §11.2 forbids.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum WriteOutcomeDto {
     Written { sha256: String },
+    HeldLocally,
     Conflict,
     Refused { message: String },
     Unreachable,
@@ -308,6 +315,12 @@ pub async fn file_read(
 ) -> Result<ChunkDto, WorkspaceFailure> {
     let ws = current_workspace(&tasks)?;
     let rel = editor_path(&path)?;
+
+    // A path with retained work reads as the developer's content (FR-013). See `pending_chunk`.
+    if let Some(chunk) = pending_chunk(access.cache.as_ref(), &ws, &rel)? {
+        return Ok(chunk);
+    }
+
     match access.provider.read_file(&ws, &rel, None).await {
         Ok(chunk) => decode_chunk(chunk),
         Err(ProviderError::TooLarge { .. }) => {
@@ -372,6 +385,7 @@ pub async fn file_write(
     path: String,
     content: String,
     base: String,
+    shell: State<'_, Shell>,
     access: State<'_, WorkspaceAccess>,
     tasks: State<'_, Tasks>,
 ) -> Result<WriteOutcomeDto, WorkspaceFailure> {
@@ -381,6 +395,50 @@ pub async fn file_write(
     // rather than forwarded: the engine would compare it, fail to match and answer `-32004`,
     // and the developer would be told a colleague edited their file when nobody did.
     let base = Sha256::parse(&base).ok_or(WorkspaceFailure::Refused)?;
+
+    // Offline, the save is held rather than attempted (FR-010, FR-011).
+    //
+    // Routed here rather than inside `CachedWorkspace::write_file`, which already checks the
+    // connection: that would widen the caching layer's job and hide the offline branch from where
+    // the `HeldLocally` outcome is produced. `RetainEdit` is constructed from `access.cache`, which
+    // this struct already carries so a command can write through the same port the application
+    // reads through.
+    if !matches!(shell.connection.current(), ConnectionState::Connected) {
+        // The base is the content the host last confirmed, which is what the cache holds. `None`
+        // when there is no cached copy: a file created offline has nothing to differ from, and a
+        // cached copy that has since been evicted is why the base is *stored* with the edit rather
+        // than referenced from the cache (A-PENDING).
+        let held = access
+            .cache
+            .lookup(&ws, &rel)
+            .ok()
+            .flatten()
+            .map(|entry| (entry.bytes, entry.hash));
+        let base_pair = held.as_ref().map(|(bytes, hash)| (bytes.as_slice(), hash));
+        // Mergeable is decided by what the client holds, never by sniffing: the content arrived
+        // here as a `String`, so it is text by construction. A file the editor could not decode
+        // never reaches this command with content to save.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_default();
+        return match RetainEdit::new(access.cache.clone()).save(
+            &ws,
+            &rel,
+            content.as_bytes(),
+            base_pair,
+            true,
+            now,
+        ) {
+            Ok(()) => Ok(WriteOutcomeDto::HeldLocally),
+            // FR-016: the developer is told while the work is still in the buffer. A store that
+            // refused is not a write conflict and not an unreachable host, so it is `Refused` with
+            // the reason -- the one outcome that says "this will not work until something changes".
+            Err(e) => Ok(WriteOutcomeDto::Refused {
+                message: format!("the edit could not be held locally: {e}"),
+            }),
+        };
+    }
 
     let outcome = EditFile::new(access.provider.clone())
         .save(&ws, &rel, &content, &base)
@@ -840,6 +898,51 @@ pub fn offline_report(
 pub struct PathSearchDto {
     pub paths: Vec<String>,
     pub complete: bool,
+}
+
+/// The developer's own content for a path that carries retained work, if it does.
+///
+/// **A path with retained work reads as the developer's content** (FR-013). Not the host's last:
+/// opening a file that was edited offline and showing what the host has would present their own
+/// work as absent, and the next save would then be made against a text they never saw.
+///
+/// Whole-file only, and unconditional on the connection. Whole-file because a pending edit *is* the
+/// whole file -- §4.8 carries content and not a patch -- so serving a range of one would be a window
+/// computed for a different copy. Unconditional because pending work exists precisely when the host
+/// has not been told, and reconnection is what resolves it; until then this is the file.
+///
+/// The digest returned is the **base**, never a digest of the pending content. It is what a save is
+/// conditional on, so it must stay the content the host confirmed: a digest of the local text would
+/// make the engine refuse the eventual write as stale against a version it has never held.
+///
+/// Extracted from `file_read` so FR-013 is testable without Tauri's `State`, for the reason
+/// `offline_report` and `search_complete` are.
+pub fn pending_chunk(
+    cache: &dyn WorkspaceCache,
+    ws: &WorkspaceId,
+    rel: &RelPath,
+) -> Result<Option<ChunkDto>, WorkspaceFailure> {
+    let Some((_, edit)) = cache
+        .pending_edits(ws)
+        .ok()
+        .and_then(|rows| rows.into_iter().find(|(p, _)| p == rel))
+    else {
+        return Ok(None);
+    };
+    let text = String::from_utf8(edit.content).map_err(|_| WorkspaceFailure::NotText)?;
+    Ok(Some(ChunkDto {
+        total: text.len() as u64,
+        // A file created offline has no base. An empty digest rather than a fabricated one:
+        // `Sha256::parse` refuses it, so a save carrying it is refused at this boundary rather than
+        // sent to the engine to be refused there as a phantom conflict.
+        sha256: edit
+            .base
+            .as_ref()
+            .map(|(_, hash)| hash.to_string())
+            .unwrap_or_default(),
+        offset: 0,
+        text,
+    }))
 }
 
 /// Whether a result list may be presented as the whole answer.

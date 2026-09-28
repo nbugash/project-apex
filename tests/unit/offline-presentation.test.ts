@@ -7,6 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { PRESENTATION, present } from '../../client/ui/lib/statusbar/presentation';
+import { describeOutcome } from '../../client/ui/lib/editor/ending';
+import type { WriteOutcome } from '../../client/ui/lib/editor/buffers.svelte';
 
 const SYSTEM = readFileSync('client/ui/lib/ds/system/styles.css', 'utf8');
 const STATUS_BAR = readFileSync('client/ui/lib/statusbar/StatusBar.svelte', 'utf8');
@@ -120,5 +122,64 @@ describe('path search presentation', () => {
       if (/inherit|currentColor/i.test(decl)) continue;
       expect(decl.trim()).toMatch(/var\(--/);
     }
+  });
+});
+
+describe('save outcomes', () => {
+  it('reports a held save as a success that does not claim the host has it', () => {
+    // FR-012. Two things a developer needs: the work is safe, and the host does not have it yet.
+    // "Saved" alone is the confusion §11.2 forbids; "Not saved" would be false.
+    const held = describeOutcome({ kind: 'heldLocally' });
+    expect(held.tone).toBe('ok');
+    expect(held.title).not.toMatch(/not saved/i);
+    expect(`${held.title} ${held.detail ?? ''}`).toMatch(/host|connection/i);
+    expect(held.offersReload).toBe(false);
+  });
+
+  it('keeps a held save and an unreachable host as different stories', () => {
+    // The two must not read as each other, which is what F006 built `unreachable` to say and what
+    // F012 must not blur. A held save is a success with the work on this machine; an unreachable
+    // host is a failure with the work still in the buffer.
+    //
+    // T031b asked for `unreachable` to be reworded on the grounds that an offline save is now held.
+    // It is -- but by `file_write` routing to the retainer *before* `EditFile` is reached, so
+    // `unreachable` never describes the offline case, and a retain that fails returns `Refused`.
+    // F006's copy was right and its tests were right to reject the rewrite.
+    const held = describeOutcome({ kind: 'heldLocally' });
+    const unreachable = describeOutcome({ kind: 'unreachable' });
+    expect(held.tone).toBe('ok');
+    expect(unreachable.tone).toBe('error');
+    expect(unreachable.title).toMatch(/could not be reached/i);
+    expect(`${held.title} ${held.detail ?? ''}`).not.toMatch(/not saved/i);
+  });
+
+  it('labels every variant of the union, so a sixth fails here as well as in the compiler', () => {
+    // Over every variant rather than the new one. `describeOutcome`'s switch would fail to build
+    // without a case, but only because its return type is exhaustive -- a `default` added later
+    // would silence that, and this is what would still notice.
+    const all: WriteOutcome[] = [
+      { kind: 'written', sha256: 'a'.repeat(64) },
+      { kind: 'heldLocally' },
+      { kind: 'conflict' },
+      { kind: 'refused', message: 'no' },
+      { kind: 'unreachable' },
+    ];
+    for (const outcome of all) {
+      const label = describeOutcome(outcome);
+      expect(label.title.length, `${outcome.kind} has no title`).toBeGreaterThan(0);
+      expect(['ok', 'warning', 'error']).toContain(label.tone);
+    }
+  });
+
+  it('treats a held save as a success in the save path, not a failure', () => {
+    // T031a's half, and the silent one. `buffers.svelte.ts` routes every outcome that is not
+    // `written` to `failed()` unless something says otherwise, and the `if/else` compiles either
+    // way -- so this reads the source rather than trusting the compiler.
+    const BUFFERS = readFileSync('client/ui/lib/editor/buffers.svelte.ts', 'utf8');
+    expect(BUFFERS).toMatch(/outcome\.kind === 'heldLocally'\) b\.held\(\)/);
+    // And `held()` keeps the base: reconciliation merges against the content the host confirmed,
+    // and moving the base here would lose it.
+    expect(BUFFERS).toMatch(/held\(\): void \{[\s\S]{0,160}this\.dirty = false;/);
+    expect(BUFFERS).not.toMatch(/held\(\): void \{[\s\S]{0,160}this\.base =/);
   });
 });

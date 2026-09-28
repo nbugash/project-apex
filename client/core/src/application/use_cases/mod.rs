@@ -11,5 +11,6 @@ pub mod observe_task;
 pub mod persist_session;
 pub mod register_workspace;
 pub mod restore_session;
+pub mod retain_edit;
 pub mod search_paths;
 pub mod supervise;

@@ -43,11 +43,16 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/// How a save attempt ended. Four variants, never collapsed: a conflict means a colleague edited
+/// How a save attempt ended. Five variants, never collapsed: a conflict means a colleague edited
 /// the file and an unreachable engine means the link dropped, and what a developer does next
 /// differs completely (FR-012).
+///
+/// `heldLocally` is F012's, and it is a **success** -- the work is on this machine and reconciles
+/// when the connection returns. It is a fifth variant rather than a flag on `written` because the
+/// two differ in the thing a developer most needs to know: whether the host has it.
 export type WriteOutcome =
   | { kind: 'written'; sha256: string }
+  | { kind: 'heldLocally' }
   | { kind: 'conflict' }
   | { kind: 'refused'; message: string }
   | { kind: 'unreachable' };
@@ -134,6 +139,17 @@ export class Buffer {
     this.base = sha256;
     this.dirty = false;
     this.ending = { kind: 'written', sha256 };
+  }
+
+  /// A save was held on this machine, because the host could not be told.
+  ///
+  /// **The base does not move and the buffer goes clean.** The base stays because the host has not
+  /// moved -- it is still the content this buffer was derived from, and it is what reconciliation
+  /// will merge against. Clean, because the developer's work is safely held: leaving it dirty would
+  /// invite them to save again, and every repeat save would look like unsaved work.
+  held(): void {
+    this.dirty = false;
+    this.ending = { kind: 'heldLocally' };
   }
 
   /// A write did not land.
@@ -312,7 +328,13 @@ export async function save(b: Buffer): Promise<WriteOutcome | null> {
   b.saving = true;
   try {
     const outcome = await editorSink().write(b.path, b.text, b.base);
+    // Three cases, not two. `heldLocally` is neither a write the host confirmed nor a failure: the
+    // buffer keeps its base, because the host has not moved, and stays clean, because the work is
+    // safely held. Routing it through `failed` -- which is what an `if/else` on `written` does --
+    // would show a developer a success in the failure surface, which is the confusion §11.2
+    // forbids arriving from the direction nobody checked.
     if (outcome.kind === 'written') b.adopt(outcome.sha256);
+    else if (outcome.kind === 'heldLocally') b.held();
     else b.failed(outcome);
     return outcome;
   } finally {

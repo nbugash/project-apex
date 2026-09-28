@@ -15,8 +15,11 @@ import {
   openWorkspace,
   openFile,
   requestsIssued,
+  typeInEditor,
+  clickSave,
+  editorText,
 } from './editor-harness';
-import { waitForShell, resetSession } from './helpers';
+import { waitForShell, resetSession, relaunch } from './helpers';
 
 /** Drive the connection stub. Debug-only, so it cannot become a production surface. */
 async function setConnection(state: string): Promise<void> {
@@ -194,5 +197,98 @@ describe('offline state', () => {
     // Reported, not cleared. A cleared projection says nothing has changed, which is a positive
     // claim about the repository that the client cannot make with no connection (FR-009).
     expect(git).toBeTruthy();
+  });
+
+  // T027 — US2 scenarios 3 and 4, FR-012, SC-002.
+  //
+  // **Quit and relaunched, not reloaded.** A reload leaves the store open and proves nothing about
+  // persistence; `relaunch` starts a new session, so the database is reopened from disk exactly as
+  // it would be the next morning.
+  it('keeps at least fifty offline edits across a genuine relaunch', async () => {
+    await setConnection('connected');
+    // Ten files, so the work is spread across rows rather than replacing one.
+    const files: string[] = [];
+    for (let i = 0; i < 10; i += 1) files.push(`/bulk_${i}.rs`);
+    const seeded: Record<string, string> = {};
+    for (const f of files) seeded[f.slice(1)] = `// ${f}\n`;
+    resetWorkspace(seeded);
+    await openWorkspace(WORKSPACE);
+    for (const f of files) await openFile(f);
+
+    await setConnection('disconnected');
+    // Five saves per file. Each must be *held*, which is the assertion -- a save reported as a
+    // failure here would mean the work never reached the store, and the relaunch below would pass
+    // for the wrong reason by finding nothing and expecting nothing.
+    let held = 0;
+    for (let round = 0; round < 5; round += 1) {
+      for (const f of files) {
+        await openFile(f);
+        await typeInEditor(`// round ${round}\n`);
+        await clickSave();
+        const notice = await $('[data-testid="editor-ending"]');
+        await notice.waitForDisplayed({ timeout: 20_000 });
+        expect(await notice.getAttribute('data-tone')).toBe('ok');
+        held += 1;
+      }
+    }
+    expect(held).toBeGreaterThanOrEqual(50);
+
+    const status = await offlineStatus();
+    expect(status.pending.length).toBe(files.length);
+
+    await relaunch();
+    await setConnection('disconnected');
+    await openWorkspace(WORKSPACE);
+
+    const after = await offlineStatus();
+    console.log(
+      `SC-002 saved offline edits surviving relaunch: ${after.pending.length} of ${files.length} files, ${held} saves`,
+    );
+    expect(after.pending.length).toBe(files.length);
+
+    // Scenario 4: reopening shows the developer's content, not the host's last (FR-013).
+    await openFile(files[0]!);
+    expect(await editorText()).toContain('round 4');
+  });
+
+  // T028 — FR-015.
+  it('distinguishes a file held locally from one whose work is on the host', async () => {
+    await setConnection('disconnected');
+    await openWorkspace(WORKSPACE);
+    // A file with work: the persistent indicator, not the save notice, because `ending` describes
+    // the last save attempt in this session and clears.
+    await openFile('/bulk_0.rs');
+    const marked = await $('[data-testid="editor-held-locally"]');
+    await marked.waitForDisplayed({ timeout: 10_000 });
+    expect(await marked.getText()).toContain('not yet on the host');
+
+    // And a file without work does not carry it. Asserted, because an indicator shown on every
+    // file distinguishes nothing -- which is exactly what FR-015 asks for.
+    await openFile('/main.rs');
+    expect(await $('[data-testid="editor-held-locally"]').isExisting()).toBe(false);
+  });
+
+  // FR-011a — the half the reviewer decided at clarify, tested where keystrokes exist.
+  //
+  // **Not in `retain_edit.rs`**, which is where the task placed it: the core never sees a keystroke,
+  // so the only test that file could hold was "nothing happens when nothing is called", which passed
+  // against a use case stubbed to do nothing. The mutation caught it. This is the only place an
+  // implementation that persisted keystrokes would be caught.
+  it('does not retain a buffer the developer never saved', async () => {
+    await setConnection('disconnected');
+    await openWorkspace(WORKSPACE);
+    await openFile('/lib.rs');
+    const before = (await offlineStatus()).pending.length;
+
+    await typeInEditor('// typed and abandoned\n');
+    // No save. The text is in the buffer and must go no further.
+    expect(await editorText()).toContain('typed and abandoned');
+    expect((await offlineStatus()).pending.length).toBe(before);
+
+    await relaunch();
+    await setConnection('disconnected');
+    await openWorkspace(WORKSPACE);
+    await openFile('/lib.rs');
+    expect(await editorText()).not.toContain('typed and abandoned');
   });
 });
