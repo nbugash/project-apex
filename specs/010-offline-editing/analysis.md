@@ -85,3 +85,36 @@ does not catch `rgb()` or a named colour, which is a gap in shared tooling rathe
 feature, and T058 now says to follow the design system's rule rather than the lint's reach.
 
 VERDICT: FINDINGS
+
+## Pass 30 — 2026-09-28
+
+The repository's own guard fires at six passes: "stop and read the findings by hand rather than
+running another". So this pass was a by-hand coherence read rather than another sweep, looking for
+what twenty-nine passes of edits had damaged in prose that no check reads.
+
+Four findings, and three of them are the passes' own leavings.
+
+**AE1.** *Parallel Opportunities* carried a table of files with the number of writers spelled out
+beside each. Four of its eight counts were wrong and six multi-writer files were missing. Its own
+closing line congratulated it for naming files rather than task ids "because an enumerated id list
+goes stale on the next insertion"; the counts went stale on the same insertions. Replaced by the
+rule, which after pass 28's marker strip needs no list at all: the absence of `[P]` *is* the list.
+
+**AE2.** The *Parallel Example* sections were snapshots of the same kind. One announced "all six
+tests for User Story 1" above a list of four and named two tasks as the only independent ones after
+a third had become a second writer of one of their files. Replaced by the rule.
+
+**AE3.** Pass 28's own correction to the `[P]` note wrote three counts into the paragraph that
+forbids counts, and pass 30 found one already wrong. Removed.
+
+**AE4.** `tasks.md` carried an emoji — "🎯 MVP" on the Phase 3 heading — against a hard rule that
+admits no context. It arrived from `.specify/templates/tasks-template.md` and survived twenty-nine
+analysis passes because no check looked for it. Removed here and in the template, so no later
+feature inherits it. Every other feature's `tasks.md` carries one or two; those are merged artifacts
+and rewriting them is not this feature's work, but the reviewer should know.
+
+The shape of this pass is the finding. Every item was documentation entropy produced by the passes
+themselves, not a gap in the design or the tests. That is what the six-pass guard predicts.
+
+VERDICT: FINDINGS
+

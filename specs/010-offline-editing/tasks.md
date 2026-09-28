@@ -69,7 +69,7 @@ would have orphaned them if US5 were deferred — which this file offers as the 
 
 ---
 
-## Phase 3: User Story 1 — Know I am offline, and keep reading (Priority: P1) 🎯 MVP
+## Phase 3: User Story 1 — Know I am offline, and keep reading (Priority: P1) — MVP
 
 **Goal**: The interface says it is offline, every previously opened file still reads, and nothing
 that needs the engine pretends otherwise.
@@ -301,8 +301,9 @@ reported ten collisions the moment run 28 finally ran it. The markers are gone f
 that shares a file.
 
 The information they were carrying is true and belongs here instead: most tasks in this list write
-a file another task also writes, because a test file gathers a story's cases — `reconcile.rs` is
-written by fourteen tasks, `retain_edit.rs` by seven, `git_recent.rs` by seven. Those cases are
+a file another task also writes, because a test file gathers a story's cases — `reconcile.rs`,
+`retain_edit.rs` and `git_recent.rs` each gather many. No numbers: pass 28 wrote three here and pass
+30 found one of them already wrong, in the paragraph that forbids exactly that. Those cases are
 independent of each other, which is what matters when deciding what to leave until later. Being
 independent is not the same as being safe to write concurrently, and only the second is what `[P]`
 claims.
@@ -313,36 +314,30 @@ claims.
 - US5's engine tests against any client story's work: different crates.
 - The two documentation tasks in Phase 8: different documents.
 
-**Files with more than one writer**, which must be taken one task at a time:
+**Files with more than one writer** must be taken one task at a time. There is no list here,
+because there no longer needs to be one: after analysis pass 28 stripped `[P]` from every task
+sharing a file, **the absence of `[P]` is the list.** A task without the marker shares its file
+with another task; a task with it owns its file alone, and `scripts/pipeline.py`'s
+`parallel_collisions` will say so if that ever stops being true.
 
-| File | Tasks |
-|---|---|
-| `client/core/src/adapters/inbound/tauri_commands.rs` | six, across US1, US2 and US4 |
-| `client/core/tests/reconcile.rs` | thirteen, across US3 and US4 |
-| `client/core/tests/retain_edit.rs` | seven, in US2 |
-| `engine/tests/git_recent.rs` | six, in US5 |
-| `tests/e2e/offline-state.spec.ts` | six, across US1 and US2 |
-| `client/core/tests/merge_agreement.rs` | three, across US3 and US4 |
-| `client/core/tests/prefetch.rs` | three, in US5 |
-| `client/core/tests/offline_budget.rs`, `tests/unit/offline-presentation.test.ts` | two each |
+The previous version of this section was a table of files with the number of writers spelled out
+beside each. By pass 30 four of its eight counts were wrong and six multi-writer files were missing
+from it, which is what the standing note above forbids — a count restated outside the document
+that derives it. Its own closing line congratulated it for describing files rather than task ids,
+"because an enumerated id list goes stale on the next insertion". The counts went stale on exactly
+the same insertions.
 
-Described by file rather than by task id on purpose: an enumerated id list goes stale on the next
-insertion, which is exactly how the previous version of this section came to name four
-`tauri_commands.rs` tasks when there were six.
+## Parallel Examples
 
-## Parallel Example: User Story 1
+There are none written out here any more. Every previous version was a snapshot: the User Story 1
+example announced "all six tests for User Story 1" above a list of four, named T018 and T019 as
+"the only independent ones" after T022 had become a second writer of `state.svelte.ts`, and went
+stale on every insertion the twenty-nine analysis passes made.
 
-```text
-# All six tests for User Story 1 together:
-T012  tests/e2e/offline-state.spec.ts        (scenario 1, SC-001)
-T013  tests/e2e/offline-state.spec.ts        (scenario 2, SC-012)   [same file: write together, one task at a time]
-T016  client/core/tests/offline_budget.rs    (SC-007, SC-008)
-T017  tests/unit/offline-presentation.test.ts
-
-# Then the implementation, where only T018 and T019 are independent of each other:
-T018  client/ui/lib/offline/state.svelte.ts
-T019  client/core/src/adapters/inbound/tauri_commands.rs
-```
+The rule replaces them, and it is now readable off each task: **`[P]` means the task owns its file,
+so any set of `[P]` tasks in one phase may be worked at once.** Everything else is taken one task at
+a time per file. `scripts/pipeline.py`'s `parallel_collisions` enforces it, so the marker cannot
+drift from the truth the way a hand-written example did.
 
 ## Implementation Strategy
 
