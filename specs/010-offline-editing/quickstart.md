@@ -79,6 +79,7 @@ catch. F011 shipped three such checks and found them only by mutation.
 | A conflict is lost by going offline again (FR-025) | The second disconnection is real and the conflict is **left unresolved**, not resolved and re-created |
 | Reconciliation writes a file it should have prompted about | The assertion reads the **host's bytes**, not the client's report of what it did |
 | An interrupted reconciliation loses work (FR-028) | The interruption lands **between two files**, which needs more than one file with retained work |
+| A deleted workspace root answers with an empty list instead of `-32009` | The directory is genuinely **deleted** while the workspace stays registered, which is the one case that must refuse where a non-repository must succeed |
 | Prefetch never runs for a workspace opened after startup (FR-029b) | The workspace is genuinely opened **after** the application started and after a connection already existed, which is the case a startup-only trigger misses while every other prefetch test passes |
 | The merge library escapes its adapter | The guard asserts the adapter **does** name `diffy` as well as that nothing else does, so removing the adapter fails the guard instead of satisfying it |
 
