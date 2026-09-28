@@ -293,3 +293,32 @@ fn sc_008_path_search_over_fifty_thousand_paths_within_the_budget() {
         p99_us / 1000
     );
 }
+
+// ---- FR-007: results are never presented as complete when they cannot be ----
+
+use apex_shell::adapters::inbound::tauri_commands::search_complete;
+
+/// Offline is never complete, however few results came back.
+///
+/// The case that matters is the last one: a short list while disconnected *looks* like a whole
+/// answer, and an implementation deriving completeness from "fewer than the limit" alone would
+/// present a partial cache as the entire repository. That is what FR-007 forbids.
+#[test]
+fn a_disconnected_search_is_never_complete() {
+    assert!(!search_complete(false, 0, 20), "no results, offline");
+    assert!(!search_complete(false, 3, 20), "a short list, offline");
+    assert!(!search_complete(false, 20, 20), "a full page, offline");
+}
+
+/// Connected, a short list is the whole answer; a full page is not.
+#[test]
+fn a_connected_search_is_complete_only_below_the_limit() {
+    assert!(
+        search_complete(true, 3, 20),
+        "fewer than asked for, connected"
+    );
+    assert!(
+        !search_complete(true, 20, 20),
+        "a full page may have more behind it, connected or not"
+    );
+}

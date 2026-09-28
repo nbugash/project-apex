@@ -823,6 +823,64 @@ pub fn offline_report(
     })
 }
 
+/// Path search over what this client holds, with an honest completeness signal.
+///
+/// **`complete` is the point, not the paths.** FR-007 requires that results not be presented as
+/// complete, and the only way the interface can honour that is to be told. A list of paths with no
+/// such field would leave every caller free to render it as the whole answer, which is what the
+/// requirement forbids — so the flag travels with the results rather than being inferred from the
+/// connection state somewhere else.
+///
+/// `complete` is false whenever the client is disconnected (the projection holds what was cached,
+/// not what exists) or the limit was reached (there may be more matches than were returned). Those
+/// are different reasons for the same caution, and collapsing them is deliberate: the interface's
+/// job is to avoid claiming completeness, not to explain which bound it met.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathSearchDto {
+    pub paths: Vec<String>,
+    pub complete: bool,
+}
+
+/// Whether a result list may be presented as the whole answer.
+///
+/// Extracted so FR-007 is testable without an engine: the live suite covers it end to end, but a
+/// requirement whose only test needs a real connection is a requirement that goes unchecked on
+/// every ordinary run.
+pub fn search_complete(connected: bool, returned: usize, asked: u32) -> bool {
+    // Disconnected is never complete: the projection holds what was cached, not what exists.
+    // Reaching the limit is never complete either, connected or not, because there may be more
+    // matches than were asked for.
+    connected && (returned as u32) < asked
+}
+
+/// Search cached paths. Never contacts the engine, connected or not (FR-031, C6).
+///
+/// The use case behind this has existed since F005 and nothing could reach it: no command, no
+/// registration, no caller. F012 needs it reachable because §11.3 makes path search a capability
+/// that degrades offline rather than one that disappears.
+#[tauri::command]
+pub fn workspace_search_paths(
+    fragment: String,
+    limit: Option<u32>,
+    shell: State<'_, Shell>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<PathSearchDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let asked = limit.unwrap_or(crate::application::use_cases::search_paths::DEFAULT_LIMIT);
+    let search =
+        crate::application::use_cases::search_paths::SearchPaths::new(access.cache.clone());
+    let paths = search
+        .find(&ws, &fragment, Some(asked))
+        .map_err(|_| WorkspaceFailure::UnknownWorkspace)?;
+    let connected = matches!(shell.connection.current(), ConnectionState::Connected);
+    Ok(PathSearchDto {
+        complete: search_complete(connected, paths.len(), asked),
+        paths: paths.iter().map(|p| p.as_str().to_string()).collect(),
+    })
+}
+
 /// What the interface reads to know it is offline and what is held locally.
 ///
 /// Takes `Shell` for the connection state rather than carrying a second handle on
