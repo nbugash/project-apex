@@ -31,7 +31,7 @@ The ones worth carrying forward, because each names a class rather than an insta
 | 13 | Five derived counts restated outside the document that derives them, all stale | Principle II applies to a derived fact |
 | 14 | `wdio.conf.ts`'s live `specs` array is order-significant and the task said "add to the list" | A list where position is the requirement |
 | 16 | §11.5 and A-PENDING — the authority — still carried the design pass 2 disproved | Twenty-six checks, every one scanning the feature directory |
-| 17 | `§11.6` does not exist; A-RECENT was cited by nothing | A substring check that passes on the citation it is validating |
+| 17 | spec.md cited a section number in §11 that has no heading, and A-RECENT was cited by nothing | A substring check that passes on the citation it is validating. The number is written out here rather than in § form, because a quotation of a bad reference is indistinguishable from a bad reference |
 | 19 | Nothing invoked prefetch; design.md gave it a precondition, which never causes a call | An emitter with no subscriber, for the fourth time in this project |
 | 23 | `buffers.svelte.ts:315` routes every non-`written` outcome to `failed()`, so a retained save reads as a lost one | Assert the outcome, not the store |
 | 24 | `-32004` reached no requirement and no test on the path the feature exists for | A refusal the contract promises and nothing delivers |
