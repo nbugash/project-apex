@@ -79,6 +79,7 @@ catch. F011 shipped three such checks and found them only by mutation.
 | A conflict is lost by going offline again (FR-025) | The second disconnection is real and the conflict is **left unresolved**, not resolved and re-created |
 | Reconciliation writes a file it should have prompted about | The assertion reads the **host's bytes**, not the client's report of what it did |
 | An interrupted reconciliation loses work (FR-028) | The interruption lands **between two files**, which needs more than one file with retained work |
+| A stale-base refusal during reconciliation is reported as a failure (FR-020b) | The host moves **between** the read and the write of one reconciliation, not before it starts — moving it earlier exercises the ordinary overlap path, which passes either way |
 | A retained offline save is presented as a failure | The assertion reads the outcome's **tone**, not merely that a save returned: `buffers.svelte.ts:315` sends every non-`written` outcome to `failed()` and compiles either way, so only a test that looks at what the developer is told can fail |
 | A deleted workspace root answers with an empty list instead of `-32009` | The directory is genuinely **deleted** while the workspace stays registered, which is the one case that must refuse where a non-repository must succeed |
 | Prefetch never runs for a workspace opened after startup (FR-029b) | The workspace is genuinely opened **after** the application started and after a connection already existed, which is the case a startup-only trigger misses while every other prefetch test passes |
@@ -110,7 +111,10 @@ Break the property, confirm the test fails, restore. A test that passes both way
    way, which is exactly why the design carried this hole through two analyze runs.
 10. **Re-derive the base from the new local content on a second offline save.** The
     base-preservation test must fail on the stored base, not on a merge result.
-11. **Remove `diffy` from the adapter entirely.** The confinement guard must fail. A guard
+11. **Report a `-32004` refusal as `Failed` instead of `Conflicted`.** The stale-base test must
+    fail on the outcome. The pending row survives either way, so a test asserting only that the
+    work is still there passes both — which is why FR-020b's test reads the outcome.
+12. **Remove `diffy` from the adapter entirely.** The confinement guard must fail. A guard
     carrying only the "no other file names it" half passes here, having found nothing to
     complain about, which is how F011 shipped three guards that asserted nothing.
 

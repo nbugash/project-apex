@@ -294,6 +294,9 @@ would mean every insertion silently reassigns the cases after it.
   (`contracts/offline-commands.md`, `conflict_resolve` guarantee 2).
 - **EC-16**: Reconnection succeeds but the **protocol version is incompatible** (§3.8), so the workspace
   cannot be used even though the link is up.
+- **EC-17**: The host changes **between the read and the write of one reconciliation**, so the
+  engine refuses the write as stale: reported as a conflict against the host's newer content,
+  never as a failure, and the retained work stays (FR-020b).
 
 ## Requirements *(mandatory)*
 
@@ -369,6 +372,13 @@ would mean every insertion silently reassigns the cases after it.
   behaviour of standard version-control merge tools: changes close to one another conflict even
   when they modify no identical line. A merge that combines edits to adjacent lines is not
   permitted, because it can produce a file neither person wrote.
+- **FR-020b**: Where the host's content changes **between the read and the write** of one
+  reconciliation, so the engine refuses the write with `-32004`, the client MUST treat it as a
+  conflict for that file and MUST NOT report it as a failure. The retained work stays (FR-022) and
+  the developer is given the three sides against the host's newer content. This is the same answer
+  `conflict_resolve` already gives for the same race, and the reason is the same: a stale-base
+  refusal is the host disagreeing, which is what a conflict is, while a failure is something the
+  developer cannot act on.
 - **FR-021**: Where the changes genuinely overlap, the client MUST prompt and MUST NOT write
   either version until the developer decides.
 - **FR-022**: Until a file's work has reached the host, that work MUST remain retained; nothing

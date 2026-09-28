@@ -97,6 +97,10 @@ retained ──(host hash == base)────────────▶ FastFo
    ├──────(not mergeable)─────────────────▶ Conflicted ────▶ row kept  (FR-025a: always, even
    │                                                                     when the host has not moved)
    │
+   ├──────(host moved again between the ───▶ Conflicted ────▶ row kept  (FR-020b: `-32004` is the
+   │       read and the write; `-32004`)                                 host disagreeing, not a
+   │                                                                     failure)
+   │
    └──────(connection lost mid-way)───────▶ NotAttempted ──▶ row kept, retried next reconnection
 ```
 
