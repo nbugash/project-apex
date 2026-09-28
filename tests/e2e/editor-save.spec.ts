@@ -124,24 +124,33 @@ describe('saving', () => {
     expect(onDisk('notes.md')).toBe('theirs\n');
   });
 
-  it('reports an unreachable engine as the link, and keeps the work', async () => {
+  it('holds work on this machine when the engine cannot be reached, and keeps it', async () => {
     // **Last in the file, and it ends the engine.** `stub_set_connection` cannot serve here:
     // with an engine present the composition root binds the real transport as the connection
     // source, so the stub drives something nothing is reading (see `wdio.conf.ts`). The honest
     // way to test "the engine could not be reached" is for it not to be reachable.
+    //
+    // **F012 changed what this asserts, deliberately.** Until F012 an unreachable engine meant
+    // the save failed: tone `error`, wording about the link. Now the connection state has gone to
+    // `Disconnected` by the time the save is made, so `file_write` holds the work locally and
+    // reports `heldLocally` -- a success (FR-010, FR-011). What F006 protected still holds and is
+    // still asserted: the save must not read as somebody else's edit (FR-012), the work stays in
+    // the editor, and nothing reached the disk.
     await typeInEditor('offline ');
     killEngine();
     await browser.pause(1000);
 
     await clickSave();
 
-    expect(await noticeTone()).toBe('error');
+    expect(await noticeTone()).toBe('ok');
     const words = await browser.execute(
       () => document.querySelector('[data-testid="editor-ending"]')?.textContent ?? '',
     );
-    // The distinction FR-012 is about: this must not read as somebody else's edit.
-    expect(String(words).toLowerCase()).toMatch(/reach|connect/);
-    expect(String(words).toLowerCase()).not.toMatch(/someone else/);
+    const said = String(words).toLowerCase();
+    expect(said).toMatch(/this machine|locally/);
+    expect(said).toMatch(/host|connection/);
+    expect(said).not.toMatch(/someone else/);
+    expect(said).not.toMatch(/not saved/);
     expect(await editorText()).toContain('offline');
     expect(onDisk('notes.md')).toBe('original\n');
   });

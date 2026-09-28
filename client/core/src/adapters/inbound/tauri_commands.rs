@@ -572,6 +572,12 @@ pub struct WorkspaceAccess {
     /// reads through, rather than injecting a fixture into the view.
     pub cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
     pub register: Arc<crate::application::use_cases::register_workspace::RegisterWorkspace>,
+    /// F012's reconciler, for the second trigger: a workspace opened or resumed while connected.
+    ///
+    /// Needed because the first trigger -- a transition into `Connected` -- fires at startup
+    /// before any workspace is open, and nothing reconnects mid-session, so without this
+    /// reconciliation would never run at all.
+    pub reconcile: Arc<crate::application::use_cases::reconcile::Reconcile>,
 }
 
 /// A registered workspace, as the interface sees it.
@@ -653,6 +659,7 @@ pub async fn workspace_open(
         )
         .await;
         *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
+        reconcile_if_connected(&shell, &access, &ws.id);
     }
     // Recorded in the session, and announced, before the id is given back. Until F006 nothing
     // ever constructed a `WorkspaceReference`, so `workspace:changed` announced `None` forever
@@ -1108,6 +1115,40 @@ pub async fn workspace_watch(
     Ok(WatchOutcomeDto { watching, refused })
 }
 
+/// Reconcile a workspace that has just become current, if the client is connected.
+///
+/// **The second trigger** (A-RECONNECT, amended by F012's implementation). The first -- a
+/// transition into `Connected` -- is subscribed in the composition root, and it fires once at
+/// startup *before* any workspace is open, so it finds nothing to reconcile. With no reconnection
+/// loop in the client (§11.5's is unbuilt), that was the only transition there would ever be:
+/// reconciliation never ran. Opening or resuming a workspace while connected is the moment both
+/// inputs exist -- a connection and a workspace -- and it mirrors FR-029b's two triggers for
+/// prefetch exactly.
+///
+/// Spawned, not awaited: opening a workspace must not wait on writing every pending file.
+fn reconcile_if_connected(shell: &Shell, access: &WorkspaceAccess, ws: &WorkspaceId) {
+    if !matches!(shell.connection.current(), ConnectionState::Connected) {
+        return;
+    }
+    let reconcile = access.reconcile.clone();
+    let ws = ws.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            crate::logging::warn("could not reconcile offline work: no runtime");
+            return;
+        };
+        rt.block_on(async move {
+            let report = reconcile.run(&ws).await;
+            for (path, outcome) in &report.files {
+                crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
+            }
+        });
+    });
+}
+
 /// Untrusted input, refused rather than repaired into something that parses.
 fn parse_paths(raw: &[String]) -> Result<Vec<RelPath>, WorkspaceFailure> {
     raw.iter().map(|p| editor_path(p)).collect()
@@ -1131,6 +1172,7 @@ fn parse_paths(raw: &[String]) -> Result<Vec<RelPath>, WorkspaceFailure> {
 #[tauri::command]
 pub async fn workspace_resume(
     workspace_id: String,
+    shell: State<'_, Shell>,
     access: State<'_, WorkspaceAccess>,
     tasks: State<'_, Tasks>,
 ) -> Result<bool, WorkspaceFailure> {
@@ -1155,6 +1197,7 @@ pub async fn workspace_resume(
     if let Some(sender) = tasks.sender.as_ref() {
         crate::adapters::inbound::task_commands::register_with_engine(sender, &ws.0, &base).await;
         *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
+        reconcile_if_connected(&shell, &access, &ws);
     }
     // Asking is also what makes the engine start watching this repository, so this is not
     // merely a refresh: without it nothing would be pushed for the rest of the session.

@@ -284,18 +284,36 @@ pub fn build(
         // serves what it holds, and the rest reports offline.
         None => Arc::new(DisconnectedWorkspace),
     };
-    let workspace = WorkspaceAccess {
-        cache: ready.get(),
-        git: apply_git,
-        register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
-        provider: Arc::new(CachedWorkspace::new(
+    let provider: Arc<dyn crate::application::ports::workspace_provider::WorkspaceProvider> =
+        Arc::new(CachedWorkspace::new(
             inner,
             ready.get(),
             Arc::new(SystemClock),
             source,
             Arc::new(|_presentation| {}),
             Limits::default(),
-        )),
+        ));
+
+    // ---- F012: reconcile the work the host has not seen ----
+    //
+    // Built before `WorkspaceAccess` because the workspace commands need it too: `workspace_open`
+    // and `workspace_resume` are the second trigger (see below). `DiffyMerge` is constructed
+    // **here** and injected as `Reconcile`'s `TextMerge` -- the only place that hands the adapter to
+    // anything, so without it the reconciler would have a port and no implementation. Naming the
+    // *type* here does not breach `tests/merge_confinement.rs`: that rule is about the `diffy`
+    // crate, and `engine/src/main.rs` names `inotify_watcher::git_watch()` in its composition root.
+    let reconcile = Arc::new(crate::application::use_cases::reconcile::Reconcile::new(
+        ready.get(),
+        provider.clone(),
+        Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new()),
+    ));
+
+    let workspace = WorkspaceAccess {
+        cache: ready.get(),
+        git: apply_git,
+        register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
+        provider,
+        reconcile: reconcile.clone(),
     };
 
     #[cfg(debug_assertions)]
@@ -314,20 +332,8 @@ pub fn build(
         rail,
     };
 
-    // ---- F012: reconcile the work the host has not seen, once the connection returns ----
+    // ---- F012: the first reconciliation trigger, a transition into Connected ----
     //
-    // `DiffyMerge` is constructed **here** and injected as `Reconcile`'s `TextMerge`. This is the
-    // only place that hands the adapter to anything, so without it the reconciler would have a port
-    // and no implementation. Naming the *type* here does not breach the confinement
-    // `tests/merge_confinement.rs` enforces: that rule is about the `diffy` crate, and
-    // `engine/src/main.rs` sets the precedent by naming `inotify_watcher::git_watch()` in its own
-    // composition root.
-    let reconcile = Arc::new(crate::application::use_cases::reconcile::Reconcile::new(
-        workspace.cache.clone(),
-        workspace.provider.clone(),
-        Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new()),
-    ));
-
     // **Driven by the published connection state, not by a timer and not by the first successful
     // request** (A-RECONNECT). A timer would be a second detector of a state that is already
     // published, which is the defect F011 paid for when the git watch and the workspace watch

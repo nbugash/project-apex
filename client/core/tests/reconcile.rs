@@ -57,6 +57,10 @@ struct ScriptedHost {
     writes: Mutex<Vec<(String, Vec<u8>)>>,
     /// When set, every write fails with this reason.
     write_fails: Mutex<Option<String>>,
+    /// When set, every read yields to the scheduler first, so two runs genuinely interleave.
+    /// Without it a read resolves immediately and "two concurrent runs" run one after the other,
+    /// which would let the in-flight guard's test pass with no guard at all.
+    yield_on_read: std::sync::atomic::AtomicBool,
 }
 
 impl ScriptedHost {
@@ -102,6 +106,12 @@ impl WorkspaceProvider for ScriptedHost {
         path: &RelPath,
         _range: Option<ByteRange>,
     ) -> ProviderResult<FileChunk> {
+        if self
+            .yield_on_read
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            tokio::task::yield_now().await;
+        }
         if self.offline_from.lock().unwrap().as_deref() == Some(path.as_str()) {
             return Err(ProviderError::Offline);
         }
@@ -632,4 +642,32 @@ fn reconciliation_starts_only_on_entering_connected() {
         );
         assert!(!entered_connected(&CS::Disconnected, &state));
     }
+}
+
+/// Two triggers, one run. The second returns empty and nothing is written twice.
+///
+/// There are two triggers now -- a transition into `Connected`, and a workspace opened or resumed
+/// while connected -- and a workspace opened during a reconnection's run would otherwise start a
+/// second run reading the rows the first is writing.
+#[tokio::test]
+async fn an_overlapping_run_declines_rather_than_writing_twice() {
+    let host = Arc::new(ScriptedHost::holding(&[("/a.rs", b"base\n")]));
+    host.yield_on_read
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (cache, reconcile, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"mine\n", b"base\n", 1);
+
+    let (first, second) = tokio::join!(reconcile.run(&ws), reconcile.run(&ws));
+
+    let writes = host.writes().iter().filter(|(p, _)| p == "/a.rs").count();
+    assert_eq!(
+        writes, 1,
+        "the file must be written once, not once per trigger"
+    );
+    let files = first.files.len() + second.files.len();
+    assert_eq!(
+        files, 1,
+        "exactly one run reports the file; the other declined"
+    );
+    assert!(cache.pending_edits(&ws).expect("read").is_empty());
 }

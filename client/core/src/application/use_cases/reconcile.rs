@@ -74,6 +74,10 @@ pub struct Reconcile {
     cache: Arc<dyn WorkspaceCache>,
     provider: Arc<dyn WorkspaceProvider>,
     merge: Arc<dyn TextMerge>,
+    /// Whether a run is in flight. Two triggers exist, and a workspace opened during a
+    /// reconnection's run would otherwise start a second one reading the same rows the first is
+    /// writing -- each could write a file the other had already merged.
+    running: std::sync::atomic::AtomicBool,
 }
 
 impl Reconcile {
@@ -86,6 +90,7 @@ impl Reconcile {
             cache,
             provider,
             merge,
+            running: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -96,6 +101,23 @@ impl Reconcile {
     /// means the remaining attempts would all fail for the same reason and reporting them as
     /// `Failed` would be false -- they were never tried.
     pub async fn run(&self, ws: &WorkspaceId) -> ReconcileReport {
+        use std::sync::atomic::Ordering;
+        // One run at a time. A second trigger arriving mid-run returns an empty report: the rows
+        // it would have attempted are the ones the first run is attempting, and every row it did
+        // not reach stays for the next trigger. Nothing is lost by declining.
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return ReconcileReport::default();
+        }
+        let report = self.run_once(ws).await;
+        self.running.store(false, Ordering::Release);
+        report
+    }
+
+    async fn run_once(&self, ws: &WorkspaceId) -> ReconcileReport {
         let pending = match self.cache.pending_edits(ws) {
             Ok(rows) => rows,
             // Nothing can be reported per file, because the list of files could not be read. This
