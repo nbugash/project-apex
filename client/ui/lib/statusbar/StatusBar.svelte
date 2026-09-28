@@ -26,6 +26,16 @@
     /// everything about it comes from design-system tokens so a designer can move it without
     /// unpicking an improvised value (Principle I).
     branch?: GitBranch | null;
+    /// How many files carry work the host has not seen (F012, FR-004).
+    ///
+    /// The connection half of "offline" is already on this bar: `PRESENTATION.disconnected`
+    /// renders "Offline" with an icon, from F003. What this adds is the other half of §11.2 --
+    /// that a file whose work is held locally is *shown* to be, so "saved" and "saved to the
+    /// host" are never confused. A count rather than a list, because the list belongs to the
+    /// tree and the editor; the bar's job is to say the work exists.
+    ///
+    /// Also not in the prototype, and recorded as the same deviation.
+    heldLocally?: number;
   }
   let {
     connection,
@@ -33,6 +43,7 @@
     persistenceFailed = false,
     reporting = { kind: 'live' },
     branch = null,
+    heldLocally = 0,
   }: Props = $props();
 
   let vcs = $derived(branchLabel(branch));
@@ -88,6 +99,15 @@
     <span>{state.label}</span>
   </span>
 
+  {#if heldLocally > 0}
+    <!-- FR-004: an icon and a word, so the state is never held in colour alone and survives a
+         greyscale display -- the rule `presentation.ts` states for every connection state. -->
+    <span class="held" role="status" aria-live="polite">
+      <i class="ph ph-hard-drives" aria-hidden="true"></i>
+      <span>{heldLocally} held locally</span>
+    </span>
+  {/if}
+
   {#if persistenceFailed}
     <!-- FR-023: reported, never modal, never blocking the interaction that triggered it. -->
     <span class="warn" role="status"
@@ -120,7 +140,8 @@
   .workspace,
   .branch,
   .connection,
-  .warn {
+  .warn,
+  .held {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -143,6 +164,12 @@
   }
   .connection {
     margin-inline-start: auto;
+  }
+  .held {
+    /* The neutral ramp, not the accent one. Work held locally is an ordinary state of this
+       feature and not a warning: it is what saving offline is supposed to do, and colouring it
+       like `.warn` would tell a developer something went wrong when nothing did. */
+    color: var(--color-neutral-300);
   }
   .warn {
     color: var(--color-accent-300);

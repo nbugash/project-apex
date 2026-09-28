@@ -14,6 +14,7 @@
   import { installTerminalHarness } from '../terminal/harness';
   import { listenToEngine } from '../terminal/engine';
   import { GitStatusStore } from '../git/status.svelte';
+  import { OfflineStore } from '../offline/state.svelte';
   import { WatchRequester, watchedPaths } from '../workspace/watched.svelte';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
@@ -228,6 +229,16 @@
     };
   });
 
+  /// The offline projection, subscribed once for the window on the same terms and for the same
+  /// reason as the git store above: the status bar and the editor both read it, and a
+  /// subscription owned by either would stop reporting the moment the developer looked elsewhere.
+  ///
+  /// No `stop`: this store owns no listener of its own. It follows `shellState.connection`, which
+  /// `main.ts` already maintains, so there is nothing to unsubscribe and nothing that could keep
+  /// the window alive.
+  const offline = new OfflineStore();
+  offline.start();
+
   /// Bind the tree to whichever workspace is open, and fetch its root.
   ///
   /// One listing, on open, and none afterwards: `open()` asks for the root only, and a folder's
@@ -367,6 +378,7 @@
           tree={workspaceTree}
           selected={activeDocument?.path ?? ''}
           gitStatus={(path) => git.stateOf(path)}
+          offline={!offline.connected}
           onWatchedChanged={declareWatched}
           onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
         />
@@ -439,6 +451,7 @@
     connection={shellState.connection}
     workspace={shellState.workspace}
     branch={git.branch}
+    heldLocally={offline.pending.length}
     {persistenceFailed}
   />
 </div>

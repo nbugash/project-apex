@@ -1,0 +1,92 @@
+// T017 — US1. The offline state and the "requires the engine" wording carry an icon and a word,
+// resolve to design-system tokens, and stay apart in greyscale (FR-002, FR-004).
+//
+// **Compared by luminance, not by hue**, following `git-marker.test.ts` and
+// `rail-greyscale.spec.ts`. A design carrying the whole distinction in colour passes a hue
+// comparison perfectly and is unreadable for roughly one developer in twelve.
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { PRESENTATION, present } from '../../client/ui/lib/statusbar/presentation';
+
+const SYSTEM = readFileSync('client/ui/lib/ds/system/styles.css', 'utf8');
+const STATUS_BAR = readFileSync('client/ui/lib/statusbar/StatusBar.svelte', 'utf8');
+const FILE_TREE = readFileSync('client/ui/lib/workspace/FileTree.svelte', 'utf8');
+
+/** The hex a token resolves to in the design system, so the test reads what ships. */
+function valueOf(token: string): string {
+  const m = new RegExp(`${token}\\s*:\\s*(#[0-9a-fA-F]{3,8})`).exec(SYSTEM);
+  if (!m) throw new Error(`${token} is not a design-system token`);
+  return m[1]!;
+}
+
+/** Relative luminance, which is what survives a greyscale rendering. */
+function luminance(hex: string): number {
+  const h = hex.slice(1);
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+describe('offline presentation', () => {
+  it('states offline with a word as well as an icon', () => {
+    // The connection half. F003 built this and F012 depends on it rather than adding a second
+    // offline indicator, which is why it is asserted here instead of assumed.
+    const offline = present('disconnected');
+    expect(offline.label).toBe('Offline');
+    expect(offline.icon.length).toBeGreaterThan(0);
+    // Every state, not only this one: a state added later without a label would encode itself in
+    // colour alone, and this is the assertion that notices.
+    for (const [state, presented] of Object.entries(PRESENTATION)) {
+      expect(presented.label.length, `${state} has no word`).toBeGreaterThan(0);
+      expect(presented.icon.length, `${state} has no icon`).toBeGreaterThan(0);
+    }
+  });
+
+  it('says work is held locally with a word as well as an icon', () => {
+    // Read out of the component, so the assertion is about what ships rather than about a copy.
+    // A copy cannot notice a change in the original, which is the mistake `presentation.ts`
+    // records the status-bar test making before it was extracted.
+    expect(STATUS_BAR).toContain('held locally');
+    expect(STATUS_BAR).toMatch(/class="held"[\s\S]{0,200}<i class="ph ph-[a-z-]+"/);
+  });
+
+  it('marks an unlisted folder unavailable with a word as well as an icon', () => {
+    expect(FILE_TREE).toContain('Not available offline');
+    expect(FILE_TREE).toMatch(/class="unavailable"[\s\S]{0,200}<i class="ph ph-[a-z-]+"/);
+  });
+
+  it('distinguishes held-locally and unavailable from ordinary text in greyscale', () => {
+    // Both new surfaces use the neutral ramp deliberately -- work held locally and a folder
+    // nobody has listed are ordinary consequences of being offline, not faults -- so the
+    // assertion is that they are separated from the body text by luminance, not that they are
+    // coloured like a warning.
+    const held = /\.held\s*\{[^}]*color:\s*var\((--color-[a-z0-9-]+)\)/.exec(STATUS_BAR);
+    const unavailable = /\.unavailable\s*\{[^}]*color:\s*var\((--color-[a-z0-9-]+)\)/.exec(
+      FILE_TREE,
+    );
+    expect(held, 'the held-locally indicator must take its colour from a token').not.toBeNull();
+    expect(unavailable, 'the unavailable mark must take its colour from a token').not.toBeNull();
+
+    const body = luminance(valueOf('--color-neutral-100'));
+    for (const [what, token] of [
+      ['held locally', held![1]!],
+      ['unavailable', unavailable![1]!],
+    ] as const) {
+      const value = luminance(valueOf(token));
+      expect(
+        Math.abs(value - body),
+        `${what} is indistinguishable from body text in greyscale`,
+      ).toBeGreaterThan(8);
+    }
+  });
+
+  it('never encodes either state in colour alone', () => {
+    // The property both of the above serve, stated once: removing every colour from the two new
+    // surfaces must leave a reader able to tell what they say. A word is what guarantees that,
+    // and this asserts the word is inside the element that carries the colour rather than
+    // somewhere else in the file.
+    expect(STATUS_BAR).toMatch(/class="held"[\s\S]{0,300}held locally/);
+    expect(FILE_TREE).toMatch(/class="unavailable"[\s\S]{0,300}Not available offline/);
+  });
+});
