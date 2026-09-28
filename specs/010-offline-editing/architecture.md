@@ -13,7 +13,8 @@ contribution is one read-only method that tells the client which files recent co
 Three client components carry it. A **retainer** turns a save made while disconnected into a row
 that outlives the process. A **reconciler**, woken by the connection state the client already
 publishes, walks those rows on reconnection and decides per file whether to write, to combine, or
-to ask. A **prefetcher** fills the cache deliberately while online, and stops rather than evicting.
+to ask. A **prefetcher** fills the cache deliberately while online, started by the same published connection
+state the reconciler uses, and stops rather than evicting.
 
 The one architectural idea worth holding: **the pending edit is the durable fact, and every
 outcome is a statement about one attempt on it**. It is self-contained on purpose — it carries the
@@ -44,6 +45,7 @@ flowchart TD
     recon --> merge[Text merge port]
     merge --> diffy[[diffy adapter]]
     recon --> provider[Workspace provider]
+    conn --> prefetch
     prefetch[Prefetcher] --> provider
     prefetch --> cache[(file_contents)]
     recon --> conflicts[Conflict projection]
@@ -56,7 +58,7 @@ flowchart TD
 | Reconciler | Per file on reconnection: fast-forward, combine, or raise a conflict | Reconciliation outcome |
 | Text merge port | Three strings in, an outcome out. Pure | none |
 | `diffy` adapter | The only place the merge library is named | none |
-| Prefetcher | Cache recent-commit and manifest files, bounded, never evicting | Prefetch candidate |
+| Prefetcher | Cache recent-commit and manifest files, bounded, never evicting. Started by workspace open while connected and by a transition into Connected (FR-029b), never by an idleness detector — §4.6 already orders background behind interactive | Prefetch candidate |
 | Offline projection | What the interface reads to know it is offline and what is held | none |
 | Conflict projection | The outstanding conflicts and their three sides | Conflict |
 
@@ -104,6 +106,11 @@ sequenceDiagram
             C->>H: write merged
             H-->>C: confirmed
             C->>S: delete the row
+        else host moved between this read and this write
+            C->>H: write merged
+            H-->>C: refused, stale base
+            C->>D: prompt against the newer remote
+            Note over C,S: FR-020b: a refusal is the host disagreeing, not a failure
         else overlap, or not mergeable
             C->>D: prompt
             Note over C,S: the row stays until the developer decides
@@ -143,3 +150,14 @@ was checked against them.
 | The component table originally gave the reconciler ownership of `Conflict`. The data model makes the durable fact the `pending_edits` row and the conflict a reconstruction | Table corrected: the reconciler owns the outcome, the conflict projection owns the conflict |
 
 No other conflicts found.
+
+## Propagation (analysis pass 28)
+
+`scripts/pipeline.py check_propagation` flagged this file as last written before a requirement it
+cites last changed — and it was right, for a reason coarser than its message. The trigger was a
+citation of FR-016 added in pass 15, not an amendment to it; but this file had not been rewritten
+since pass 2, and two requirements added since describe components it draws. FR-020b's
+stale-write refusal was missing from the Data Flow sequence, and FR-029b's trigger for prefetch
+was missing from the component diagram and table. Both are now here. The check's own docstring
+names this failure from F004: an amendment leaving the feature's own artifacts describing the
+previous behaviour.
