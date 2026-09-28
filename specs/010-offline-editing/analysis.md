@@ -60,3 +60,28 @@ regexes, and the repository already carried four calibrated checkers for this ph
 the first thing the accumulated check script runs.
 
 VERDICT: FINDINGS
+
+## Pass 29 — 2026-09-28
+
+Ran every deterministic check the project owns rather than more of my own: `pipeline.py`'s four
+phase checkers and `check_propagation`, `feature_map.py verify` (consistent, 9 of 21 features
+complete), and the cycle skill's open-marker gate (zero live markers before Appendix A). All clean.
+Then examined the one thing plan.md records as a deviation and no pass had verified: whether the
+design system carries what a conflict panel needs.
+
+One finding, in the class this feature's own quickstart exists to police.
+
+**AD1.** `data-tone` is set on the editor's notice at `EditorPanel.svelte:338` and styled **nowhere**
+in the product, so every tone renders identically. quickstart §4's row therefore claimed more than
+it proved: it said reading the outcome's tone is what catches a retained save "presented as a
+failure", when tone is data and the presentation is decided by whether `save` routes the outcome
+through `b.failed()`. The row now names both assertions and says which proves which. T031c says the
+same, and T058 records that the design system exposes no semantic tone token — no warning, error or
+success colour — so the conflict panel is built from the accent and neutral ramps, which is
+sufficient because a conflict panel shows three versions rather than alarming.
+
+Checked and sound: `lint-ds.mjs` does catch a raw hex colour, which I had assumed it did not; it
+does not catch `rgb()` or a named colour, which is a gap in shared tooling rather than in this
+feature, and T058 now says to follow the design system's rule rather than the lint's reach.
+
+VERDICT: FINDINGS
