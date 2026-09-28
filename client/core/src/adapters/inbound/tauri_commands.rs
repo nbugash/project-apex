@@ -5,9 +5,11 @@
 
 use crate::adapters::inbound::task_commands::Tasks;
 use crate::application::error::ShellError;
+use crate::application::ports::workspace_cache::WorkspaceCache;
 use crate::application::use_cases::edit_file::{EditFile, WriteOutcome};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
+use crate::domain::connection::ConnectionState;
 use crate::domain::layout::RegionId;
 use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use crate::domain::session::{DocumentId, SessionSnapshot};
@@ -766,6 +768,78 @@ pub enum GitBranchDto {
 pub struct GitStatusDto {
     pub branch: GitBranchDto,
     pub changes: Vec<GitChangeDto>,
+}
+
+/// One file with work the host has not seen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFileDto {
+    pub relative_path: String,
+    /// Whether the client can merge this file as text. `false` means it will prompt on
+    /// reconnection whatever the host did (FR-025a), which the interface says before the
+    /// reconnection rather than during it.
+    pub mergeable: bool,
+}
+
+/// Whether the client is connected, and what it is holding.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineStatusDto {
+    pub connected: bool,
+    pub pending: Vec<PendingFileDto>,
+}
+
+/// Assemble the report from a connection state and the projection.
+///
+/// **A free function, not a method on a command.** `offline_status` below is a thin wrapper, so
+/// this is where the contract's guarantees are testable without Tauri's `State` machinery — the
+/// same shape as `parse_region` and `editor_path` above, and the reason F011's git tests exercise
+/// `ApplyGitStatus` rather than the command that calls it.
+///
+/// Guarantee 1 holds because `connected` is derived from the state passed in and from nothing else.
+/// Guarantee 2 holds **by signature**: there is no provider here, so this function could not
+/// contact the engine if it wanted to. That is stronger than a test counting zero requests, which
+/// only says none happened this time.
+pub fn offline_report(
+    cache: &dyn WorkspaceCache,
+    state: &ConnectionState,
+    ws: &WorkspaceId,
+) -> Result<OfflineStatusDto, WorkspaceFailure> {
+    let pending = cache
+        .pending_edits(ws)
+        .map_err(|_| WorkspaceFailure::UnknownWorkspace)?
+        .into_iter()
+        .map(|(path, edit)| PendingFileDto {
+            relative_path: path.as_str().to_string(),
+            mergeable: edit.mergeable,
+        })
+        .collect();
+    Ok(OfflineStatusDto {
+        // Only `Connected` is connected. `Connecting` and `Reconnecting` are not: a developer whose
+        // save must wait is offline for every purpose this feature has, and reporting them as
+        // online would leave the editor claiming a host it cannot reach.
+        connected: matches!(state, ConnectionState::Connected),
+        pending,
+    })
+}
+
+/// What the interface reads to know it is offline and what is held locally.
+///
+/// Takes `Shell` for the connection state rather than carrying a second handle on
+/// `WorkspaceAccess`. The connection is one fact for the application, not one per workspace — §13.1
+/// and spec.md's Assumptions both say offline is a state of the connection and not of the workspace
+/// — so `Shell` is where it belongs and already is. `session_get` above takes two states the same
+/// way.
+#[tauri::command]
+pub fn offline_status(
+    shell: State<'_, Shell>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<OfflineStatusDto, WorkspaceFailure> {
+    // Resolved in the core, never accepted from the view: a workspace id from the bridge is
+    // untrusted input, and this command's answer includes the paths a developer is working on.
+    let ws = current_workspace(&tasks)?;
+    offline_report(access.cache.as_ref(), &shell.connection.current(), &ws)
 }
 
 /// The git state this client has for the current workspace.

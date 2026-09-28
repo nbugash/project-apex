@@ -49,6 +49,9 @@ pub fn run() {
             cmd::workspace_watch,
             cmd::workspace_resume,
             cmd::git_file_diff,
+            // F012's read surface. Same reason as every comment above it: an unregistered command
+            // is an unknown command, and the status bar would report nothing while looking correct.
+            cmd::offline_status,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,
             adapters::inbound::task_commands::task_resize,
