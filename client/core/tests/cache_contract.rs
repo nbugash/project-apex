@@ -8,7 +8,9 @@
 mod common;
 
 use apex_shell::adapters::outbound::sqlite::SqliteWorkspaceCache;
-use apex_shell::application::ports::workspace_cache::{Attachment, StoreOutcome, WorkspaceCache};
+use apex_shell::application::ports::workspace_cache::{
+    Attachment, PendingEdit, StoreOutcome, WorkspaceCache,
+};
 use apex_shell::domain::workspace::{
     EntryKind, FsEntry, Location, RelPath, Sha256, Workspace, WorkspaceId,
 };
@@ -299,4 +301,117 @@ fn file_id_of(
     c.file_id(ws, path)
         .expect("the store must answer")
         .expect("the file must be listed before it can be cached")
+}
+
+// ---- offline work (F012) ----
+
+/// Both implementations at the schema `pending_edits` lives in.
+///
+/// Separate from `implementations()`, which migrates to version 1 deliberately: the guarantees
+/// above are about the original schema and re-pointing them at version 4 would change what they
+/// test. This needs the table, so it asks for the current version.
+fn implementations_v4() -> Vec<(&'static str, Box<dyn WorkspaceCache>)> {
+    use apex_shell::adapters::outbound::sqlite::schema::CURRENT_VERSION;
+    let sqlite = SqliteWorkspaceCache::in_memory().expect("sqlite");
+    sqlite
+        .migrate_to(CURRENT_VERSION, &mut |_| {})
+        .expect("current schema");
+    vec![
+        ("sqlite", Box::new(sqlite)),
+        ("in-memory fake", Box::new(InMemoryCache::new())),
+    ]
+}
+
+fn pending(content: &str, base: Option<&str>, at: i64) -> PendingEdit {
+    PendingEdit {
+        content: content.as_bytes().to_vec(),
+        base: base.map(|b| (b.as_bytes().to_vec(), Sha256::of(b.as_bytes()))),
+        mergeable: true,
+        retained_at: at,
+    }
+}
+
+/// A second offline save moves the content and **not** the base, in every implementation.
+///
+/// The store gets this by omitting two columns from an UPDATE; the fake has to do it on purpose.
+/// That asymmetry is exactly what this suite exists for: without it the fake could re-derive the
+/// base, every use-case test built on the fake would pass, and the wrong-clean-merge defect would
+/// be invisible until it reached a developer's file.
+#[test]
+fn a_second_offline_save_keeps_the_first_base_everywhere() {
+    for (name, c) in implementations_v4() {
+        let ws = workspace("w1");
+        c.register(&ws, 0).expect("register");
+        let path = RelPath::parse("/src/a.rs").expect("path");
+
+        c.retain_edit(&ws.id, &path, &pending("first", Some("host"), 1))
+            .expect("first save");
+        c.retain_edit(&ws.id, &path, &pending("second", Some("first"), 2))
+            .expect("second save");
+
+        let rows = c.pending_edits(&ws.id).expect("read");
+        assert_eq!(rows.len(), 1, "[{name}] one row per path");
+        assert_eq!(rows[0].1.content, b"second", "[{name}] latest content");
+        let (base, _) = rows[0].1.base.as_ref().expect("[{name}] a base");
+        assert_eq!(
+            base, b"host",
+            "[{name}] the base must stay the content the host confirmed (FR-011b)"
+        );
+    }
+}
+
+/// Reading is scoped to one workspace, and forgetting takes one path, in every implementation.
+#[test]
+fn pending_work_is_scoped_by_workspace_and_path_everywhere() {
+    for (name, c) in implementations_v4() {
+        let (w1, w2) = (workspace("w1"), workspace("w2"));
+        c.register(&w1, 0).expect("register");
+        c.register(&w2, 0).expect("register");
+        let a = RelPath::parse("/a.rs").expect("path");
+        let b = RelPath::parse("/b.rs").expect("path");
+
+        c.retain_edit(&w1.id, &a, &pending("1", Some("h"), 1))
+            .expect("retain");
+        c.retain_edit(&w1.id, &b, &pending("2", Some("h"), 2))
+            .expect("retain");
+        c.retain_edit(&w2.id, &a, &pending("3", Some("h"), 3))
+            .expect("retain");
+
+        assert_eq!(
+            c.pending_edits(&w1.id).expect("read").len(),
+            2,
+            "[{name}] scoped"
+        );
+        c.forget_pending(&w1.id, &a).expect("forget");
+        let left: Vec<String> = c
+            .pending_edits(&w1.id)
+            .expect("read")
+            .into_iter()
+            .map(|(p, _)| p.as_str().to_string())
+            .collect();
+        assert_eq!(left, vec!["/b.rs".to_string()], "[{name}] one path goes");
+        assert_eq!(
+            c.pending_edits(&w2.id).expect("read").len(),
+            1,
+            "[{name}] the other workspace's same-named path is untouched"
+        );
+    }
+}
+
+/// A file created offline carries no base, in every implementation.
+#[test]
+fn a_file_created_offline_has_no_base_everywhere() {
+    for (name, c) in implementations_v4() {
+        let ws = workspace("w1");
+        c.register(&ws, 0).expect("register");
+        let path = RelPath::parse("/created.rs").expect("path");
+        c.retain_edit(&ws.id, &path, &pending("new", None, 1))
+            .expect("retain");
+
+        let rows = c.pending_edits(&ws.id).expect("read");
+        assert!(
+            rows[0].1.base.is_none(),
+            "[{name}] nothing to differ from, so no base"
+        );
+    }
 }

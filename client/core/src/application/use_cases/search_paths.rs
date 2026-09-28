@@ -124,6 +124,28 @@ mod tests {
         ) -> CacheResult<crate::application::ports::workspace_cache::GitProjection> {
             unreachable!()
         }
+        fn retain_edit(
+            &self,
+            _: &WorkspaceId,
+            _: &RelPath,
+            _: &crate::application::ports::workspace_cache::PendingEdit,
+        ) -> CacheResult<()> {
+            unreachable!()
+        }
+        fn pending_edits(
+            &self,
+            _: &WorkspaceId,
+        ) -> CacheResult<
+            Vec<(
+                RelPath,
+                crate::application::ports::workspace_cache::PendingEdit,
+            )>,
+        > {
+            unreachable!()
+        }
+        fn forget_pending(&self, _: &WorkspaceId, _: &RelPath) -> CacheResult<()> {
+            unreachable!()
+        }
         fn schema_version(&self) -> CacheResult<u32> {
             unreachable!()
         }
