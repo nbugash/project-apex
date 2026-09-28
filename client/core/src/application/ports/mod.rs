@@ -10,6 +10,7 @@ pub mod request_sender;
 pub mod session_store;
 pub mod spawner;
 pub mod task_provider;
+pub mod text_merge;
 pub mod transport;
 pub mod workspace_cache;
 pub mod workspace_provider;

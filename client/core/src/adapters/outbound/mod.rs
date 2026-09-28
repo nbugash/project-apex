@@ -13,5 +13,6 @@ pub mod remote_workspace;
 pub mod sqlite;
 pub mod stub_connection;
 pub mod system_clock;
+pub mod text_merge;
 pub mod transport_sender;
 pub mod webview_notifications;
