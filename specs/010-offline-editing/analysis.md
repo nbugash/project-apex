@@ -107,9 +107,9 @@ a third had become a second writer of one of their files. Replaced by the rule.
 **AE3.** Pass 28's own correction to the `[P]` note wrote three counts into the paragraph that
 forbids counts, and pass 30 found one already wrong. Removed.
 
-**AE4.** `tasks.md` carried an emoji — "🎯 MVP" on the Phase 3 heading — against a hard rule that
+**AE4.** `tasks.md` carried an emoji on the Phase 3 heading, beside the words "MVP", against a hard rule that
 admits no context. It arrived from `.specify/templates/tasks-template.md` and survived twenty-nine
-analysis passes because no check looked for it. Removed here and in the template, so no later
+analysis passes because no check looked for it. Not reproduced here, because the rule admits no context and a record of a violation that contains the violation is still one. Removed in tasks.md and in the template, so no later
 feature inherits it. Every other feature's `tasks.md` carries one or two; those are merged artifacts
 and rewriting them is not this feature's work, but the reviewer should know.
 
@@ -117,4 +117,36 @@ The shape of this pass is the finding. Every item was documentation entropy prod
 themselves, not a gap in the design or the tests. That is what the six-pass guard predicts.
 
 VERDICT: FINDINGS
+
+## Pass 31 — 2026-09-28
+
+Full accumulated suite and all five of the repository's own checkers: clean. Both classes pass 30
+found are now checks of their own, so neither can recur. No finding in any of the feature's
+artifacts.
+
+Two items, neither a defect in the feature.
+
+**AF1, bookkeeping.** Pass 30's own record in this file reproduced the emoji it described removing.
+The rule admits no context, so a record of a violation that contains the violation is still one.
+Rewritten to name it without reproducing it — the same shape as pass 28's record, which wrote a
+non-existent section number in § form and tripped the reference check on its own quotation. Noted
+because it is structural rather than careless: this file is an input to the next pass, so a pass can
+always find something in its predecessor's record. That regress is why "a pass finds nothing" has to
+mean *nothing in the feature*.
+
+**AF2, a precondition for the next phase, not a finding about this one.** No engineering journal
+entry exists for this feature, on any branch. `~/.claude/CLAUDE.md` makes the journal a hard gate
+between planning and coding — "if the journal entry doesn't exist, implementation has not been
+authorized" — and requires `decision.md` to carry the finalized approach, rationale and
+alternatives before any implementation code. Thirty-one analysis passes did not satisfy it.
+
+It is left for the reviewer rather than created, because creating it requires a decision this pass
+should not make: the journal's personal branch uses tracker `github` with keys like `GF-001` for a
+different project, none of F001 through F011 has an entry, and the `pre-commit` hook enforces
+orphan-branch isolation, so a wrong guess about key and branch is a commit in the wrong place.
+
+**The analyze phase is closed.** The artifacts are clean and the verdict reflects that. The journal
+gate belongs to the implement phase and is stated here so it is not crossed silently.
+
+VERDICT: CLEAN
 
