@@ -9,7 +9,7 @@
 mod common;
 
 use apex_shell::adapters::inbound::tauri_commands::offline_report;
-use apex_shell::application::ports::workspace_cache::{PendingEdit, WorkspaceCache};
+use apex_shell::application::ports::workspace_cache::{PendingEdit, StoreOutcome, WorkspaceCache};
 use apex_shell::domain::connection::ConnectionState;
 use apex_shell::domain::workspace::{Location, RelPath, Sha256, Workspace, WorkspaceId};
 use common::fake_cache::InMemoryCache;
@@ -145,5 +145,151 @@ fn each_pending_entry_carries_whether_it_can_be_merged() {
         flags,
         vec![true, false],
         "a file the client cannot merge must say so before reconnection, not during it"
+    );
+}
+
+// ---- the measurements (SC-007, SC-008) ----
+//
+// Through the **real** store on a real file, not a double returning a clone. F011's first budget
+// test printed `0 us` because it measured a stub, and a printed zero cannot tell a fast client from
+// one that is not running. Printing is also not what Principle V asks for on its own: it demands a
+// measurement that *fails* when the budget is exceeded, so each of these asserts as well as prints.
+
+use apex_shell::adapters::outbound::sqlite::schema::CURRENT_VERSION;
+use apex_shell::adapters::outbound::sqlite::SqliteWorkspaceCache;
+use apex_shell::domain::workspace::{EntryKind, FsEntry};
+use std::time::Instant;
+
+const SAMPLES: usize = 50;
+const OPEN_BUDGET_MS: u128 = 200;
+const SEARCH_BUDGET_MS: u128 = 1_000;
+const CORPUS: usize = 50_000;
+
+fn p99(mut samples: Vec<u128>) -> u128 {
+    samples.sort_unstable();
+    let idx = ((samples.len() * 99) / 100).min(samples.len() - 1);
+    samples[idx]
+}
+
+fn entry(name: &str) -> FsEntry {
+    FsEntry {
+        name: name.to_string(),
+        kind: EntryKind::File,
+        size: 10,
+        modified: 0,
+    }
+}
+
+/// A store on disk with one cached file, opened offline.
+#[test]
+fn sc_007_a_cached_file_opens_within_the_budget() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("cache.db");
+    let store = SqliteWorkspaceCache::open(&db).expect("open");
+    store
+        .migrate_to(CURRENT_VERSION, &mut |_| {})
+        .expect("migrate");
+    let ws = workspace("w1");
+    store.register(&ws, 0).expect("register");
+
+    // A file of a realistic size: the budget is about reading and decompressing, and a two-byte
+    // blob would measure the query and nothing else.
+    let bytes: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
+    let file = path("/main.rs");
+    store
+        .put_listing(&ws.id, &RelPath::root(), &[entry("main.rs")])
+        .expect("listing");
+    let id = store
+        .file_id(&ws.id, &file)
+        .expect("ask")
+        .expect("the file is listed");
+    // Asserted rather than discarded. `StoreOutcome` is `#[must_use]` for F005's stated reason --
+    // a caching outcome is recorded or deliberately ignored, never silently dropped -- and here it
+    // is load-bearing: a `NotEligible` or `Failed` would make `lookup` return nothing below, and
+    // the budget test would fail on a missing file rather than on a slow one.
+    assert!(
+        matches!(
+            store.put_content(&id, &bytes, &Sha256::of(&bytes), 0),
+            StoreOutcome::Stored
+        ),
+        "the file must actually be cached for this to be a measurement of reading it"
+    );
+
+    for _ in 0..5 {
+        let _ = store.lookup(&ws.id, &file);
+    }
+    let mut samples = Vec::with_capacity(SAMPLES);
+    for _ in 0..SAMPLES {
+        let at = Instant::now();
+        let hit = store
+            .lookup(&ws.id, &file)
+            .expect("the store must answer")
+            .expect("the file is cached");
+        samples.push(at.elapsed().as_micros());
+        // Read the bytes, so the measurement covers producing content rather than producing a row.
+        assert_eq!(hit.bytes.len(), bytes.len());
+    }
+
+    let p99_us = p99(samples);
+    println!(
+        "SC-007 offline open of a cached 64 KiB file: p99 {p99_us} us over {SAMPLES} samples \
+         ({:.3} ms of the {OPEN_BUDGET_MS} ms budget)",
+        p99_us as f64 / 1000.0
+    );
+    assert!(
+        p99_us / 1000 < OPEN_BUDGET_MS,
+        "p99 {} ms exceeded the {OPEN_BUDGET_MS} ms budget",
+        p99_us / 1000
+    );
+}
+
+/// Path search over a corpus the size SC-008 names.
+#[test]
+fn sc_008_path_search_over_fifty_thousand_paths_within_the_budget() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("cache.db");
+    let store = SqliteWorkspaceCache::open(&db).expect("open");
+    store
+        .migrate_to(CURRENT_VERSION, &mut |_| {})
+        .expect("migrate");
+    let ws = workspace("w1");
+    store.register(&ws, 0).expect("register");
+
+    // 50,000 paths across 500 directories, which is what makes the FTS index do work rather than
+    // the one-directory shape a smaller fixture would have.
+    let per_dir = 100;
+    for d in 0..(CORPUS / per_dir) {
+        let parent = RelPath::parse(&format!("/pkg{d}")).expect("path");
+        let items: Vec<FsEntry> = (0..per_dir)
+            .map(|f| entry(&format!("module_{d}_{f}.rs")))
+            .collect();
+        store.put_listing(&ws.id, &parent, &items).expect("listing");
+    }
+
+    for _ in 0..3 {
+        let _ = store.search_paths(&ws.id, "module_7_", 50);
+    }
+    let mut samples = Vec::with_capacity(SAMPLES);
+    for i in 0..SAMPLES {
+        // A different fragment each time, so the measurement is not one warm query repeated.
+        let fragment = format!("module_{}_", i % 500);
+        let at = Instant::now();
+        let hits = store
+            .search_paths(&ws.id, &fragment, 50)
+            .expect("the store must answer");
+        samples.push(at.elapsed().as_micros());
+        assert!(!hits.is_empty(), "{fragment} must match something");
+    }
+
+    let p99_us = p99(samples);
+    println!(
+        "SC-008 offline path search over {CORPUS} cached paths: p99 {p99_us} us over {SAMPLES} \
+         samples ({:.3} ms of the {SEARCH_BUDGET_MS} ms budget)",
+        p99_us as f64 / 1000.0
+    );
+    assert!(
+        p99_us / 1000 < SEARCH_BUDGET_MS,
+        "p99 {} ms exceeded the {SEARCH_BUDGET_MS} ms budget",
+        p99_us / 1000
     );
 }
