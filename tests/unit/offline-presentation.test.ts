@@ -90,3 +90,35 @@ describe('offline presentation', () => {
     expect(FILE_TREE).toMatch(/class="unavailable"[\s\S]{0,300}Not available offline/);
   });
 });
+
+describe('path search presentation', () => {
+  const SEARCH = readFileSync('client/ui/lib/workspace/PathSearch.svelte', 'utf8');
+
+  it('says the results may not be everything, in words', () => {
+    // FR-007. The caveat is the requirement: a results list with no caveat presents a partial
+    // cache as the whole repository, and a caveat carried by styling alone is no caveat.
+    expect(SEARCH).toContain('Showing cached results');
+    expect(SEARCH).toMatch(/data-testid="path-search-partial"[\s\S]{0,300}Showing cached results/);
+  });
+
+  it('shows the caveat only when the answer is incomplete', () => {
+    // Guarded on `!result.complete`, not on the connection state. A connected search that hit its
+    // limit is also incomplete, and deriving the caveat from the connection would miss it.
+    expect(SEARCH).toMatch(/\{#if !result\.complete\}/);
+  });
+
+  it('takes every colour from a design-system token', () => {
+    // Principle I, and the surface is not in the prototype, so this is the assertion that keeps a
+    // designer able to move it. `lint-ds.mjs` catches a raw hex; it does not catch `rgb()` or a
+    // named colour, so the rule is asserted here rather than left to the lint's reach.
+    const colours = SEARCH.match(/(?:^|[^-\w])color:\s*([^;]+);/g) ?? [];
+    expect(colours.length).toBeGreaterThan(0);
+    for (const decl of colours) {
+      // `inherit` and `currentColor` are not hard-coded values -- they defer to whatever the
+      // design system already put on an ancestor, which is the point of the rule rather than an
+      // exception to it.
+      if (/inherit|currentColor/i.test(decl)) continue;
+      expect(decl.trim()).toMatch(/var\(--/);
+    }
+  });
+});

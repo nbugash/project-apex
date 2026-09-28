@@ -15,6 +15,7 @@
   import { listenToEngine } from '../terminal/engine';
   import { GitStatusStore } from '../git/status.svelte';
   import { OfflineStore } from '../offline/state.svelte';
+  import PathSearch from '../workspace/PathSearch.svelte';
   import { WatchRequester, watchedPaths } from '../workspace/watched.svelte';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
@@ -374,6 +375,12 @@
            destination whose panel said it was "not available" contradicted the rail, which
            shows it as open and active. -->
       {#if activeDestination?.id === 'project'}
+        <!-- Above the tree, because a filter that appears below what it filters reads as a
+             footnote. F012 adds it so FR-007's "the developer runs a path search" has somewhere to
+             happen; recorded as a Principle I deviation, like the conflict panel. -->
+        <PathSearch
+          onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
+        />
         <FileTree
           tree={workspaceTree}
           selected={activeDocument?.path ?? ''}

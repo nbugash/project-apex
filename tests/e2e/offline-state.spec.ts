@@ -9,7 +9,13 @@
 // throughout and would pass against an implementation that does nothing, which is the mistake
 // `git-status.spec.ts` records having made. A cached open is asserted to cost *zero* requests, and
 // the offline state to arrive inside a measured two seconds that is printed.
-import { WORKSPACE, resetWorkspace, openWorkspace, openFile, requestsIssued } from './editor-harness';
+import {
+  WORKSPACE,
+  resetWorkspace,
+  openWorkspace,
+  openFile,
+  requestsIssued,
+} from './editor-harness';
 import { waitForShell, resetSession } from './helpers';
 
 /** Drive the connection stub. Debug-only, so it cannot become a production surface. */
@@ -72,7 +78,9 @@ describe('offline state', () => {
     const elapsed = Date.now() - at;
 
     // Printed, so SC-001 is a number rather than a verdict.
-    console.log(`SC-001 connection drop to offline state visible: ${elapsed} ms of the 2000 ms budget`);
+    console.log(
+      `SC-001 connection drop to offline state visible: ${elapsed} ms of the 2000 ms budget`,
+    );
     expect(elapsed).toBeLessThan(2000);
     expect(await connectionText()).toContain('Offline');
 
@@ -112,13 +120,10 @@ describe('offline state', () => {
     await row.waitForDisplayed({ timeout: 20_000 });
     if ((await row.getAttribute('aria-expanded')) !== 'true') await row.click();
 
-    await browser.waitUntil(
-      async () => (await row.getAttribute('data-unavailable')) === 'true',
-      {
-        timeout: 5000,
-        timeoutMsg: 'an unlisted folder was not marked unavailable offline',
-      },
-    );
+    await browser.waitUntil(async () => (await row.getAttribute('data-unavailable')) === 'true', {
+      timeout: 5000,
+      timeoutMsg: 'an unlisted folder was not marked unavailable offline',
+    });
     expect(await row.getText()).toContain('Not available offline');
   });
 
@@ -159,16 +164,24 @@ describe('offline state', () => {
     // The completeness flag is the assertion, not the paths. A list of paths would pass for an
     // implementation that presents a partial cache as the whole repository, which is exactly what
     // FR-007 forbids.
+    // Driven through the surface a developer uses, not through the command underneath it. The
+    // requirement is that *the interface* does not claim completeness, so the assertion is on what
+    // the panel renders.
     const before = (await requestsIssued()).length;
-    const search = (await browser.execute(async () => {
-      // @ts-expect-error __TAURI_INTERNALS__ is the v2 invoke bridge
-      return window.__TAURI_INTERNALS__.invoke('workspace_search_paths', {
-        fragment: 'rs',
-        limit: 20,
-      });
-    })) as { paths: string[]; complete: boolean };
-    expect(search.paths.length).toBeGreaterThan(0);
-    expect(search.complete).toBe(false);
+    const box = await $('[data-testid="path-search-input"]');
+    await box.waitForDisplayed({ timeout: 20_000 });
+    await box.setValue('rs');
+
+    const results = await $('[data-testid="path-search-results"]');
+    await results.waitForDisplayed({ timeout: 10_000 });
+    const hits = await $$('[data-testid="path-search-results"] button');
+    expect(hits.length).toBeGreaterThan(0);
+
+    // The caveat, in words, above the list.
+    const caveat = await $('[data-testid="path-search-partial"]');
+    await caveat.waitForDisplayed({ timeout: 10_000 });
+    expect(await caveat.getText()).toContain('may not be everything');
+
     // And it cost nothing: C6 and FR-031 make "no request attempted" structural, because the use
     // case holds no provider to fall back to.
     expect((await requestsIssued()).slice(before)).toEqual([]);

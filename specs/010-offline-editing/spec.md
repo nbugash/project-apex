@@ -474,6 +474,28 @@ would mean every insertion silently reassigns the cases after it.
 - **SC-011**: Reconciling **100** files with pending edits completes in under **10 seconds**.
 - **SC-012**: **Zero** requests are issued to read a cached file while offline.
 
+## Design deviations
+
+Two surfaces this feature needs do not exist in the signed-off prototype. Recorded here rather
+than decided silently, and both built from design-system tokens only, so a designer can move
+either without unpicking an improvised value (Principle I). The same shape as F011's branch
+indicator, which the design system absorbed without incident.
+
+- **The conflict interface.** FR-021 requires the client to prompt, and a prompt needs somewhere
+  to happen. Three versions and a choice, in `client/ui/lib/offline/ConflictPanel.svelte`.
+- **The path-search surface.** FR-007 requires that the developer can run a path search and that
+  the interface not present the results as complete, and there was no search surface in the client
+  at all — a filter input, a results list and a "showing cached results" caveat, in
+  `client/ui/lib/workspace/PathSearch.svelte`. Added during implementation once it became clear
+  that FR-007 named a surface rather than a capability; the reviewer chose to build it here rather
+  than defer it to F013 or narrow the requirement.
+
+This section was missing until implementation. plan.md's Principle I row said the deviation was
+"recorded here and in spec.md" and spec.md recorded nothing — the same shape as the Principle VII
+row that analysis pass 18 corrected, which cited evidence in a document that did not carry it.
+Thirty-one analysis passes did not catch either, because a claim about another artifact reads as
+true until somebody opens that artifact.
+
 ## Assumptions
 
 - **The developer performs version control operations elsewhere.** This feature reconciles file

@@ -74,7 +74,14 @@ reviewer's scope decision rather than by remediation; the rest live in one place
 | VII. Every Feature Ships With Tests | Every acceptance scenario has an automated test | **PASS** — 29 scenarios, each named by a task in tasks.md, which is where the allocation lives. quickstart.md carries the measurements and the mutation and negative checks, not the scenario map. This row first said "the plan allocates each to a suite in quickstart.md", which was not true of that artifact: it names no acceptance scenario. Found in analyze run 18, and worth keeping visible — the gate was passed at plan time against a document that did not exist yet, so the claim could not have been checked when it was made |
 | VIII. Ports and Adapters | Use cases orchestrate and return plain data; adapters hold I/O | **PASS** — the merge is a pure function over three strings, the reconciler is a use case, and `diffy` is named only inside one adapter, as `inotify` is |
 
-**One deviation to record.** The conflict interface does not exist in the signed-off prototype.
+**Two deviations to record**, the second added during implementation. The conflict interface does
+not exist in the signed-off prototype, and neither did any path-search surface — FR-007 turned out
+to name a surface ("the developer runs a path search") rather than a capability, and the reviewer
+chose to build a minimal one here rather than defer it to F013. Both are listed in spec.md's
+`## Design deviations`, which did not exist until implementation despite the sentence below
+claiming it did.
+
+The conflict interface does not exist in the signed-off prototype.
 This is the same shape as F011's branch indicator, which spec.md recorded as a deviation and the
 design system absorbed without incident. It is recorded here and in spec.md rather than decided
 silently; the interface must be built from tokens so a designer can move it without unpicking an
