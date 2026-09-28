@@ -45,11 +45,11 @@ deliberately because the reviewer's scope decision fixes it rather than remediat
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add `diffy = "0.4"` to `client/core/Cargo.toml` with a comment recording why 0.4 rather than 0.5: 0.5 requires rustc 1.85 and this workspace's MSRV is 1.75, which `cargo add` reports and a reader would otherwise rediscover
+- [X] T001 Add `diffy = "0.4"` to `client/core/Cargo.toml` with a comment recording why 0.4 rather than 0.5: 0.5 requires rustc 1.85 and this workspace's MSRV is 1.75, which `cargo add` reports and a reader would otherwise rediscover
 
 ---
 
-- [ ] T001a In `tests/e2e/wdio.conf.ts`, add `'./offline-*.spec.ts'` to the **live** `specs` list and to the ordinary suite's `exclude` list. Without it these three specs match no live pattern, so they would run in the ordinary suite — where there is no engine to disconnect from, which is the one thing they all require — and never run in the live one. F011 had to do exactly this for `git-*.spec.ts`; the registration is invisible until the suite quietly runs the wrong set. **Position it before `'./terminal-live.spec.ts'`, never after.** That array's order is load-bearing and the config says so in thirteen lines above it: `terminal-live` starts a real login shell, and every spec that ran after it stalled in its `before` hook for minutes while passing on its own. Appending is the natural reading of "add to the list" and is the wrong one — the failure is a hang, not an assertion, and it arrives minutes later in a suite that was green the day before
+- [X] T001a In `tests/e2e/wdio.conf.ts`, add `'./offline-*.spec.ts'` to the **live** `specs` list and to the ordinary suite's `exclude` list. Without it these three specs match no live pattern, so they would run in the ordinary suite — where there is no engine to disconnect from, which is the one thing they all require — and never run in the live one. F011 had to do exactly this for `git-*.spec.ts`; the registration is invisible until the suite quietly runs the wrong set. **Position it before `'./terminal-live.spec.ts'`, never after.** That array's order is load-bearing and the config says so in thirteen lines above it: `terminal-live` starts a real login shell, and every spec that ran after it stalled in its `before` hook for minutes while passing on its own. Appending is the natural reading of "add to the list" and is the wrong one — the failure is a hang, not an assertion, and it arrives minutes later in a suite that was green the day before
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 

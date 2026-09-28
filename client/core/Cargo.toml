@@ -54,6 +54,18 @@ sha2 = "0.10"
 # WorkspaceProvider must be `dyn`: FR-001 requires that consumers cannot tell a local provider
 # from a remote one, so the concrete type is chosen at runtime. Native AFIT is not dyn-compatible.
 async-trait = "0.1"
+# The three-way merge for offline reconciliation (F012). Pinned to 0.4 and not 0.5: 0.5 raises its
+# MSRV to 1.85 and this package declares 1.75, so `cargo add diffy` resolves 0.5 and then fails to
+# compile -- a reader who bumps this line would rediscover that the hard way.
+#
+# Chosen because its conflict boundary was *measured* against `git merge-file` rather than assumed:
+# eight cases, zero disagreements, including the two that decide the design -- adjacent lines must
+# conflict and two lines apart must merge cleanly (specs/010-offline-editing/research.md).
+#
+# Named in exactly one source file, `adapters/outbound/text_merge.rs`, enforced by
+# `tests/merge_confinement.rs`. If the merge library may be named anywhere then anywhere may decide
+# what a conflict is, and that boundary is the property SC-006b pins down.
+diffy = "0.4"
 
 [dev-dependencies]
 # The maintenance tests build a v0 database by hand to exercise a failing step.
