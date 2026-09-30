@@ -255,3 +255,59 @@ fn jitter_draws_across_the_unit_interval() {
         .collect::<std::collections::BTreeSet<_>>();
     assert!(distinct.len() > 32, "the draw must vary: {distinct:?}");
 }
+
+// ---- what happens after the connection returns ----
+
+use apex_shell::application::use_cases::reconnect::{resume_after_reconnect, Resume};
+use apex_shell::domain::workspace::WorkspaceId;
+
+/// Records the order of the steps, and can refuse the registration.
+struct Steps {
+    registers: bool,
+    log: Mutex<Vec<&'static str>>,
+}
+
+#[async_trait::async_trait]
+impl Resume for Steps {
+    async fn register(&self, _ws: &WorkspaceId) -> bool {
+        self.log.lock().unwrap().push("register");
+        self.registers
+    }
+    async fn rewatch(&self, _ws: &WorkspaceId) {
+        self.log.lock().unwrap().push("rewatch");
+    }
+    async fn refresh_git(&self, _ws: &WorkspaceId) {
+        self.log.lock().unwrap().push("refresh_git");
+    }
+    async fn reconcile(&self, _ws: &WorkspaceId) {
+        self.log.lock().unwrap().push("reconcile");
+    }
+}
+
+#[tokio::test]
+async fn the_workspace_is_registered_before_anything_is_reconciled() {
+    // §11.5's order, and the reason this sequence exists. A fresh engine has never heard of the
+    // workspace, so reconciling first reads nothing and reports every pending file `Failed` -- which
+    // is what T046's original trigger would have done the moment reconnection worked.
+    let steps = Steps {
+        registers: true,
+        log: Mutex::new(Vec::new()),
+    };
+    assert!(resume_after_reconnect(&steps, &WorkspaceId("w1".into())).await);
+    assert_eq!(
+        *steps.log.lock().unwrap(),
+        vec!["register", "rewatch", "refresh_git", "reconcile"]
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_the_engine_will_not_register_is_not_reconciled() {
+    // EC-16. An incompatible engine, or a root that is gone: the workspace cannot be used, so it
+    // cannot be reconciled, and trying would turn every pending file into a failure.
+    let steps = Steps {
+        registers: false,
+        log: Mutex::new(Vec::new()),
+    };
+    assert!(!resume_after_reconnect(&steps, &WorkspaceId("w1".into())).await);
+    assert_eq!(*steps.log.lock().unwrap(), vec!["register"]);
+}

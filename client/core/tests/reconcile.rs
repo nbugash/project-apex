@@ -612,38 +612,6 @@ async fn the_reconciler_asks_the_port_rather_than_deciding() {
     assert!(host.writes().is_empty());
 }
 
-// ---- when reconciliation starts (A-RECONNECT, EC-16) ----
-
-use apex_shell::application::use_cases::reconcile::entered_connected;
-use apex_shell::domain::connection::ConnectionState as CS;
-
-/// Once per transition into `Connected`, and on no other state.
-#[test]
-fn reconciliation_starts_only_on_entering_connected() {
-    // The transition that starts it.
-    assert!(entered_connected(&CS::Disconnected, &CS::Connected));
-    assert!(entered_connected(&CS::Connecting, &CS::Connected));
-    assert!(entered_connected(&CS::Unknown, &CS::Connected));
-
-    // Already connected: the sink is invoked with the current state on subscribe and on every
-    // change, so without this a reconnection reporting `Connected` twice would reconcile twice --
-    // reading every file again and writing nothing.
-    assert!(!entered_connected(&CS::Connected, &CS::Connected));
-
-    // Not connected. Reconciling during `Connecting` would write against a host that is not there,
-    // and **EC-16 holds here by construction**: a reconnection whose protocol version is
-    // incompatible never reaches `Connected` at all, because §3.8 refuses a newer engine before the
-    // link is usable. A workspace that cannot be used cannot be reconciled, and nothing needs to
-    // check for that separately.
-    for state in [CS::Disconnected, CS::Connecting, CS::Unknown] {
-        assert!(
-            !entered_connected(&CS::Connected, &state),
-            "{state:?} must not start a reconciliation"
-        );
-        assert!(!entered_connected(&CS::Disconnected, &state));
-    }
-}
-
 /// Two triggers, one run. The second returns empty and nothing is written twice.
 ///
 /// There are two triggers now -- a transition into `Connected`, and a workspace opened or resumed

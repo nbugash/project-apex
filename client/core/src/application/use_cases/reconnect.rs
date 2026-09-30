@@ -106,3 +106,42 @@ pub fn jitter() -> f64 {
     h.write_u8(0);
     (h.finish() >> 11) as f64 / (1u64 << 53) as f64
 }
+
+/// What the reconnection sequence does to the current workspace, as three steps.
+///
+/// A trait with one production implementation, and the reason is its order: the sequence exists to
+/// run these **in this order**, and a recording fake is the only way to assert an order rather than
+/// an outcome. Reconciling before the new engine has registered the workspace reads nothing and
+/// reports every file `Failed`.
+#[async_trait::async_trait]
+pub trait Resume: Send + Sync {
+    /// Tell the new engine about the workspace. `false` if it did not answer.
+    async fn register(&self, ws: &crate::domain::workspace::WorkspaceId) -> bool;
+    /// Tell the new engine again what to watch. It forgot with the old connection; the client did
+    /// not, so this is the client telling it rather than asking what it had.
+    async fn rewatch(&self, ws: &crate::domain::workspace::WorkspaceId);
+    /// Ask for git status, which is also what makes the new engine watch the repository again.
+    async fn refresh_git(&self, ws: &crate::domain::workspace::WorkspaceId);
+    /// Send the work the host has not seen.
+    async fn reconcile(&self, ws: &crate::domain::workspace::WorkspaceId);
+}
+
+/// After a reconnection: register, re-watch, refresh git, then reconcile -- §11.5's order, which
+/// puts reconciling offline work last. Re-watching comes before git because git status's own
+/// refresh is nudged by file events (A-GITNUDGE), which only arrive for watched paths.
+///
+/// Stops after a failed registration (EC-16). A workspace the engine cannot take -- an incompatible
+/// protocol, a root that is gone -- cannot be reconciled, and trying would only turn every pending
+/// file into a failure the developer can do nothing with.
+pub async fn resume_after_reconnect(
+    resume: &dyn Resume,
+    ws: &crate::domain::workspace::WorkspaceId,
+) -> bool {
+    if !resume.register(ws).await {
+        return false;
+    }
+    resume.rewatch(ws).await;
+    resume.refresh_git(ws).await;
+    resume.reconcile(ws).await;
+    true
+}

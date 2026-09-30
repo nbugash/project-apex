@@ -68,7 +68,7 @@ pub async fn register_with_engine(
     sender: &Arc<dyn crate::application::ports::request_sender::RequestSender>,
     workspace_id: &str,
     path: &str,
-) {
+) -> bool {
     let params = serde_json::json!({ "workspace_id": workspace_id, "path": path });
     let outcome = sender
         .send(crate::application::ports::transport::Request::interactive(
@@ -76,11 +76,15 @@ pub async fn register_with_engine(
             params.to_string(),
         ))
         .await;
-    if !matches!(outcome, crate::domain::request::RequestOutcome::Answered(_)) {
+    // Returned, because the reconnection sequence must not reconcile a workspace the new engine
+    // has not registered: every read would be refused and every file reported `Failed` (EC-16).
+    let answered = matches!(outcome, crate::domain::request::RequestOutcome::Answered(_));
+    if !answered {
         crate::logging::warn(&format!(
             "the engine did not register {workspace_id}: {outcome:?}"
         ));
     }
+    answered
 }
 
 /// The largest input a single call may carry.

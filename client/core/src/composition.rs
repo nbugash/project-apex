@@ -172,6 +172,8 @@ pub fn build(
     let mut tasks: Option<Arc<dyn TaskProvider>> = None;
     let mut sender: Option<Arc<dyn crate::application::ports::request_sender::RequestSender>> =
         None;
+    // The transport the reconnection loop drives, when there is one to drive.
+    let mut reconnect_target: Option<Arc<SshTransport>> = None;
     let source: Arc<dyn ConnectionStatusSource> = match engine_target() {
         Some(target) => {
             let (spawner, spec): (Arc<dyn ProcessSpawner>, SpawnSpec) = match target {
@@ -234,14 +236,19 @@ pub fn build(
                 Ok(banner) => {
                     crate::logging::info(&format!("engine transport ready: {banner}"));
                     deployer = Some(Arc::new(SshStreamDeployer::default()));
-                    // The connection the whole client has been missing. Until this line
-                    // `RemoteTasks` was written, tested and impossible to construct.
+                    // Built whether or not this first attempt succeeds (F012). They used to be
+                    // built only on success, so a client launched offline kept a disconnected
+                    // provider for its whole life and a later reconnection changed nothing it
+                    // could reach. `TransportSender` routes through whichever child is live, and
+                    // a request made while none is fails -- the same answer as during an outage.
+                    tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
+                    sender = Some(to_engine);
                     if let Err(e) = transport.connect() {
-                        crate::logging::warn(&format!("the engine did not start: {e}"));
-                    } else {
-                        tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
-                        sender = Some(to_engine);
+                        crate::logging::warn(&format!(
+                            "the engine did not start: {e}; reconnection will keep trying"
+                        ));
                     }
+                    reconnect_target = Some(transport.clone());
                     transport
                 }
                 Err(e) => {
@@ -255,7 +262,6 @@ pub fn build(
         None => stub.clone(),
     };
     let connection = Arc::new(ObserveConnection::new(source.clone()));
-    let source_for_reconcile = source.clone();
     let current_workspace = std::sync::Arc::new(std::sync::Mutex::new(None));
 
     // The engine-backed provider, when there is an engine to back it.
@@ -308,12 +314,14 @@ pub fn build(
         Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new()),
     ));
 
+    let watched: crate::adapters::inbound::tauri_commands::WatchedPaths = Default::default();
     let workspace = WorkspaceAccess {
         cache: ready.get(),
-        git: apply_git,
+        git: apply_git.clone(),
         register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
         provider,
         reconcile: reconcile.clone(),
+        watched: watched.clone(),
     };
 
     #[cfg(debug_assertions)]
@@ -332,67 +340,82 @@ pub fn build(
         rail,
     };
 
-    // ---- F012: the first reconciliation trigger, a transition into Connected ----
+    // ---- F012: reconnection (§11.5, FR-018a) ----
     //
-    // **Driven by the published connection state, not by a timer and not by the first successful
-    // request** (A-RECONNECT). A timer would be a second detector of a state that is already
-    // published, which is the defect F011 paid for when the git watch and the workspace watch
-    // answered different questions about one repository. The first-successful-request trigger was
-    // rejected in research.md for a different reason: it makes reconciliation a side effect of
-    // whatever the developer happened to do next.
-    {
-        let reconcile = reconcile.clone();
+    // On every loss, a loop tries again on a backoff until the connection returns or the failure
+    // says it will not. On success, the current workspace is registered with the new engine, git
+    // status is asked for -- which also makes the engine watch the repository again -- and only
+    // then is offline work reconciled. This replaces T046's subscriber, which reconciled on the
+    // transition into `Connected` itself: it fired once at startup before any workspace was open,
+    // and against a working reconnection it would have raced the registration.
+    if let (Some(transport), Some(sender)) = (reconnect_target, sender.clone()) {
+        let resume = Arc::new(ResumeWorkspace {
+            sender,
+            git: apply_git.clone(),
+            reconcile: reconcile.clone(),
+            cache: ready.get(),
+            provider: workspace.provider.clone(),
+            watched: watched.clone(),
+        });
         let current = current_workspace.clone();
-        // `StateSink` is a `Fn`, so the memory of the last state needs interior mutability. A
-        // mutex rather than a `Cell`, because the sink must be `Send + Sync`.
-        let previous = std::sync::Mutex::new(ConnectionState::Unknown);
-        source_for_reconcile.subscribe(Box::new(move |state| {
-            // Once per *transition into* Connected. The sink is invoked with the current state on
-            // subscribe and on every change, so without this comparison a reconnection that
-            // reported `Connected` twice would reconcile twice -- reading every file again and
-            // writing nothing, which is harmless and still wrong.
-            let entered = {
-                let Ok(mut last) = previous.lock() else {
-                    return;
-                };
-                let entered =
-                    state == ConnectionState::Connected && *last != ConnectionState::Connected;
-                *last = state;
-                entered
-            };
-            if !entered {
+        let reconnect = Arc::new(crate::application::use_cases::reconnect::Reconnect::new());
+        let target = transport.clone();
+        transport.subscribe(Box::new(move |state| {
+            if state != ConnectionState::Disconnected {
                 return;
             }
-            let Some(ws) = current
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .map(crate::domain::workspace::WorkspaceId)
-            else {
-                // No workspace open: nothing to reconcile, and nothing to say about it.
-                return;
-            };
-            let reconcile = reconcile.clone();
+            let (target, reconnect, resume, current) = (
+                target.clone(),
+                reconnect.clone(),
+                resume.clone(),
+                current.clone(),
+            );
             // A thread with its own runtime rather than `tokio::spawn`, for the reason
             // `SshTransport::subscribe` gives: this is reached from the composition root during
-            // startup, which is not guaranteed to be inside a runtime, and a `spawn` that panicked
-            // there would take the connection reporting down with it.
+            // startup, which is not guaranteed to be inside a runtime.
             std::thread::spawn(move || {
+                // The `disallowed_methods` lint bans std::thread::sleep because it blocks the
+                // caller, and blocking is exactly what is wanted here: this is a dedicated OS
+                // thread, not a tokio worker, and waiting out the backoff is its whole job -- the
+                // same exception `persist_session.rs` makes for its debounce. The lint stays in
+                // force for the async code it exists to protect.
+                #[allow(clippy::disallowed_methods)]
+                let outcome = reconnect.run(
+                    target.as_ref(),
+                    &std::thread::sleep,
+                    &mut crate::application::use_cases::reconnect::jitter,
+                );
+                let Some(outcome) = outcome else {
+                    return; // a loop is already running
+                };
+                crate::logging::info(&format!("reconnection: {outcome:?}"));
+                if !matches!(
+                    outcome,
+                    crate::application::use_cases::reconnect::Reconnected::Connected { .. }
+                ) {
+                    return;
+                }
+                let Some(ws) = current
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .map(crate::domain::workspace::WorkspaceId)
+                else {
+                    return; // nothing open, so nothing to resume
+                };
                 let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                 else {
-                    crate::logging::warn("could not reconcile offline work: no runtime");
+                    crate::logging::warn("could not resume after reconnecting: no runtime");
                     return;
                 };
-                rt.block_on(async move {
-                    let report = reconcile.run(&ws).await;
-                    // Logged per file, never with content: a file being edited may hold a
-                    // credential, which is the reason F006 gives for the same rule.
-                    for (path, outcome) in &report.files {
-                        crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
-                    }
-                });
+                rt.block_on(
+                    crate::application::use_cases::reconnect::resume_after_reconnect(
+                        resume.as_ref(),
+                        &ws,
+                    ),
+                );
             });
         }));
     }
@@ -453,5 +476,70 @@ impl WorkspaceProvider for DisconnectedWorkspace {
         _base: &Sha256,
     ) -> ProviderResult<Sha256> {
         Err(ProviderError::Offline)
+    }
+}
+
+/// The reconnection sequence's three steps, against the real collaborators.
+struct ResumeWorkspace {
+    sender: Arc<dyn crate::application::ports::request_sender::RequestSender>,
+    git: Option<Arc<crate::application::use_cases::apply_git_status::ApplyGitStatus>>,
+    reconcile: Arc<crate::application::use_cases::reconcile::Reconcile>,
+    cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
+    provider: Arc<dyn WorkspaceProvider>,
+    watched: crate::adapters::inbound::tauri_commands::WatchedPaths,
+}
+
+#[async_trait::async_trait]
+impl crate::application::use_cases::reconnect::Resume for ResumeWorkspace {
+    async fn register(&self, ws: &crate::domain::workspace::WorkspaceId) -> bool {
+        // The root path comes from this client's own projection, as `workspace_resume` gets it:
+        // the session records an identity and a name, and not where the workspace is.
+        let Ok(Some(known)) = self.cache.workspace(ws) else {
+            return false;
+        };
+        let base = match &known.location {
+            crate::domain::workspace::Location::Remote { base, .. } => base.clone(),
+            crate::domain::workspace::Location::Local { base } => base.clone(),
+        };
+        crate::adapters::inbound::task_commands::register_with_engine(&self.sender, &ws.0, &base)
+            .await
+    }
+
+    async fn rewatch(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        let paths: Vec<crate::domain::workspace::RelPath> = self
+            .watched
+            .lock()
+            .ok()
+            .and_then(|all| all.get(&ws.0).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|p| crate::domain::workspace::RelPath::parse(p).ok())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        match self.provider.watch(ws, &paths).await {
+            Ok(outcome) => crate::logging::info(&format!(
+                "re-watched {} paths after reconnecting",
+                outcome.watching
+            )),
+            Err(e) => crate::logging::warn(&format!("could not re-watch after reconnecting: {e}")),
+        }
+    }
+
+    async fn refresh_git(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        if let Some(git) = self.git.as_ref() {
+            let outcome = git.refresh(ws).await;
+            crate::logging::info(&format!("git status after reconnecting: {outcome:?}"));
+        }
+    }
+
+    async fn reconcile(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        let report = self.reconcile.run(ws).await;
+        // Per file, never with content: a file being edited may hold a credential, which is the
+        // reason F006 gives for the same rule.
+        for (path, outcome) in &report.files {
+            crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
+        }
     }
 }

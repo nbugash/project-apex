@@ -12,7 +12,6 @@
 use crate::application::ports::text_merge::{MergeOutcome, TextMerge};
 use crate::application::ports::workspace_cache::WorkspaceCache;
 use crate::application::ports::workspace_provider::{ProviderError, WorkspaceProvider};
-use crate::domain::connection::ConnectionState;
 use crate::domain::workspace::{RelPath, Sha256, WorkspaceId};
 use std::sync::Arc;
 
@@ -50,24 +49,6 @@ impl ReconcileReport {
     pub fn has_conflicts(&self) -> bool {
         self.files.iter().any(|(_, o)| o == &Outcome::Conflicted)
     }
-}
-
-/// Whether this transition is the one that starts a reconciliation.
-///
-/// Extracted from the composition root so the rule is testable: a sink there is reached only by
-/// starting the application, and three requirements turn on this one comparison.
-///
-/// - **Once per transition** into `Connected`. The sink is invoked with the current state on
-///   subscribe and on every change, so a reconnection reporting `Connected` twice would otherwise
-///   reconcile twice -- harmless and still wrong.
-/// - **Never on any other state.** `Connecting` and `Retrying` are not connected, and reconciling
-///   during them would write against a host that is not there.
-/// - **Edge case EC-16**: a reconnection whose protocol version is incompatible never reaches
-///   `Connected` (§3.8 refuses a newer engine and redeploys an older one), so it does not reconcile.
-///   A workspace that cannot be used cannot be reconciled, and that holds here by construction
-///   rather than by a check of its own.
-pub fn entered_connected(previous: &ConnectionState, current: &ConnectionState) -> bool {
-    current == &ConnectionState::Connected && previous != &ConnectionState::Connected
 }
 
 pub struct Reconcile {

@@ -451,6 +451,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_watch_record_is_the_net_of_what_the_engine_accepted() {
+        let watched: WatchedPaths = Default::default();
+        let (w1, w2) = (WorkspaceId("w1".into()), WorkspaceId("w2".into()));
+        let p = |s: &str| RelPath::parse(s).expect("path");
+
+        record_watch(
+            &watched,
+            &w1,
+            &[p("/"), p("/src"), p("/huge")],
+            &[],
+            &["/huge".into()],
+        );
+        record_watch(&watched, &w2, &[p("/other")], &[], &[]);
+        record_watch(&watched, &w1, &[], &[p("/src")], &[]);
+
+        let all = watched.lock().unwrap();
+        let w1: Vec<&String> = all["w1"].iter().collect();
+        // `/huge` was refused, so re-sending it after a reconnection would only be refused again;
+        // `/src` was collapsed; and another workspace's watches are its own.
+        assert_eq!(w1, vec!["/"]);
+        assert_eq!(all["w2"].iter().collect::<Vec<_>>(), vec!["/other"]);
+    }
+
+    #[test]
     fn unknown_region_identifiers_are_rejected_at_the_boundary() {
         assert_eq!(parse_region("../../etc"), Err(ShellError::InvalidRegion));
         assert_eq!(parse_region(""), Err(ShellError::InvalidRegion));
@@ -578,7 +602,43 @@ pub struct WorkspaceAccess {
     /// before any workspace is open, and nothing reconnects mid-session, so without this
     /// reconciliation would never run at all.
     pub reconcile: Arc<crate::application::use_cases::reconcile::Reconcile>,
+    /// What the engine has been asked to watch, per workspace, as the net of every add and remove.
+    ///
+    /// Kept because a fresh engine after a reconnection has forgotten every watch, and the client
+    /// is the one that knows what it asked for. The reconnection sequence re-sends this after the
+    /// workspace is registered -- re-declaring from the webview instead would race that
+    /// registration and be refused.
+    pub watched: WatchedPaths,
 }
+
+/// Keep the net watch set in step with what the engine accepted.
+///
+/// Recorded only after the engine answered, and without what it refused: re-sending a refused path
+/// after every reconnection would only be refused again.
+pub fn record_watch(
+    watched: &WatchedPaths,
+    ws: &WorkspaceId,
+    added: &[RelPath],
+    removed: &[RelPath],
+    refused: &[String],
+) {
+    let Ok(mut all) = watched.lock() else {
+        return;
+    };
+    let set = all.entry(ws.0.clone()).or_default();
+    for p in removed {
+        set.remove(p.as_str());
+    }
+    for p in added {
+        if !refused.iter().any(|r| r == p.as_str()) {
+            set.insert(p.as_str().to_string());
+        }
+    }
+}
+
+/// The net watch set per workspace. See `WorkspaceAccess::watched`.
+pub type WatchedPaths =
+    Arc<std::sync::Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>>>;
 
 /// A registered workspace, as the interface sees it.
 #[derive(Debug, Clone, Serialize)]
@@ -1106,6 +1166,7 @@ pub async fn workspace_watch(
         // before and after, which on a large collapse-and-expand is twice what was ever wanted.
         let outcome = access.provider.unwatch(&ws, &paths).await?;
         watching = outcome.watching;
+        record_watch(&access.watched, &ws, &[], &paths, &[]);
     }
     if !add.is_empty() {
         let paths = parse_paths(&add)?;
@@ -1116,6 +1177,7 @@ pub async fn workspace_watch(
             .into_iter()
             .map(|r| r.path.as_str().to_string())
             .collect();
+        record_watch(&access.watched, &ws, &paths, &[], &refused);
     }
     Ok(WatchOutcomeDto { watching, refused })
 }
