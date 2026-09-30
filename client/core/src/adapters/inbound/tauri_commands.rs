@@ -465,7 +465,50 @@ pub async fn file_write(
     let outcome = EditFile::new(access.provider.clone())
         .save(&ws, &rel, &content, &base)
         .await;
+    if matches!(outcome, WriteOutcome::Written { .. }) {
+        settle_pending_after_online_save(&access, &ws, &rel);
+    }
     Ok(outcome.into())
+}
+
+/// A save that landed online supersedes any offline work still held for the path.
+///
+/// The editor shows retained work as the file's content and saves against its base (FR-013,
+/// `pending_chunk`), so a write the host accepted -- conditional on that base -- has put the
+/// developer's latest on the host. Left in place, the row kept the file marked "held locally" and
+/// the next reconciliation would merge stale offline content against the newer save. Only a
+/// `Written` outcome settles it: a host that moved refuses the save, and then the row, and the
+/// conflict it stands for, correctly remain.
+fn settle_pending_after_online_save(access: &WorkspaceAccess, ws: &WorkspaceId, rel: &RelPath) {
+    let held = access
+        .cache
+        .pending_edits(ws)
+        .map(|rows| rows.iter().any(|(p, _)| p == rel))
+        .unwrap_or(false);
+    if !held {
+        return;
+    }
+    if let Err(e) = access.cache.forget_pending(ws, rel) {
+        crate::logging::warn(&format!(
+            "saved online, but the retained work for {} could not be dropped: {e}",
+            rel.as_str()
+        ));
+        return;
+    }
+    drop_from_report(&access.reconciled, ws, rel);
+    announce_pending_changed(access.notifications.as_ref());
+}
+
+/// Remove one settled file from the recorded reconciliation report, and the report once empty.
+fn drop_from_report(reconciled: &LastReconciliation, ws: &WorkspaceId, rel: &RelPath) {
+    if let Ok(mut all) = reconciled.lock() {
+        if let Some(report) = all.get_mut(&ws.0) {
+            report.files.retain(|f| f.relative_path != rel.as_str());
+            if report.files.is_empty() {
+                all.remove(&ws.0);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -719,16 +762,28 @@ pub struct WorkspaceDto {
 pub async fn workspace_read_directory(
     workspace_id: String,
     relative_path: String,
+    cursor: Option<String>,
     access: State<'_, WorkspaceAccess>,
-) -> Result<Vec<EntryDto>, WorkspaceFailure> {
+) -> Result<DirectoryPageDto, WorkspaceFailure> {
     // Untrusted input: a path that does not parse is refused here rather than being repaired
-    // into something that does.
+    // into something that does. The cursor is opaque and only ever compared, but it is bounded:
+    // a token longer than any name the engine lists is not one it minted.
     let path = RelPath::parse(&relative_path).map_err(|_| WorkspaceFailure::Refused)?;
+    if cursor.as_ref().is_some_and(|c| c.len() > 4096) {
+        return Err(WorkspaceFailure::Refused);
+    }
     let page = access
         .provider
-        .read_directory(&WorkspaceId(workspace_id), &path, PageRequest::default())
+        .read_directory(
+            &WorkspaceId(workspace_id),
+            &path,
+            PageRequest {
+                cursor,
+                ..PageRequest::default()
+            },
+        )
         .await?;
-    Ok(page
+    let entries = page
         .items
         .into_iter()
         .map(|e| EntryDto {
@@ -740,7 +795,20 @@ pub async fn workspace_read_directory(
             size: e.size,
             modified: e.modified,
         })
-        .collect())
+        .collect();
+    Ok(DirectoryPageDto {
+        entries,
+        next_cursor: page.next_cursor,
+    })
+}
+
+/// One page of a folder (FR-024). `next_cursor` is present exactly when more remain, and the
+/// interface asks again with it until it is absent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryPageDto {
+    pub entries: Vec<EntryDto>,
+    pub next_cursor: Option<String>,
 }
 
 #[tauri::command]
@@ -1337,14 +1405,7 @@ pub async fn conflict_resolve(
         ResolveOutcome::Resolved => {
             // Out of the recorded report too, so the status bar stops counting a conflict the
             // developer has settled.
-            if let Ok(mut all) = access.reconciled.lock() {
-                if let Some(report) = all.get_mut(&ws.0) {
-                    report.files.retain(|f| f.relative_path != rel.as_str());
-                    if report.files.is_empty() {
-                        all.remove(&ws.0);
-                    }
-                }
-            }
+            drop_from_report(&access.reconciled, &ws, &rel);
             dto("resolved", None)
         }
         ResolveOutcome::Conflicted => dto(

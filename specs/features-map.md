@@ -111,10 +111,12 @@ an intention to do it.
   - [x] Reconnection fast-forward where the remote has not moved
 - [ ] **F019 offline-merge** (depends: F012)
   - Spec: not yet specified
-  - [ ] Three-way merge of base, local and remote per file
-  - [ ] Conflict interface for hunks that genuinely collide
-  - [ ] Reconciliation ordering across many changed files on reconnect
-  - [ ] Merge outcome reporting and audit trail
+  - Note: rescoped 2026-09-30. F012 (specs/010-offline-editing) delivered what this feature first listed: the three-way merge, the conflict interface for colliding regions, and per-file reconciliation ordering and outcome reporting. What remains is below.
+  - [ ] Durable audit trail of reconciliation outcomes and how each conflict was resolved
+  - [ ] Per-hunk resolution controls: mine, theirs or both for each colliding region
+  - [ ] Offline deletion and rename retained and reconciled, relaxing F012's FR-034 for exactly these two operations
+  - [ ] A host-side rename of a file edited offline recognised as a rename rather than a deletion
+  - [ ] Reconciliation and prefetch for workspaces that are not the current one
 - [ ] **F020 detached-engine** (depends: F002)
   - Spec: not yet specified
   - [ ] Engine detaches from the channel that started it

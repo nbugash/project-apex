@@ -88,6 +88,17 @@ and refetches it (FR-022a). A re-listing shows one name gone and another present
 linking them, and recovering the link would mean hashing every entry in the folder to save
 refetching one file. The file stays listed throughout; only the cached bytes go.
 
+## Large folders: whole or nothing
+
+A folder is listed in pages of at most 1000 entries (FR-024), and the tree asks for each page in
+turn, rendering it as it arrives. The cache stores a folder's listing **only once its last page has
+arrived**, with the same replace-the-children semantics as before, so what it holds for a folder is
+always the whole folder or nothing: a listing interrupted part-way leaves the folder unlisted, and
+offline it reports as unavailable rather than as a complete folder of 1000. A cached folder is
+served in the same pages with the same cursor the engine mints (`wire::directory_cursor`), so a
+caller cannot tell a cached folder from a live one. Until this was fixed, a folder of more than
+1000 entries showed its first 1000, online and offline, with nothing to say the rest existed.
+
 ## Running the checks
 
 ```bash
