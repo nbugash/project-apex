@@ -5,9 +5,12 @@
 
 use crate::adapters::inbound::task_commands::Tasks;
 use crate::application::error::ShellError;
+use crate::application::ports::workspace_cache::WorkspaceCache;
 use crate::application::use_cases::edit_file::{EditFile, WriteOutcome};
 use crate::application::use_cases::observe_connection::ObserveConnection;
 use crate::application::use_cases::persist_session::PersistSession;
+use crate::application::use_cases::retain_edit::RetainEdit;
+use crate::domain::connection::ConnectionState;
 use crate::domain::layout::RegionId;
 use crate::domain::rail::{DestinationId, RailCatalogue, ToolWindowState};
 use crate::domain::session::{DocumentId, SessionSnapshot};
@@ -24,6 +27,10 @@ pub struct Shell {
     /// from release builds, so it cannot become a production surface by accident.
     #[cfg(debug_assertions)]
     pub stub: Arc<crate::adapters::outbound::stub_connection::StubConnectionStatusSource>,
+    /// Debug builds only: the transport, so `hold_offline_for_tests` can reach it. `None` when no
+    /// engine is configured.
+    #[cfg(debug_assertions)]
+    pub transport: Option<Arc<crate::adapters::outbound::openssh::SshTransport>>,
 }
 
 /// Region identifiers arrive as strings from the bridge and are not trusted to be valid.
@@ -129,6 +136,21 @@ pub fn stub_set_connection(state: String, shell: State<'_, Shell>) -> Result<(),
     Ok(())
 }
 
+/// Debug-only test hook: hold reconnection off while the suite works inside an outage (F012).
+///
+/// The same pattern as `stub_set_connection`, and needed for the opposite reason: in the live run
+/// the stub drives a source nothing reads, and the real transport reconnects too quickly after the
+/// engine is ended to save anything offline. The outage itself stays real -- the suite ends the
+/// engine -- and releasing the hold lets the real reconnection loop do the rest.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn hold_offline_for_tests(hold: bool, shell: State<'_, Shell>) -> Result<(), ShellError> {
+    if let Some(t) = shell.transport.as_ref() {
+        t.hold_offline_for_tests(hold);
+    }
+    Ok(())
+}
+
 /// Destination identifiers arrive as strings and are matched against the catalogue rather
 /// than trusted — the same rule as region identifiers above.
 #[tauri::command]
@@ -203,16 +225,22 @@ pub struct ChunkDto {
     pub offset: u64,
 }
 
-/// What a save produced, as four cases the interface switches on.
+/// What a save produced, as five cases the interface switches on.
 ///
 /// Carried in the success channel deliberately. Three of these are failures, but they are
 /// failures the interface must *branch* on rather than merely report, and splitting them across
 /// `Ok` and `Err` would push the caller back to inspecting an error to find out which it was --
 /// which is what the typed variants exist to prevent.
+///
+/// `HeldLocally` is F012's, and it is a **success**: the work is on this machine and will reconcile
+/// when the connection returns. It sits here for the same reason as the rest -- the interface must
+/// branch on it -- and putting it in `Err` would have made a retained save arrive through the
+/// failure path, which is the confusion §11.2 forbids.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum WriteOutcomeDto {
     Written { sha256: String },
+    HeldLocally,
     Conflict,
     Refused { message: String },
     Unreachable,
@@ -306,6 +334,12 @@ pub async fn file_read(
 ) -> Result<ChunkDto, WorkspaceFailure> {
     let ws = current_workspace(&tasks)?;
     let rel = editor_path(&path)?;
+
+    // A path with retained work reads as the developer's content (FR-013). See `pending_chunk`.
+    if let Some(chunk) = pending_chunk(access.cache.as_ref(), &ws, &rel)? {
+        return Ok(chunk);
+    }
+
     match access.provider.read_file(&ws, &rel, None).await {
         Ok(chunk) => decode_chunk(chunk),
         Err(ProviderError::TooLarge { .. }) => {
@@ -370,6 +404,7 @@ pub async fn file_write(
     path: String,
     content: String,
     base: String,
+    shell: State<'_, Shell>,
     access: State<'_, WorkspaceAccess>,
     tasks: State<'_, Tasks>,
 ) -> Result<WriteOutcomeDto, WorkspaceFailure> {
@@ -380,6 +415,53 @@ pub async fn file_write(
     // and the developer would be told a colleague edited their file when nobody did.
     let base = Sha256::parse(&base).ok_or(WorkspaceFailure::Refused)?;
 
+    // Offline, the save is held rather than attempted (FR-010, FR-011).
+    //
+    // Routed here rather than inside `CachedWorkspace::write_file`, which already checks the
+    // connection: that would widen the caching layer's job and hide the offline branch from where
+    // the `HeldLocally` outcome is produced. `RetainEdit` is constructed from `access.cache`, which
+    // this struct already carries so a command can write through the same port the application
+    // reads through.
+    if !matches!(shell.connection.current(), ConnectionState::Connected) {
+        // The base is the content the host last confirmed, which is what the cache holds. `None`
+        // when there is no cached copy: a file created offline has nothing to differ from, and a
+        // cached copy that has since been evicted is why the base is *stored* with the edit rather
+        // than referenced from the cache (A-PENDING).
+        let held = access
+            .cache
+            .lookup(&ws, &rel)
+            .ok()
+            .flatten()
+            .map(|entry| (entry.bytes, entry.hash));
+        let base_pair = held.as_ref().map(|(bytes, hash)| (bytes.as_slice(), hash));
+        // Mergeable is decided by what the client holds, never by sniffing: the content arrived
+        // here as a `String`, so it is text by construction. A file the editor could not decode
+        // never reaches this command with content to save.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_default();
+        return match RetainEdit::new(access.cache.clone()).save(
+            &ws,
+            &rel,
+            content.as_bytes(),
+            base_pair,
+            true,
+            now,
+        ) {
+            Ok(()) => {
+                announce_pending_changed(access.notifications.as_ref());
+                Ok(WriteOutcomeDto::HeldLocally)
+            }
+            // FR-016: the developer is told while the work is still in the buffer. A store that
+            // refused is not a write conflict and not an unreachable host, so it is `Refused` with
+            // the reason -- the one outcome that says "this will not work until something changes".
+            Err(e) => Ok(WriteOutcomeDto::Refused {
+                message: format!("the edit could not be held locally: {e}"),
+            }),
+        };
+    }
+
     let outcome = EditFile::new(access.provider.clone())
         .save(&ws, &rel, &content, &base)
         .await;
@@ -389,6 +471,64 @@ pub async fn file_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FR-024 says per file, so the order and every outcome survive the crossing, and only a
+    /// failure carries a reason -- a reason on a merge would read as a problem that is not there.
+    #[test]
+    fn the_reconciliation_report_keeps_every_file_in_order_with_a_reason_only_for_failures() {
+        use crate::application::use_cases::reconcile::{Outcome, ReconcileReport};
+        let path = |p: &str| RelPath::parse(p).expect("path");
+        let report = ReconcileReport {
+            files: vec![
+                (path("a.rs"), Outcome::FastForwarded),
+                (path("b.rs"), Outcome::Merged),
+                (path("c.rs"), Outcome::Conflicted),
+                (path("d.rs"), Outcome::NotAttempted),
+                (path("e.rs"), Outcome::Failed("the root is gone".into())),
+            ],
+        };
+        let dto = ReconciliationDto::from_report(7, &report);
+        assert_eq!(dto.run, 7);
+        let shown: Vec<(&str, &str, Option<&str>)> = dto
+            .files
+            .iter()
+            .map(|f| (f.relative_path.as_str(), f.outcome, f.detail.as_deref()))
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("/a.rs", "fastForwarded", None),
+                ("/b.rs", "merged", None),
+                ("/c.rs", "conflicted", None),
+                ("/d.rs", "notAttempted", None),
+                ("/e.rs", "failed", Some("the root is gone")),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_watch_record_is_the_net_of_what_the_engine_accepted() {
+        let watched: WatchedPaths = Default::default();
+        let (w1, w2) = (WorkspaceId("w1".into()), WorkspaceId("w2".into()));
+        let p = |s: &str| RelPath::parse(s).expect("path");
+
+        record_watch(
+            &watched,
+            &w1,
+            &[p("/"), p("/src"), p("/huge")],
+            &[],
+            &["/huge".into()],
+        );
+        record_watch(&watched, &w2, &[p("/other")], &[], &[]);
+        record_watch(&watched, &w1, &[], &[p("/src")], &[]);
+
+        let all = watched.lock().unwrap();
+        let w1: Vec<&String> = all["w1"].iter().collect();
+        // `/huge` was refused, so re-sending it after a reconnection would only be refused again;
+        // `/src` was collapsed; and another workspace's watches are its own.
+        assert_eq!(w1, vec!["/"]);
+        assert_eq!(all["w2"].iter().collect::<Vec<_>>(), vec!["/other"]);
+    }
 
     #[test]
     fn unknown_region_identifiers_are_rejected_at_the_boundary() {
@@ -512,7 +652,58 @@ pub struct WorkspaceAccess {
     /// reads through, rather than injecting a fixture into the view.
     pub cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
     pub register: Arc<crate::application::use_cases::register_workspace::RegisterWorkspace>,
+    /// F012's reconciler, for the second trigger: a workspace opened or resumed while connected.
+    ///
+    /// Needed because the first trigger -- a transition into `Connected` -- fires at startup
+    /// before any workspace is open, and nothing reconnects mid-session, so without this
+    /// reconciliation would never run at all.
+    pub reconcile: Arc<crate::application::use_cases::reconcile::Reconcile>,
+    /// What the engine has been asked to watch, per workspace, as the net of every add and remove.
+    ///
+    /// Kept because a fresh engine after a reconnection has forgotten every watch, and the client
+    /// is the one that knows what it asked for. The reconnection sequence re-sends this after the
+    /// workspace is registered -- re-declaring from the webview instead would race that
+    /// registration and be refused.
+    pub watched: WatchedPaths,
+    /// Where `offline/onPendingChanged` goes: after a held save and after a reconciliation, the
+    /// two moments the pending set changes without the connection state changing.
+    pub notifications: Arc<dyn crate::application::ports::notification_sink::NotificationSink>,
+    /// The last reconciliation per workspace, for `offline_status` (FR-024).
+    pub reconciled: LastReconciliation,
+    /// Lists and resolves what the last reconciliation left conflicted (US4).
+    pub conflicts: Arc<crate::application::use_cases::conflicts::Conflicts>,
+    /// Prefetch (US5). `None` when no engine is configured, which is when there is nothing to fetch.
+    pub prefetch: Option<Arc<crate::application::use_cases::prefetch::Prefetch>>,
 }
+
+/// Keep the net watch set in step with what the engine accepted.
+///
+/// Recorded only after the engine answered, and without what it refused: re-sending a refused path
+/// after every reconnection would only be refused again.
+pub fn record_watch(
+    watched: &WatchedPaths,
+    ws: &WorkspaceId,
+    added: &[RelPath],
+    removed: &[RelPath],
+    refused: &[String],
+) {
+    let Ok(mut all) = watched.lock() else {
+        return;
+    };
+    let set = all.entry(ws.0.clone()).or_default();
+    for p in removed {
+        set.remove(p.as_str());
+    }
+    for p in added {
+        if !refused.iter().any(|r| r == p.as_str()) {
+            set.insert(p.as_str().to_string());
+        }
+    }
+}
+
+/// The net watch set per workspace. See `WorkspaceAccess::watched`.
+pub type WatchedPaths =
+    Arc<std::sync::Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>>>;
 
 /// A registered workspace, as the interface sees it.
 #[derive(Debug, Clone, Serialize)]
@@ -592,8 +783,14 @@ pub async fn workspace_open(
             &base_path_for_engine,
         )
         .await;
-        *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
     }
+    // **Set whether or not there is an engine** (F012). This used to sit inside the branch above,
+    // so an application launched while offline never had a current workspace, and every command
+    // that needs one -- reading a cached file, saving, `offline_status` -- refused. That made
+    // FR-012, "survives quit and relaunch while still offline", impossible. Which workspace is open
+    // is a fact about this client; only the engine's registration depends on there being an engine.
+    *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
+    reconcile_and_prefetch_if_connected(&shell, &access, &ws.id);
     // Recorded in the session, and announced, before the id is given back. Until F006 nothing
     // ever constructed a `WorkspaceReference`, so `workspace:changed` announced `None` forever
     // and the interface had no way to learn which workspace it had just opened -- which is why
@@ -768,6 +965,405 @@ pub struct GitStatusDto {
     pub changes: Vec<GitChangeDto>,
 }
 
+/// One file with work the host has not seen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFileDto {
+    pub relative_path: String,
+    /// Whether the client can merge this file as text. `false` means it will prompt on
+    /// reconnection whatever the host did (FR-025a), which the interface says before the
+    /// reconnection rather than during it.
+    pub mergeable: bool,
+}
+
+/// Whether the client is connected, and what it is holding.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineStatusDto {
+    pub connected: bool,
+    pub pending: Vec<PendingFileDto>,
+    /// What the last reconciliation that touched a file did, per file (FR-024). `None` until one
+    /// has run for this workspace in this process. Attached by the `offline_status` command, not
+    /// by `offline_report`, because it lives in memory rather than in the projection.
+    pub last_reconciliation: Option<ReconciliationDto>,
+}
+
+/// One reconciliation, as the interface reads it.
+///
+/// Kept in memory and replaced by the next run rather than stored (data-model.md: a conflict that
+/// must survive is its `pending_edits` row, and this is a statement about one attempt). Kept at all,
+/// rather than sent in `offline/onPendingChanged` and forgotten, because the first run can finish
+/// before the webview is listening, and a report sent to nobody is the outcome FR-024 forbids.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciliationDto {
+    /// Increases with every recorded run, so the interface can tell a new report from one the
+    /// developer has already dismissed.
+    pub run: u64,
+    pub files: Vec<ReconciledFileDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciledFileDto {
+    pub relative_path: String,
+    /// `fastForwarded`, `merged`, `conflicted`, `notAttempted` or `failed`.
+    pub outcome: &'static str,
+    /// Why, for `failed`; absent otherwise. Never file content (F006).
+    pub detail: Option<String>,
+}
+
+impl ReconciliationDto {
+    pub fn from_report(
+        run: u64,
+        report: &crate::application::use_cases::reconcile::ReconcileReport,
+    ) -> Self {
+        use crate::application::use_cases::reconcile::Outcome;
+        let files = report
+            .files
+            .iter()
+            .map(|(path, outcome)| {
+                let (outcome, detail) = match outcome {
+                    Outcome::FastForwarded => ("fastForwarded", None),
+                    Outcome::Merged => ("merged", None),
+                    Outcome::Conflicted => ("conflicted", None),
+                    Outcome::NotAttempted => ("notAttempted", None),
+                    Outcome::Failed(why) => ("failed", Some(why.clone())),
+                };
+                ReconciledFileDto {
+                    relative_path: path.as_str().to_string(),
+                    outcome,
+                    detail,
+                }
+            })
+            .collect();
+        Self { run, files }
+    }
+}
+
+/// The last reconciliation per workspace. See `ReconciliationDto`.
+pub type LastReconciliation =
+    Arc<std::sync::Mutex<std::collections::BTreeMap<String, ReconciliationDto>>>;
+
+/// Assemble the report from a connection state and the projection.
+///
+/// **A free function, not a method on a command.** `offline_status` below is a thin wrapper, so
+/// this is where the contract's guarantees are testable without Tauri's `State` machinery — the
+/// same shape as `parse_region` and `editor_path` above, and the reason F011's git tests exercise
+/// `ApplyGitStatus` rather than the command that calls it.
+///
+/// Guarantee 1 holds because `connected` is derived from the state passed in and from nothing else.
+/// Guarantee 2 holds **by signature**: there is no provider here, so this function could not
+/// contact the engine if it wanted to. That is stronger than a test counting zero requests, which
+/// only says none happened this time.
+pub fn offline_report(
+    cache: &dyn WorkspaceCache,
+    state: &ConnectionState,
+    ws: &WorkspaceId,
+) -> Result<OfflineStatusDto, WorkspaceFailure> {
+    let pending = cache
+        .pending_edits(ws)
+        .map_err(|_| WorkspaceFailure::UnknownWorkspace)?
+        .into_iter()
+        .map(|(path, edit)| PendingFileDto {
+            relative_path: path.as_str().to_string(),
+            mergeable: edit.mergeable,
+        })
+        .collect();
+    Ok(OfflineStatusDto {
+        // Only `Connected` is connected. `Connecting` and `Reconnecting` are not: a developer whose
+        // save must wait is offline for every purpose this feature has, and reporting them as
+        // online would leave the editor claiming a host it cannot reach.
+        connected: matches!(state, ConnectionState::Connected),
+        pending,
+        last_reconciliation: None,
+    })
+}
+
+/// Path search over what this client holds, with an honest completeness signal.
+///
+/// **`complete` is the point, not the paths.** FR-007 requires that results not be presented as
+/// complete, and the only way the interface can honour that is to be told. A list of paths with no
+/// such field would leave every caller free to render it as the whole answer, which is what the
+/// requirement forbids — so the flag travels with the results rather than being inferred from the
+/// connection state somewhere else.
+///
+/// `complete` is false whenever the client is disconnected (the projection holds what was cached,
+/// not what exists) or the limit was reached (there may be more matches than were returned). Those
+/// are different reasons for the same caution, and collapsing them is deliberate: the interface's
+/// job is to avoid claiming completeness, not to explain which bound it met.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathSearchDto {
+    pub paths: Vec<String>,
+    pub complete: bool,
+}
+
+/// The developer's own content for a path that carries retained work, if it does.
+///
+/// **A path with retained work reads as the developer's content** (FR-013). Not the host's last:
+/// opening a file that was edited offline and showing what the host has would present their own
+/// work as absent, and the next save would then be made against a text they never saw.
+///
+/// Whole-file only, and unconditional on the connection. Whole-file because a pending edit *is* the
+/// whole file -- §4.8 carries content and not a patch -- so serving a range of one would be a window
+/// computed for a different copy. Unconditional because pending work exists precisely when the host
+/// has not been told, and reconnection is what resolves it; until then this is the file.
+///
+/// The digest returned is the **base**, never a digest of the pending content. It is what a save is
+/// conditional on, so it must stay the content the host confirmed: a digest of the local text would
+/// make the engine refuse the eventual write as stale against a version it has never held.
+///
+/// Extracted from `file_read` so FR-013 is testable without Tauri's `State`, for the reason
+/// `offline_report` and `search_complete` are.
+pub fn pending_chunk(
+    cache: &dyn WorkspaceCache,
+    ws: &WorkspaceId,
+    rel: &RelPath,
+) -> Result<Option<ChunkDto>, WorkspaceFailure> {
+    let Some((_, edit)) = cache
+        .pending_edits(ws)
+        .ok()
+        .and_then(|rows| rows.into_iter().find(|(p, _)| p == rel))
+    else {
+        return Ok(None);
+    };
+    let text = String::from_utf8(edit.content).map_err(|_| WorkspaceFailure::NotText)?;
+    Ok(Some(ChunkDto {
+        total: text.len() as u64,
+        // A file created offline has no base. An empty digest rather than a fabricated one:
+        // `Sha256::parse` refuses it, so a save carrying it is refused at this boundary rather than
+        // sent to the engine to be refused there as a phantom conflict.
+        sha256: edit
+            .base
+            .as_ref()
+            .map(|(_, hash)| hash.to_string())
+            .unwrap_or_default(),
+        offset: 0,
+        text,
+    }))
+}
+
+/// Whether a result list may be presented as the whole answer.
+///
+/// Extracted so FR-007 is testable without an engine: the live suite covers it end to end, but a
+/// requirement whose only test needs a real connection is a requirement that goes unchecked on
+/// every ordinary run.
+pub fn search_complete(connected: bool, returned: usize, asked: u32) -> bool {
+    // Disconnected is never complete: the projection holds what was cached, not what exists.
+    // Reaching the limit is never complete either, connected or not, because there may be more
+    // matches than were asked for.
+    connected && (returned as u32) < asked
+}
+
+/// Search cached paths. Never contacts the engine, connected or not (FR-031, C6).
+///
+/// The use case behind this has existed since F005 and nothing could reach it: no command, no
+/// registration, no caller. F012 needs it reachable because §11.3 makes path search a capability
+/// that degrades offline rather than one that disappears.
+#[tauri::command]
+pub fn workspace_search_paths(
+    fragment: String,
+    limit: Option<u32>,
+    shell: State<'_, Shell>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<PathSearchDto, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let asked = limit.unwrap_or(crate::application::use_cases::search_paths::DEFAULT_LIMIT);
+    let search =
+        crate::application::use_cases::search_paths::SearchPaths::new(access.cache.clone());
+    let paths = search
+        .find(&ws, &fragment, Some(asked))
+        .map_err(|_| WorkspaceFailure::UnknownWorkspace)?;
+    let connected = matches!(shell.connection.current(), ConnectionState::Connected);
+    Ok(PathSearchDto {
+        complete: search_complete(connected, paths.len(), asked),
+        paths: paths.iter().map(|p| p.as_str().to_string()).collect(),
+    })
+}
+
+/// What the interface reads to know it is offline and what is held locally.
+///
+/// Takes `Shell` for the connection state rather than carrying a second handle on
+/// `WorkspaceAccess`. The connection is one fact for the application, not one per workspace — §13.1
+/// and spec.md's Assumptions both say offline is a state of the connection and not of the workspace
+/// — so `Shell` is where it belongs and already is. `session_get` above takes two states the same
+/// way.
+#[tauri::command]
+pub fn offline_status(
+    shell: State<'_, Shell>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<OfflineStatusDto, WorkspaceFailure> {
+    // Resolved in the core, never accepted from the view: a workspace id from the bridge is
+    // untrusted input, and this command's answer includes the paths a developer is working on.
+    let ws = current_workspace(&tasks)?;
+    let mut status = offline_report(access.cache.as_ref(), &shell.connection.current(), &ws)?;
+    status.last_reconciliation = access
+        .reconciled
+        .lock()
+        .ok()
+        .and_then(|all| all.get(&ws.0).cloned());
+    Ok(status)
+}
+
+/// One conflict as the interface reads it. See `contracts/offline-commands.md`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictDto {
+    pub relative_path: String,
+    pub base: Option<String>,
+    pub local: Option<String>,
+    pub remote: Option<String>,
+    pub base_present: bool,
+    pub remote_present: bool,
+    pub remote_sha256: Option<String>,
+    pub mergeable: bool,
+    /// `overlap`, `notText`, `deletedOnHost` or `createdOnBothSides`.
+    pub reason: &'static str,
+    pub draft: Option<String>,
+}
+
+impl From<crate::application::use_cases::conflicts::Conflict> for ConflictDto {
+    fn from(c: crate::application::use_cases::conflicts::Conflict) -> Self {
+        use crate::application::use_cases::conflicts::ConflictReason;
+        Self {
+            relative_path: c.relative_path.as_str().to_string(),
+            base: c.base,
+            local: c.local,
+            remote: c.remote,
+            base_present: c.base_present,
+            remote_present: c.remote_present,
+            remote_sha256: c.remote_sha256.map(|h| h.as_str().to_string()),
+            mergeable: c.mergeable,
+            reason: match c.reason {
+                ConflictReason::Overlap => "overlap",
+                ConflictReason::NotText => "notText",
+                ConflictReason::DeletedOnHost => "deletedOnHost",
+                ConflictReason::CreatedOnBothSides => "createdOnBothSides",
+            },
+            draft: c.draft,
+        }
+    }
+}
+
+/// The files the last reconciliation of `ws` reported `Conflicted`, re-validated on the way out
+/// (the contract's cross-boundary rule: a path that has been through the store is re-checked).
+fn conflicted_paths(reconciled: &LastReconciliation, ws: &WorkspaceId) -> Vec<RelPath> {
+    reconciled
+        .lock()
+        .ok()
+        .and_then(|all| all.get(&ws.0).cloned())
+        .map(|r| {
+            r.files
+                .into_iter()
+                .filter(|f| f.outcome == "conflicted")
+                .filter_map(|f| RelPath::parse(&f.relative_path).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What the last reconciliation left conflicted, each with its remote side read now (US4, FR-021).
+///
+/// The remote is read on every call and never stored, so it cannot go stale while the developer
+/// decides. Offline, the listing fails with `Offline` rather than answering from memory: a conflict
+/// shown against a remote this client cannot read is one it could not honestly resolve.
+#[tauri::command]
+pub async fn conflicts_list(
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<Vec<ConflictDto>, WorkspaceFailure> {
+    let ws = current_workspace(&tasks)?;
+    let which = conflicted_paths(&access.reconciled, &ws);
+    if which.is_empty() {
+        return Ok(Vec::new());
+    }
+    let listed = access.conflicts.list(&ws, &which).await?;
+    Ok(listed.into_iter().map(ConflictDto::from).collect())
+}
+
+/// What the developer chose, from the bridge.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ResolutionDto {
+    Text { text: String },
+    KeepLocal,
+    TakeRemote,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveOutcomeDto {
+    /// `resolved`, `conflicted`, `refused`, `notAttempted` or `failed`.
+    pub outcome: &'static str,
+    pub message: Option<String>,
+}
+
+/// Settle one conflict (US4 scenario 3). Written and forgotten together; a host that moved while
+/// the developer decided makes it a new conflict, not an error.
+///
+/// `remote_sha256` is the remote the developer was shown, and the write is conditional on it. The
+/// path and digest are untrusted input and refused rather than repaired, like every path here.
+#[tauri::command]
+pub async fn conflict_resolve(
+    relative_path: String,
+    resolution: ResolutionDto,
+    remote_sha256: Option<String>,
+    access: State<'_, WorkspaceAccess>,
+    tasks: State<'_, Tasks>,
+) -> Result<ResolveOutcomeDto, WorkspaceFailure> {
+    use crate::application::use_cases::conflicts::{Resolution, ResolveOutcome};
+    let ws = current_workspace(&tasks)?;
+    let rel = editor_path(&relative_path)?;
+    let seen = match remote_sha256 {
+        Some(h) => Some(Sha256::parse(&h).ok_or(WorkspaceFailure::Refused)?),
+        None => None,
+    };
+    // Only a file the last reconciliation called a conflict may be resolved here. Anything else
+    // is pending for another reason, and settling it through this door would skip reconciliation.
+    if !conflicted_paths(&access.reconciled, &ws).contains(&rel) {
+        return Err(WorkspaceFailure::Refused);
+    }
+    let resolution = match resolution {
+        ResolutionDto::Text { text } => Resolution::Text(text),
+        ResolutionDto::KeepLocal => Resolution::KeepLocal,
+        ResolutionDto::TakeRemote => Resolution::TakeRemote,
+    };
+    let outcome = access.conflicts.resolve(&ws, &rel, resolution, seen).await;
+    let dto = |outcome, message| ResolveOutcomeDto { outcome, message };
+    let result = match outcome {
+        ResolveOutcome::Resolved => {
+            // Out of the recorded report too, so the status bar stops counting a conflict the
+            // developer has settled.
+            if let Ok(mut all) = access.reconciled.lock() {
+                if let Some(report) = all.get_mut(&ws.0) {
+                    report.files.retain(|f| f.relative_path != rel.as_str());
+                    if report.files.is_empty() {
+                        all.remove(&ws.0);
+                    }
+                }
+            }
+            dto("resolved", None)
+        }
+        ResolveOutcome::Conflicted => dto(
+            "conflicted",
+            Some("the host changed again while you decided; here is its newer version".into()),
+        ),
+        ResolveOutcome::Refused(why) => dto("refused", Some(why)),
+        ResolveOutcome::NotAttempted => dto(
+            "notAttempted",
+            Some("the connection is gone; your work is still held".into()),
+        ),
+        ResolveOutcome::Failed(why) => dto("failed", Some(why)),
+    };
+    if matches!(result.outcome, "resolved" | "conflicted") {
+        announce_pending_changed(access.notifications.as_ref());
+    }
+    Ok(result)
+}
+
 /// The git state this client has for the current workspace.
 ///
 /// **Reads the projection; never the engine.** An outage therefore costs nothing and times out
@@ -859,6 +1455,7 @@ pub async fn workspace_watch(
         // before and after, which on a large collapse-and-expand is twice what was ever wanted.
         let outcome = access.provider.unwatch(&ws, &paths).await?;
         watching = outcome.watching;
+        record_watch(&access.watched, &ws, &[], &paths, &[]);
     }
     if !add.is_empty() {
         let paths = parse_paths(&add)?;
@@ -869,8 +1466,108 @@ pub async fn workspace_watch(
             .into_iter()
             .map(|r| r.path.as_str().to_string())
             .collect();
+        record_watch(&access.watched, &ws, &paths, &[], &refused);
     }
     Ok(WatchOutcomeDto { watching, refused })
+}
+
+/// Reconcile a workspace that has just become current, if the client is connected.
+///
+/// **The second trigger** (A-RECONNECT, amended by F012's implementation). The first -- a
+/// transition into `Connected` -- is subscribed in the composition root, and it fires once at
+/// startup *before* any workspace is open, so it finds nothing to reconcile. With no reconnection
+/// loop in the client (§11.5's is unbuilt), that was the only transition there would ever be:
+/// reconciliation never ran. Opening or resuming a workspace while connected is the moment both
+/// inputs exist -- a connection and a workspace -- and it mirrors FR-029b's two triggers for
+/// prefetch exactly.
+///
+/// Spawned, not awaited: opening a workspace must not wait on writing every pending file.
+fn reconcile_and_prefetch_if_connected(shell: &Shell, access: &WorkspaceAccess, ws: &WorkspaceId) {
+    if !matches!(shell.connection.current(), ConnectionState::Connected) {
+        return;
+    }
+    let reconcile = access.reconcile.clone();
+    let notifications = access.notifications.clone();
+    let reconciled = access.reconciled.clone();
+    let prefetch = access.prefetch.clone();
+    let ws = ws.clone();
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            crate::logging::warn("could not reconcile offline work: no runtime");
+            return;
+        };
+        rt.block_on(async {
+            reconcile_and_announce(&reconcile, notifications.as_ref(), &reconciled, &ws).await;
+            // FR-029b's first trigger, after the developer's own work has landed.
+            if let Some(prefetch) = prefetch {
+                log_prefetch(&prefetch.run(&ws).await);
+            }
+        });
+    });
+}
+
+/// One line per run: what it fetched and whether it stopped at the budget. Stopping is logged as
+/// an ordinary outcome, because it is one (FR-029a).
+pub fn log_prefetch(report: &crate::application::use_cases::prefetch::PrefetchReport) {
+    crate::logging::info(&format!(
+        "prefetch: {} files cached{}",
+        report.fetched,
+        if report.stopped_at_budget {
+            ", stopped at the budget"
+        } else {
+            ""
+        }
+    ));
+}
+
+/// Sent by the core itself, not the engine, when the set of pending edits may have changed.
+///
+/// On the same `apex:notification` channel as engine frames so the webview routes it the way it
+/// routes `git/onStatusUpdate`: by method, then reading the state back through `offline_status`.
+/// Without it `OfflineStore` refreshes only on a connection change, and neither a held save nor a
+/// reconciliation is one -- the held-locally mark would lag the work by an entire outage.
+pub const PENDING_CHANGED: &str = "offline/onPendingChanged";
+
+pub fn announce_pending_changed(
+    sink: &dyn crate::application::ports::notification_sink::NotificationSink,
+) {
+    sink.deliver(
+        PENDING_CHANGED,
+        r#"{"jsonrpc":"2.0","method":"offline/onPendingChanged"}"#,
+    );
+}
+
+/// Run a reconciliation, log it per file, record it, and announce it if it touched anything. Both
+/// triggers -- the reconnection sequence and a workspace opened while connected -- come through here.
+///
+/// An empty report is a run that found nothing or declined because another was in flight; that
+/// other run records and announces its own result, and recording the empty one would replace a
+/// report the developer has not read yet with nothing.
+pub async fn reconcile_and_announce(
+    reconcile: &crate::application::use_cases::reconcile::Reconcile,
+    sink: &dyn crate::application::ports::notification_sink::NotificationSink,
+    reconciled: &LastReconciliation,
+    ws: &WorkspaceId,
+) {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let report = reconcile.run(ws).await;
+    // Per file, never with content: a file being edited may hold a credential, which is the
+    // reason F006 gives for the same rule.
+    for (path, outcome) in &report.files {
+        crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
+    }
+    if report.files.is_empty() {
+        return;
+    }
+    let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if let Ok(mut all) = reconciled.lock() {
+        all.insert(ws.0.clone(), ReconciliationDto::from_report(run, &report));
+    }
+    // After recording, so the webview's re-read finds the report the event announces.
+    announce_pending_changed(sink);
 }
 
 /// Untrusted input, refused rather than repaired into something that parses.
@@ -896,6 +1593,7 @@ fn parse_paths(raw: &[String]) -> Result<Vec<RelPath>, WorkspaceFailure> {
 #[tauri::command]
 pub async fn workspace_resume(
     workspace_id: String,
+    shell: State<'_, Shell>,
     access: State<'_, WorkspaceAccess>,
     tasks: State<'_, Tasks>,
 ) -> Result<bool, WorkspaceFailure> {
@@ -919,8 +1617,11 @@ pub async fn workspace_resume(
 
     if let Some(sender) = tasks.sender.as_ref() {
         crate::adapters::inbound::task_commands::register_with_engine(sender, &ws.0, &base).await;
-        *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
     }
+    // Outside the branch for the reason `workspace_open` gives: a restored session launched offline
+    // must still know which workspace it is showing, or nothing in it can be read (FR-012).
+    *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
+    reconcile_and_prefetch_if_connected(&shell, &access, &ws);
     // Asking is also what makes the engine start watching this repository, so this is not
     // merely a refresh: without it nothing would be pushed for the rest of the session.
     if let Some(git) = access.git.as_ref() {

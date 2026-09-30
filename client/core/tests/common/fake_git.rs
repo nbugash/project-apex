@@ -16,6 +16,10 @@ pub struct FakeGit {
     /// Every cursor asked for, in order. The evidence for "no request was issued".
     pub asked: Mutex<Vec<String>>,
     diff: Mutex<GitDiffResult>,
+    /// What `recently_changed` answers. Empty by default: a workspace with no history.
+    pub recent: Mutex<Option<ProviderResult<Vec<String>>>>,
+    /// How many times `recently_changed` was asked.
+    pub recent_asked: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeGit {
@@ -32,6 +36,10 @@ impl FakeGit {
 
     pub fn set_diff(&self, diff: GitDiffResult) {
         *self.diff.lock().unwrap() = diff;
+    }
+
+    pub fn set_recent(&self, answer: ProviderResult<Vec<String>>) {
+        *self.recent.lock().unwrap() = Some(answer);
     }
 
     pub fn asked_for(&self) -> Vec<String> {
@@ -62,5 +70,15 @@ impl GitProvider for FakeGit {
         _relative_path: &str,
     ) -> ProviderResult<GitDiffResult> {
         Ok(self.diff.lock().unwrap().clone())
+    }
+
+    async fn recently_changed(&self, _workspace: &WorkspaceId) -> ProviderResult<Vec<String>> {
+        self.recent_asked
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.recent
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Ok(Vec::new()))
     }
 }

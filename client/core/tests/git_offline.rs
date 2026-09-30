@@ -37,6 +37,9 @@ impl GitProvider for Disconnected {
     ) -> ProviderResult<apex_protocol::wire::GitDiffResult> {
         Err(ProviderError::Offline)
     }
+    async fn recently_changed(&self, _: &WorkspaceId) -> ProviderResult<Vec<String>> {
+        Err(ProviderError::Offline)
+    }
 }
 
 fn ws() -> WorkspaceId {

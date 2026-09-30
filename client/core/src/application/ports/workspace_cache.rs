@@ -69,6 +69,27 @@ pub enum MigrationFailure {
     FromTheFuture { found: u32, expected: u32 },
 }
 
+/// Work saved while disconnected, and everything needed to reconcile it (A-PENDING).
+///
+/// **Self-contained on purpose.** It carries the base *content*, not a reference to it, so a merge
+/// never depends on a cache entry that eviction may have removed or a refetch overwritten. That
+/// makes this the durable fact of offline editing: every reconciliation outcome is a statement
+/// about one attempt on one of these, and the row outlives every attempt but a confirmed write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingEdit {
+    /// What the developer saved while offline.
+    pub content: Vec<u8>,
+    /// The content this was derived from, and its digest. `None` for a file created offline, which
+    /// has nothing to differ from. The two move together: one without the other is a malformed row
+    /// and the reader treats the file as unmergeable rather than merging against half a base.
+    pub base: Option<(Vec<u8>, Sha256)>,
+    /// Whether the client holds this file as text it can merge. `false` when it was never decoded
+    /// as UTF-8 or it exceeds the editor's limit; such a file always prompts (FR-025a).
+    pub mergeable: bool,
+    /// Unix seconds, for ordering the reconciliation report. Never for deciding anything.
+    pub retained_at: i64,
+}
+
 /// Progress callback, invoked at least once per second while a phase runs (FR-018a).
 pub type PhaseSink<'a> = &'a mut dyn FnMut(MaintenancePhase);
 
@@ -197,6 +218,35 @@ pub trait WorkspaceCache: Send + Sync {
     /// workspace that is not a repository has -- the two are indistinguishable here, and
     /// deliberately so (FR-027).
     fn git_status(&self, ws: &WorkspaceId) -> CacheResult<GitProjection>;
+
+    // ---- offline work (F012) ----
+    /// Hold a saved offline edit, replacing any the path already carries.
+    ///
+    /// Replacing, not accumulating: a second offline save of one file supersedes the first, and the
+    /// base it was derived from does **not** move (FR-011b). The implementation preserves the
+    /// stored base on replacement, because re-deriving it from the new local content would make
+    /// the eventual merge compare local against local — a clean merge that is wrong, which no
+    /// assertion about success would notice.
+    fn retain_edit(&self, ws: &WorkspaceId, path: &RelPath, edit: &PendingEdit) -> CacheResult<()>;
+
+    /// Every path in this workspace carrying work the host has not seen.
+    ///
+    /// Scoped to one workspace. The table is keyed `(workspace_id, relative_path)` precisely so
+    /// this can be, and a query that forgot the first half of the key would still return plausible
+    /// rows — from somebody else's workspace.
+    fn pending_edits(&self, ws: &WorkspaceId) -> CacheResult<Vec<(RelPath, PendingEdit)>>;
+
+    /// Drop one path's retained work.
+    ///
+    /// **Only inside the transaction that commits the host write.** Called alone, it is how work is
+    /// lost: every other outcome of a reconciliation attempt — a conflict, a refused stale write, a
+    /// connection that dropped — must leave the row alone, which is what makes FR-022 true by
+    /// construction rather than by care.
+    fn forget_pending(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()>;
+
+    /// Bytes of cached content as stored, across every workspace. Prefetch's budget is measured
+    /// against this (A-PREFETCHCAP); nothing else reads it, and nothing evicts because of it.
+    fn cached_bytes(&self) -> CacheResult<u64>;
 
     fn schema_version(&self) -> CacheResult<u32>;
 

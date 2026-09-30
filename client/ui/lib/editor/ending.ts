@@ -38,9 +38,30 @@ export function describeOutcome(o: WriteOutcome): OutcomeLabel {
         tone: 'warning',
       };
 
+    case 'heldLocally':
+      // A success, and said as one. The developer needs to know two things: the work is safe, and
+      // the host does not have it yet -- so both are here, because "Saved" alone would be the
+      // confusion §11.2 forbids and "Not saved" would be false.
+      return {
+        title: 'Held on this machine',
+        detail:
+          'Saved locally. It will be sent to the host when the connection returns, and you will be asked about anything that collided.',
+        offersReload: false,
+        tone: 'ok',
+      };
+
     case 'unreachable':
       // About the link, and never about the file. Offering a reload here would discard the
       // developer's work to fetch a version that is not reachable either.
+      //
+      // **F012 left this alone, and a task said to change it.** T031b argued that an offline save
+      // is now held, so this case must mean the write could not even be held locally. That is
+      // wrong given how the write path routes: `file_write` sends a save to the retainer *before*
+      // `EditFile` is reached whenever the connection state is anything but connected, and a retain
+      // that fails returns `Refused` with its reason. So `unreachable` still means exactly what
+      // F006 made it mean -- a request that went out believing the link was up and never landed --
+      // and F006's own tests, which require this case to name the link and to promise the work is
+      // still here, were right to fail the rewrite.
       return {
         title: 'Not saved: the engine could not be reached',
         detail: 'Your changes are still here. Saving again once the connection returns will work.',

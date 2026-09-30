@@ -689,6 +689,29 @@ pub struct GitStatusUpdate {
     pub next_cursor: Option<String>,
 }
 
+/// `git/recentlyChanged`'s request (A-RECENT, `contracts/recently-changed.md`).
+///
+/// `commits` is signed on purpose: a negative count must reach the engine as a number it can
+/// refuse with `-32602`, rather than fail to parse into a type that cannot hold it and be refused
+/// with a message about the type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentlyChangedParams {
+    pub workspace_id: WorkspaceId,
+    /// Absent takes `DEFAULT_RECENT_COMMITS`; more than `MAX_RECENT_COMMITS` gets the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commits: Option<i64>,
+}
+
+/// Paths only (guarantee 1). There is no field here for a commit, an author, a date or content,
+/// and there must never be one without amending A-RECENT. Not paged (guarantee 6): no cursor.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentlyChangedResult {
+    pub paths: Vec<String>,
+}
+
+pub const DEFAULT_RECENT_COMMITS: u32 = 20;
+pub const MAX_RECENT_COMMITS: u32 = 100;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitDiffParams {
     pub workspace_id: WorkspaceId,

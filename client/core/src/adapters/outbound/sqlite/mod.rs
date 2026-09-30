@@ -14,8 +14,8 @@ pub mod migrate;
 pub mod schema;
 
 use crate::application::ports::workspace_cache::{
-    Attachment, CacheError, CacheResult, EvictionReport, MigrationFailure, PhaseSink, StoreOutcome,
-    WorkspaceCache,
+    Attachment, CacheError, CacheResult, EvictionReport, MigrationFailure, PendingEdit, PhaseSink,
+    StoreOutcome, WorkspaceCache,
 };
 use crate::domain::cache::CacheEntry;
 use crate::domain::workspace::{
@@ -499,9 +499,19 @@ impl WorkspaceCache for SqliteWorkspaceCache {
             return Ok(Vec::new());
         }
         self.with(|c| {
+            // **`CROSS JOIN` pins the join order, and that is the whole performance of this
+            // query.** With a plain `JOIN`, SQLite drives on `files` -- `workspace_id = ?2` looks
+            // selective, so it takes `idx_files_lookup` as the outer loop and re-runs the MATCH
+            // once per row. Measured on 50,000 cached paths: the MATCH alone answers in 1 ms and
+            // the plain join took 12,345 ms, which is fifty thousand matches. `CROSS JOIN` is
+            // SQLite's documented way to say "this table is the outer one" and costs nothing else.
+            //
+            // The `LIMIT` must stay **after** the workspace filter, which is why this is a join
+            // order hint rather than a subquery limiting the MATCH: a match in another workspace
+            // would otherwise consume the limit and hide this workspace's own results.
             let mut stmt = c.prepare(
                 "SELECT f.relative_path
-                   FROM files_fts JOIN files f ON f.rowid = files_fts.rowid
+                   FROM files_fts CROSS JOIN files f ON f.rowid = files_fts.rowid
                   WHERE files_fts MATCH ?1 AND f.workspace_id = ?2
                   LIMIT ?3",
             )?;
@@ -630,6 +640,113 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn retain_edit(&self, ws: &WorkspaceId, path: &RelPath, edit: &PendingEdit) -> CacheResult<()> {
+        let content = zstd::encode_all(&edit.content[..], ZSTD_LEVEL)
+            .map_err(|e| CacheError::Store(e.to_string()))?;
+        let base = match &edit.base {
+            Some((bytes, hash)) => {
+                let blob = zstd::encode_all(&bytes[..], ZSTD_LEVEL)
+                    .map_err(|e| CacheError::Store(e.to_string()))?;
+                Some((blob, hash.as_str().to_string()))
+            }
+            None => None,
+        };
+        let (base_blob, base_hash) = match base {
+            Some((b, h)) => (Some(b), Some(h)),
+            None => (None, None),
+        };
+        self.with(|c| {
+            // `base_blob` and `base_sha256` are **not** in the UPDATE list. A second offline save
+            // of one file replaces the content and leaves the base exactly where the first save
+            // put it (FR-011b): re-deriving it from the new local content would make the merge
+            // compare local against local and return a clean merge that is wrong. Expressing that
+            // by omitting two columns is what makes it hold for every caller rather than for the
+            // careful ones.
+            c.execute(
+                "INSERT INTO pending_edits
+                     (workspace_id, relative_path, content_blob, base_blob, base_sha256,
+                      mergeable, retained_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7)
+                 ON CONFLICT(workspace_id, relative_path) DO UPDATE SET
+                     content_blob = ?3, mergeable = ?6, retained_at = ?7",
+                rusqlite::params![
+                    &ws.0,
+                    path.as_str(),
+                    &content,
+                    &base_blob,
+                    &base_hash,
+                    edit.mergeable as i64,
+                    edit.retained_at,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    fn pending_edits(&self, ws: &WorkspaceId) -> CacheResult<Vec<(RelPath, PendingEdit)>> {
+        self.with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT relative_path, content_blob, base_blob, base_sha256, mergeable, retained_at
+                   FROM pending_edits WHERE workspace_id = ?1 ORDER BY retained_at, relative_path",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![&ws.0], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Option<Vec<u8>>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (raw, content, base_blob, base_hash, mergeable, retained_at) = row?;
+                // Re-validated on read as well as on write (Principle VI). A row whose path does
+                // not validate is **dropped, not repaired**: repairing it would invent a
+                // destination for the developer's work, and the honest answer to a corrupt row is
+                // that this path has no pending work.
+                let Ok(path) = RelPath::parse(&raw) else {
+                    continue;
+                };
+                let content = zstd::decode_all(&content[..]).unwrap_or_default();
+                // Either both base columns are present or the file is treated as unmergeable. One
+                // without the other is malformed, and merging against half a base is how a wrong
+                // clean merge happens; prompting is the safe answer and the specified one.
+                let (base, mergeable) = match (base_blob, base_hash) {
+                    (Some(blob), Some(hex)) => {
+                        match (zstd::decode_all(&blob[..]), Sha256::parse(&hex)) {
+                            (Ok(bytes), Some(hash)) => (Some((bytes, hash)), mergeable != 0),
+                            _ => (None, false),
+                        }
+                    }
+                    (None, None) => (None, mergeable != 0),
+                    _ => (None, false),
+                };
+                out.push((
+                    path,
+                    PendingEdit {
+                        content,
+                        base,
+                        mergeable,
+                        retained_at,
+                    },
+                ));
+            }
+            Ok(out)
+        })
+    }
+
+    fn forget_pending(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()> {
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM pending_edits WHERE workspace_id = ?1 AND relative_path = ?2",
+                rusqlite::params![&ws.0, path.as_str()],
+            )?;
+            Ok(())
+        })
+    }
+
     fn git_status(
         &self,
         ws: &WorkspaceId,
@@ -664,6 +781,17 @@ impl WorkspaceCache for SqliteWorkspaceCache {
                 .and_then(|(kind, value)| branch_from(&kind, value))
                 .unwrap_or_default();
             Ok(crate::application::ports::workspace_cache::GitProjection { branch, changes })
+        })
+    }
+
+    fn cached_bytes(&self) -> CacheResult<u64> {
+        self.with(|c| {
+            let n: i64 = c.query_row(
+                "SELECT coalesce(sum(length(content_blob)), 0) FROM file_contents",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(n.max(0) as u64)
         })
     }
 

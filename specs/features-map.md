@@ -102,13 +102,13 @@ an intention to do it.
   - [x] Diff gutter coordinates via git/getFileDiff
   - [x] Bulk invalidation on branch switch
   - [x] Current branch in the status bar
-- [ ] **F012 offline-editing** [P] (depends: F006)
-  - Spec: not yet specified
-  - [ ] Offline UI state consuming F001's connection state, not re-detecting it
-  - [ ] Cached-only tree, file and FTS path search behaviour
-  - [ ] Background prefetch of recent-commit and manifest files
-  - [ ] Local persistence of offline edits against their base revision
-  - [ ] Reconnection fast-forward where the remote has not moved
+- [x] **F012 offline-editing** [P] (depends: F006)
+  - Spec: specs/010-offline-editing
+  - [x] Offline UI state consuming F001's connection state, not re-detecting it
+  - [x] Cached-only tree, file and FTS path search behaviour
+  - [x] Background prefetch of recent-commit and manifest files
+  - [x] Local persistence of offline edits against their base revision
+  - [x] Reconnection fast-forward where the remote has not moved
 - [ ] **F019 offline-merge** (depends: F012)
   - Spec: not yet specified
   - [ ] Three-way merge of base, local and remote per file

@@ -134,6 +134,10 @@ export const config: WebdriverIO.Config = {
   //
   // Measured, not assumed: with the editor specs first, all eight files pass in 46 seconds;
   // with `terminal-live` first, the very next spec stalls in its `before` hook for minutes.
+  // F012 re-measured (2026-09-30): fifteen files in 2 min 5 s, of which the three offline specs are
+  // 44 s between them and `terminal-live`, now straight after them, 2.8 s. They end and restart the
+  // engine repeatedly and add seconds rather than minutes, so they are not a second instance of
+  // the residue below -- but they did not identify it either.
   // Adding a per-spec profile reset (`beforeSession` below) improved it and did not fix it,
   // and no engine process survives a run — that was checked twice, during and after. What it
   // leaves behind has not been identified.
@@ -141,8 +145,11 @@ export const config: WebdriverIO.Config = {
   // Running it last keeps the suite honest about what it verifies. The interaction is written
   // up for the reviewer rather than papered over: "green in this order" is a weaker claim than
   // "green", and the difference belongs in front of somebody rather than buried here.
+  // `offline-*` sits BEFORE `terminal-live` deliberately, per the ordering note above. The offline
+  // specs disconnect and restart the engine, which is the same class of thing `terminal-live` does,
+  // so if anything they belong further from it rather than after it.
   specs: process.env.APEX_E2E_LIVE
-    ? ['./editor-*.spec.ts', './git-*.spec.ts', './terminal-live.spec.ts']
+    ? ['./editor-*.spec.ts', './git-*.spec.ts', './offline-*.spec.ts', './terminal-live.spec.ts']
     : ['./*.spec.ts'],
   exclude: process.env.APEX_E2E_LIVE
     ? []
@@ -151,7 +158,12 @@ export const config: WebdriverIO.Config = {
        './editor-session.spec.ts', './editor-a11y.spec.ts',
        // Git status needs a real engine and a real repository, so these are live-only too.
        './git-status.spec.ts', './git-branch.spec.ts', './git-gutter.spec.ts',
-       './git-branch-switch.spec.ts'],
+       './git-branch-switch.spec.ts',
+       // Offline editing needs an engine to disconnect FROM, which the stub-driven run has not
+       // got. A glob rather than three names: the git entries above are four lines because a
+       // fourth spec had to be added to a list of three, and this list's only job is to be the
+       // complement of the live one, which is already a glob.
+       './offline-*.spec.ts'],
   // The app is a singleton desktop process and there is one driver on one port.
   maxInstances: 1,
   // Point at the driver started in onPrepare. Without an explicit hostname and port, WDIO

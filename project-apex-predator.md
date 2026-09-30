@@ -752,6 +752,7 @@ request would leave it diverged. Principle VI puts the check on both sides of th
 | `git/getStatus` | request | `workspaceId`, `cursor?`, `limit?` | `{currentBranch, changes[], nextCursor?}` |
 | `git/onStatusUpdate` | notification | `workspaceId`, `currentBranch`, `changes[]`, `nextCursor?` | — |
 | `git/getFileDiff` | request | `workspaceId`, `relativePath` | `{added[], deleted[], modified[]}` |
+| `git/recentlyChanged` | request | `workspaceId`, `commits?` | `{paths[]}` (A-RECENT) |
 
 `changes[]` entries are `{path, status}` where status is `MODIFIED`, `UNTRACKED`, `STAGED`,
 `DELETED` or `CONFLICT`. Diffs return line coordinates only, never file contents — the client
@@ -778,7 +779,8 @@ on the network. In remote mode this cache is **a projection, never an authority*
 disagrees with the engine, the engine wins.
 
 The cache serves three jobs: instant file tree rendering, avoiding refetches of unchanged
-files, and read-only access when disconnected (§11).
+files, and read **and write** access when disconnected (§11). The write half is A-OFFLINE's:
+work saved offline is held in the projection until a reconnection can reconcile it.
 
 ## 5.2 Canonical schema (A-B5)
 
@@ -825,15 +827,42 @@ CREATE TABLE file_contents (
     FOREIGN KEY(file_id) REFERENCES files(file_id) ON DELETE CASCADE
 );
 
+-- Keyed by workspace and path, not by `file_id` (F011). A file's git state must be
+-- recordable where the tree has no row for it: an untracked file in a folder nobody has
+-- expanded has no `files` row to hang from, and the tree deliberately re-lists nothing.
 CREATE TABLE git_status (
-    file_id       TEXT PRIMARY KEY,
     workspace_id  TEXT NOT NULL,
     relative_path TEXT NOT NULL,
     status_type   TEXT NOT NULL,         -- MODIFIED|UNTRACKED|STAGED|DELETED|CONFLICT
+    PRIMARY KEY (workspace_id, relative_path),
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_git_status_lookup ON git_status(workspace_id, relative_path);
+CREATE TABLE git_branch (
+    workspace_id TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,          -- branch|detached|none
+    value        TEXT,                   -- the name, or the full commit; NULL for none
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+
+-- Work saved while offline (A-OFFLINE, A-PENDING). Keyed by path for the same reason
+-- `git_status` is, and separate from `file_contents` because a pending edit outlives the
+-- cached content it came from and can exist where there is none at all.
+CREATE TABLE pending_edits (
+    workspace_id  TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    content_blob  BLOB NOT NULL,         -- the offline content, Zstd level 3
+    -- The base is stored, not referenced. A three-way merge needs the base TEXT, and the only
+    -- other copy is in file_contents, which is evictable and is overwritten by any refetch --
+    -- so on the path the merge exists for, a referenced base would be gone. Written once, when
+    -- the path first gains a pending edit; a later offline save leaves it untouched.
+    base_blob     BLOB,                  -- NULL for a file created offline
+    base_sha256   TEXT,                  -- hash of base_blob; NULL on the same terms
+    mergeable     INTEGER NOT NULL,      -- 0 when not held as text, or over the editor's limit
+    retained_at   INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, relative_path),
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
 
 -- Fuzzy path search. A leading-wildcard LIKE cannot use an index and degrades to a
 -- full scan on large workspaces, which is the opposite of instant filtering.
@@ -930,6 +959,13 @@ to the engine, which runs ripgrep across the real tree (§10.2).
 Content blobs unopened for **14 days** are deleted; file tree metadata is retained. Eviction
 never removes rows from `files`, only from `file_contents`, and clears `is_cached`. This keeps
 the tree navigable while bounding disk use.
+
+**`pending_edits` is never evicted** (A-PENDING). It holds work the host has not seen, so
+deleting a row loses the developer's writing rather than a copy of the host's; a row leaves only
+on a write the host confirmed. It is unaffected by the policy above, which touches
+`file_contents` alone, and is named here because this is the section a reader consults to learn
+what eviction may remove — and because a pending edit's whole reason for existing is that it
+outlives the cache entry it came from.
 
 ## 5.6 Compression
 
@@ -1189,18 +1225,24 @@ their own hash terms (§5.3); invalidation of the tree is not invalidation of co
 
 # 11. Offline Behaviour and Reconnection
 
-## 11.1 Decision (A-B3): read-only offline
+## 11.1 Decision (A-OFFLINE): the editor stays writable
 
-When the connection to the engine is lost, the workspace becomes a **read-only mirror**. The
-editor locks, the cached tree stays navigable, cached files stay readable, and nothing is
-queued for later write.
+When the connection to the engine is lost, the workspace stays **readable and writable**. The
+cached tree stays navigable, cached files stay readable, and the editor does not lock. Work
+saved while offline is held locally against the hash of the content the client last confirmed
+with the host, and reconciled on reconnection by a three-way merge (§11.5).
 
-**This decision is provisional and was made by engineering, not product.** It resolves a direct
-contradiction in the source material, which specified both an outbound write queue and a
-read-only editor lock. The alternatives, and what reversing this costs, are in Appendix A, A-B3.
+**This reverses A-B3**, which made the workspace a read-only mirror and was provisional and
+engineering-made. Product answered the question A-B3 left to them: offline editing is a
+differentiator worth roughly two additional features. A-B3 is kept in Appendix A rather than
+edited, because its reasoning is still the argument against.
 
-The consequence worth stating plainly: a developer on a plane can read their code and cannot
-change it.
+The consequence worth stating plainly: a developer on a plane can read their code, change it,
+and have those changes reach the host when the plane lands — merged where nothing collided, and
+with a conflict raised where something did.
+
+**Nothing is queued but file content.** There is no outbox for arbitrary operations: no offline
+commit, no deferred task run. What is held is a file's content and the base it was derived from.
 
 ## 11.2 What the user sees
 
@@ -1208,16 +1250,17 @@ Offline is explicit, never inferred from silent failure:
 
 - The status bar shows a distinct offline state.
 - Open tabs stay open; the tree stays interactive; nothing closes or resets.
-- Monaco models switch to `readOnly: true`.
+- The editor stays writable. A file with work not yet on the host is shown as held locally, so
+  "saved" and "saved to the host" are never confused.
 - Features that require the engine state that they require the engine, rather than appearing
-  broken.
+  broken. §11.3 enumerates them; a capability absent from that table does not require the engine.
 
 ## 11.3 Component behaviour
 
 | Component | Online | Offline |
 |---|---|---|
 | File tree | SQLite, lazily filled from the engine | SQLite only; unfetched folders marked unavailable |
-| Editor | Cache or ranged read from engine | Cached files only, read-only |
+| Editor | Cache or ranged read from engine | Cached files only, **writable**; saved work held locally until reconciled |
 | Path search | Engine-side ripgrep | `files_fts` over cached paths |
 | Content search | Engine-side ripgrep | Unavailable, stated as such |
 | Code intelligence | Remote language servers | Unavailable; syntax highlighting persists (local Tree-sitter) |
@@ -1232,6 +1275,12 @@ project manifests (`go.mod`, `Cargo.toml`, `package.json`, `mix.exs`, `pyproject
 
 Prefetch is background-priority (§4.6) and must never delay interactive traffic.
 
+**Prefetch stops rather than evicting.** It checks the cache budget before each fetch and stops
+when continuing would require eviction, reporting that it stopped as a normal outcome. Speculative
+content must not displace content the developer actually opened, and least-recently-used eviction
+is precisely wrong here: the file opened days ago is the one wanted when the connection drops on
+the train home. This constrains prefetch only — §5.5's own policy is unchanged.
+
 ## 11.5 Reconnection
 
 A tokio loop attempts reconnection on a backoff while offline. On success:
@@ -1240,7 +1289,8 @@ A tokio loop attempts reconnection on a backoff while offline. On success:
 2. Re-run the handshake and verify protocol compatibility (§3.8).
 3. Reconcile: compare cached hashes against the engine for open files; refetch what changed.
 4. Restore language servers for open workspaces.
-5. Unlock the editor and update the status bar.
+5. Reconcile offline work per file (below) and update the status bar. Nothing is unlocked,
+   because nothing was locked.
 
 Reconciliation is a **three-way merge**, not a pull: edits made offline persist against the
 `baseSha256` the client held when the connection dropped, and on reconnect the client merges
@@ -1251,10 +1301,15 @@ A merge that silently picks a side is a merge nobody can audit, so conflicts pro
 resolve themselves. See Appendix A, A-OFFLINE.
 
 Conflict resolution is in scope. A-OFFLINE reversed the read-only call that had made it moot, so
-this section requires a stored base revision in `file_contents` (§5.2), a three-way merge, and a
-conflict interface. The base revision is not a new protocol concept: `workspace/writeFile`
-already carries `baseSha256` so the engine can refuse a stale write with `-32004`, and offline
-editing reuses exactly that value.
+this section requires a stored base revision, a three-way merge, and a conflict interface. The
+base lives in `pending_edits` (§5.2, A-PENDING), **not** in `file_contents`: the merge needs the
+base's text, and `file_contents` is evictable and is overwritten by any refetch, so a referenced
+base would be missing on exactly the path the merge exists for. It is stored as content and not
+only as a hash, for the same reason — a hash proves the host has not moved and cannot merge.
+
+The hash itself is not a new protocol concept: `workspace/writeFile` already carries
+`baseSha256` so the engine can refuse a stale write with `-32004`, and offline editing reuses
+exactly that value.
 
 ---
 
@@ -1303,8 +1358,8 @@ A workspace may target the developer's own machine instead of an instance. The p
 abstraction (§6) makes this a routing decision rather than a second application.
 
 Local mode is not the same as offline (§11). An offline workspace is a remote workspace whose
-engine is unreachable, and is read-only. A local workspace has no remote at all and is fully
-writable.
+engine is unreachable: it is readable and writable, and its saved work waits for a reconnection
+to reconcile. A local workspace has no remote at all, so nothing ever waits.
 
 ## 13.2 Behaviour
 
@@ -1977,6 +2032,114 @@ is what bounds the resulting delay.
 
 A traffic class that fits neither — a third party whose latency requirements sit between the
 two — or measurement showing the 1 MiB cap admits an unacceptable head-of-line delay.
+
+---
+
+## A-PENDING — Offline work is its own table, keyed by path (2026-09-27)
+
+**Extends A-OFFLINE, which said a persisted outbox "becomes part of the cache schema (§5.2)"
+without saying what shape.**
+
+**Decision.** Work saved while offline lives in its own table keyed by `(workspace_id,
+relative_path)`, holding the content, **the content it was derived from and that content's hash**,
+and whether the client can merge it as text. Not columns on `file_contents`.
+
+**The base as content, not only as a hash.** This record first said "the hash of the content it
+was derived from", and that is not enough: a hash decides whether the host has moved, and a
+three-way merge needs the base's text. The only other copy is in `file_contents`, which this
+record's own rationale calls evictable, and which any refetch overwrites — so on precisely the
+path the merge exists for, a referenced base would be gone. Found by analyze run 2 of F012 while
+tracing what happens after an eviction; every design artifact agreed with every other and they
+were wrong together, which is why cross-checking them found nothing.
+
+**Rationale.** Three facts, any one of which would be enough. A pending edit must **outlive the
+cached content it came from**, which is subject to eviction. It must **exist where there is no
+cached content at all**, because a file created offline has neither a `files` row nor a
+`file_contents` row. And it answers a **different question**: `file_contents` records what the
+host last gave us, a pending edit records what the developer has written that the host has not
+seen. One row holding both would make `sha256_hash` mean two things depending on a sibling
+column.
+
+**Why this binds beyond F012.** Anything reading the cache — F013's search above all — must know
+that a path can carry work with no cached content and no tree row. F011 met the mirror image of
+this and paid for it: git status was keyed by the tree's identity for a file and could not
+describe an untracked file in a folder the tree had never listed, which was found only by the one
+test written to look for it.
+
+**Reversal condition.** A measured cost to the extra lookup on the file-open path, which is the
+only path where the two tables are read together.
+
+---
+
+## A-RECENT — `git/recentlyChanged`, paths only (2026-09-27)
+
+**Decision.** §4.8 gains one method: given a workspace and a commit count, it returns the
+deduplicated set of workspace-relative paths those commits touched. No content, no commit
+identities, no authors, no dates. Capped at 100 commits, not paged.
+
+**Rationale.** §11.4's prefetch requires files changed in recent commits, and nothing in the
+catalogue reports history: `git/getStatus` describes the working tree, which is a different
+question. The information is on the engine's host, where git is; the client has no repository in
+remote mode, which is the mode offline matters in.
+
+Paths only, and deliberately narrow. A prefetch needs to know *which files*; everything else
+would be a history API arriving as a side effect of a caching feature. A later feature that wants
+commit metadata should widen this on purpose.
+
+Not paged, unlike `git/getStatus`. A cursor would let a client walk a monorepo's entire history
+one page at a time, which is the opposite of a bounded prefetch; truncation at the frame cap is
+the correct behaviour because a partial prefetch is already an ordinary outcome.
+
+**Why this binds beyond F012.** The method catalogue is shared, and the first feature to expose
+history sets the shape every later one inherits or has to justify departing from.
+
+**Reversal condition.** A history feature that needs commit identity, at which point widening
+this is a deliberate protocol change rather than an accident.
+
+---
+
+## A-RECONNECT — Reconciliation is triggered by the published connection state (2026-09-27)
+
+**Decision.** Offline work is reconciled once per transition into `Connected`, driven by the
+connection state F001 already publishes — the same source the offline indicator reads.
+
+**Rationale.** Principle II. There is already one authority on whether the client is connected,
+and adding a timer, a probe, or a "first request that succeeds" heuristic would be a second
+detector of a state that is already known. F011 paid for exactly this: the git watch and the
+workspace watch answered different questions about one repository until A-GITNUDGE reconciled
+them, and the symptom was a feature that worked for `git add` and silently did nothing for an
+ordinary save.
+
+**Alternatives rejected.** Reconciling on the first successful request after an outage makes
+reconciliation a side effect of whatever the developer happened to do next, so the same outage
+reconciles at a different moment depending on unrelated activity. A manual button is auditable
+and predictable, and fails FR-019's requirement that the clean case cost zero interactions.
+
+**Why this binds beyond F012.** Any later feature that must act on reconnection — restoring
+language servers, re-establishing watches — uses this trigger rather than adding another. The
+watches already do; this records why.
+
+**Reversal condition.** A connection state that cannot distinguish a reconnection from a first
+connection, which would make "once per transition" ambiguous.
+
+**Amended during F012's implementation (2026-09-30).** As first built, the trigger could never
+fire usefully, for two reasons found by the first live run. **Nothing reconnected:** the
+transport connected once at startup, and §11.5's backoff loop had a policy (`supervise.rs`) and a
+status emitter (`report_retrying`) but no loop; after a loss the state stayed `Disconnected` for
+the life of the process. **And the one transition there was came too early:** it happens at
+startup, before any workspace is open, so there was nothing to reconcile. The reconciler was
+built, tested and wired, and unreachable.
+
+So the decision now reads: reconciliation runs **as the last step of the reconnection sequence**,
+after the current workspace has been registered again with the new engine -- §11.5's own order,
+which puts reconciling offline work after re-establishing everything else -- and **when a
+workspace is opened or resumed while connected**, which is the first moment both inputs exist
+after a launch. A reconciliation started the instant the state read `Connected` would race the
+re-registration and meet an engine that has never heard of the workspace, reporting every file
+`Failed`. It is still driven by the published state and nothing else: the reconnection loop
+acts on `Disconnected` and nothing in this design is a second detector of whether the client is
+online. The two triggers are mutually excluded by an in-flight guard, so one run happens at a
+time.
 
 ---
 

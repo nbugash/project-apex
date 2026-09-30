@@ -17,6 +17,15 @@
 //!
 //! So an implementation does the least it can and returns. Forwarding to the webview is a
 //! bounded write; parsing, rendering or persisting here would not be.
+//!
+//! # Not only the engine's frames
+//!
+//! The core also sends frames of its own through the same sink, where the webview needs to know
+//! that client-side state changed: `offline/onPendingChanged` (F012) after a held save and after a
+//! reconciliation. Same shape -- a method and a JSON-RPC frame -- so the webview routes it the way
+//! it routes an engine method, and a listener cannot tell the difference and does not need to. The
+//! method's prefix is the only sign of where it came from; a core-originated method must therefore
+//! never reuse a prefix the engine owns.
 
 /// One engine-initiated frame.
 pub trait NotificationSink: Send + Sync {

@@ -7,7 +7,7 @@
 
 use apex_shell::application::ports::workspace_cache::{
     Attachment, CacheError, CacheResult, EvictionReport, GitProjection, MigrationFailure,
-    PhaseSink, StoreOutcome, WorkspaceCache,
+    PendingEdit, PhaseSink, StoreOutcome, WorkspaceCache,
 };
 use apex_shell::domain::cache::CacheEntry;
 use apex_shell::domain::workspace::{
@@ -59,6 +59,9 @@ pub struct InMemoryCache {
     migration_fails: Mutex<bool>,
     /// Git state per workspace, replaced wholesale exactly as the store does.
     git: Mutex<BTreeMap<String, GitProjection>>,
+    /// (workspace, relative path) -> work the host has not seen. Keyed the way the table is, so a
+    /// test that forgets to scope a query fails here as it would against SQLite.
+    pending: Mutex<BTreeMap<(String, String), PendingEdit>>,
 }
 
 impl InMemoryCache {
@@ -405,6 +408,58 @@ impl WorkspaceCache for InMemoryCache {
             .get(&ws.0)
             .cloned()
             .unwrap_or_default())
+    }
+
+    fn retain_edit(&self, ws: &WorkspaceId, path: &RelPath, edit: &PendingEdit) -> CacheResult<()> {
+        if let Some(e) = self.write_fails.lock().unwrap().clone() {
+            return Err(e);
+        }
+        let key = (ws.0.clone(), path.as_str().to_string());
+        let mut pending = self.pending.lock().unwrap();
+        // The store preserves the stored base on replacement by omitting two columns from its
+        // UPDATE. The double has to preserve it deliberately, or it would disagree with SQLite on
+        // exactly the property FR-011b turns on and no test would notice.
+        let base = pending.get(&key).and_then(|prior| prior.base.clone());
+        let mut edit = edit.clone();
+        if let Some(prior) = base {
+            edit.base = Some(prior);
+        }
+        pending.insert(key, edit);
+        Ok(())
+    }
+
+    fn pending_edits(&self, ws: &WorkspaceId) -> CacheResult<Vec<(RelPath, PendingEdit)>> {
+        let pending = self.pending.lock().unwrap();
+        let mut out: Vec<(RelPath, PendingEdit)> = pending
+            .iter()
+            .filter(|((w, _), _)| w == &ws.0)
+            .filter_map(|((_, p), e)| RelPath::parse(p).ok().map(|p| (p, e.clone())))
+            .collect();
+        out.sort_by(|a, b| {
+            a.1.retained_at
+                .cmp(&b.1.retained_at)
+                .then(a.0.as_str().cmp(b.0.as_str()))
+        });
+        Ok(out)
+    }
+
+    fn forget_pending(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()> {
+        self.pending
+            .lock()
+            .unwrap()
+            .remove(&(ws.0.clone(), path.as_str().to_string()));
+        Ok(())
+    }
+
+    fn cached_bytes(&self) -> CacheResult<u64> {
+        Ok(self
+            .rows
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|r| r.bytes.as_ref())
+            .map(|b| b.len() as u64)
+            .sum())
     }
 
     fn schema_version(&self) -> CacheResult<u32> {

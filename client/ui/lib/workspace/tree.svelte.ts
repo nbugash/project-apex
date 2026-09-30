@@ -148,12 +148,16 @@ export class WorkspaceTree {
       // Already fetched once. Re-expanding must issue no request (US1.3, FR-016).
       return;
     }
-    await this.#load(path, node.depth + 1);
-    node.loaded = true;
+    // Loaded only if the listing actually arrived. Marking it loaded after a failure -- which this
+    // did until F012 -- made an offline expand permanent: the folder read as fetched-and-empty, the
+    // offline mark could not tell it from a real empty folder (FR-006), and because a loaded folder
+    // is never re-requested it stayed empty after the connection came back.
+    if (await this.#load(path, node.depth + 1)) node.loaded = true;
   }
 
-  async #load(path: string, depth: number): Promise<void> {
-    if (this.#pending.has(path)) return;
+  /// `true` when the listing arrived, `false` when it failed or was already in flight.
+  async #load(path: string, depth: number): Promise<boolean> {
+    if (this.#pending.has(path)) return false;
     this.#pending.add(path);
     recordListing(path);
     try {
@@ -174,8 +178,10 @@ export class WorkspaceTree {
           ? children
           : [...this.nodes.slice(0, at), ...children, ...this.nodes.slice(at)];
       this.problem = null;
+      return true;
     } catch (e) {
       this.problem = classify(e);
+      return false;
     } finally {
       this.#pending.delete(path);
     }

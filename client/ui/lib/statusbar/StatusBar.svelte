@@ -3,6 +3,11 @@
   import { present } from './presentation';
   import { branchLabel } from '../git/branch';
   import type { GitBranch } from '../git/status.svelte';
+  import {
+    describeReconciliation,
+    needsAttention,
+    type Reconciliation,
+  } from '../offline/reconciliation';
 
   /// Whether changes on the host are reaching the developer.
   ///
@@ -26,6 +31,21 @@
     /// everything about it comes from design-system tokens so a designer can move it without
     /// unpicking an improvised value (Principle I).
     branch?: GitBranch | null;
+    /// How many files carry work the host has not seen (F012, FR-004).
+    ///
+    /// The connection half of "offline" is already on this bar: `PRESENTATION.disconnected`
+    /// renders "Offline" with an icon, from F003. What this adds is the other half of §11.2 --
+    /// that a file whose work is held locally is *shown* to be, so "saved" and "saved to the
+    /// host" are never confused. A count rather than a list, because the list belongs to the
+    /// tree and the editor; the bar's job is to say the work exists.
+    ///
+    /// Also not in the prototype, and recorded as the same deviation.
+    heldLocally?: number;
+    /// What the last reconciliation did (F012, FR-024): a summary here, every file in its title
+    /// and accessible name. On the bar because the bar is where "held locally" was said, so it is
+    /// where the developer looks to learn what became of it. Same deviation as above.
+    reconciliation?: Reconciliation | null;
+    ondismissreconciliation?: () => void;
   }
   let {
     connection,
@@ -33,7 +53,12 @@
     persistenceFailed = false,
     reporting = { kind: 'live' },
     branch = null,
+    heldLocally = 0,
+    reconciliation = null,
+    ondismissreconciliation,
   }: Props = $props();
+
+  let reconciled = $derived(reconciliation ? describeReconciliation(reconciliation) : null);
 
   let vcs = $derived(branchLabel(branch));
 
@@ -88,6 +113,36 @@
     <span>{state.label}</span>
   </span>
 
+  {#if heldLocally > 0}
+    <!-- FR-004: an icon and a word, so the state is never held in colour alone and survives a
+         greyscale display -- the rule `presentation.ts` states for every connection state. -->
+    <span class="held" role="status" aria-live="polite">
+      <i class="ph ph-hard-drives" aria-hidden="true"></i>
+      <span>{heldLocally} held locally</span>
+    </span>
+  {/if}
+
+  {#if reconciliation && reconciled}
+    <!-- A button because clicking it dismisses the report; the per-file detail is its title and
+         accessible name, so it is reachable without a pointer. The icon differs by whether
+         anything needs attention, so that is not carried by colour alone (FR-039). -->
+    <button
+      type="button"
+      class="reconciled"
+      data-testid="status-reconciled"
+      data-attention={needsAttention(reconciliation)}
+      title={`${reconciled.detail}\n\nClick to dismiss`}
+      aria-label={`Reconciliation: ${reconciled.summary}. ${reconciled.detail.replaceAll('\n', '; ')}. Dismiss`}
+      onclick={() => ondismissreconciliation?.()}
+    >
+      <i
+        class="ph {needsAttention(reconciliation) ? 'ph-warning' : 'ph-check-circle'}"
+        aria-hidden="true"
+      ></i>
+      <span>{reconciled.summary}</span>
+    </button>
+  {/if}
+
   {#if persistenceFailed}
     <!-- FR-023: reported, never modal, never blocking the interaction that triggered it. -->
     <span class="warn" role="status"
@@ -120,7 +175,9 @@
   .workspace,
   .branch,
   .connection,
-  .warn {
+  .warn,
+  .held,
+  .reconciled {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -143,6 +200,27 @@
   }
   .connection {
     margin-inline-start: auto;
+  }
+  .reconciled {
+    /* A report of ordinary work, in the same neutral ramp as `.held` for the same reason. The
+       button is reset to read as the bar's other items, not as a control drawn on top of it. */
+    color: var(--color-neutral-300);
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  .reconciled:focus-visible {
+    /* The shell's focus ring, at no offset: the bar clips overflow, so the usual 2px would be cut. */
+    outline: 2px solid var(--color-accent);
+    outline-offset: 0;
+  }
+  .held {
+    /* The neutral ramp, not the accent one. Work held locally is an ordinary state of this
+       feature and not a warning: it is what saving offline is supposed to do, and colouring it
+       like `.warn` would tell a developer something went wrong when nothing did. */
+    color: var(--color-neutral-300);
   }
   .warn {
     color: var(--color-accent-300);

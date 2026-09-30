@@ -28,6 +28,7 @@ use crate::application::use_cases::persist_session::PersistSession;
 use crate::application::use_cases::register_workspace::RegisterWorkspace;
 use crate::application::use_cases::restore_session::RestoreSession;
 use crate::composition_workspace::prepare_cache;
+use crate::domain::connection::ConnectionState;
 use crate::domain::rail::RailCatalogue;
 use crate::domain::workspace::{
     ByteRange, DirPage, FileChunk, FsMeta, PageRequest, RelPath, Sha256, WorkspaceId,
@@ -39,6 +40,12 @@ use std::sync::Arc;
 
 pub struct Wiring {
     pub shell: Shell,
+    /// Which workspace the interface is looking at, shared with `Tasks`.
+    ///
+    /// Owned here because two things need it and neither owns the other: the commands, which set
+    /// it when a workspace opens, and F012's reconciliation trigger, which reads it when the
+    /// connection returns and has no `State` to reach it through.
+    pub current_workspace: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// The workspace provider the interface reaches, with maintenance already run.
     ///
     /// Always present: a workspace command must be answerable before a host is configured, and
@@ -165,6 +172,8 @@ pub fn build(
     let mut tasks: Option<Arc<dyn TaskProvider>> = None;
     let mut sender: Option<Arc<dyn crate::application::ports::request_sender::RequestSender>> =
         None;
+    // The transport the reconnection loop drives, when there is one to drive.
+    let mut reconnect_target: Option<Arc<SshTransport>> = None;
     let source: Arc<dyn ConnectionStatusSource> = match engine_target() {
         Some(target) => {
             let (spawner, spec): (Arc<dyn ProcessSpawner>, SpawnSpec) = match target {
@@ -213,7 +222,7 @@ pub fn build(
             let notifications: Arc<dyn NotificationSink> = Arc::new(
                 crate::adapters::inbound::git_notification::GitNotifications::new(
                     git,
-                    notifications,
+                    notifications.clone(),
                 ),
             );
 
@@ -227,14 +236,30 @@ pub fn build(
                 Ok(banner) => {
                     crate::logging::info(&format!("engine transport ready: {banner}"));
                     deployer = Some(Arc::new(SshStreamDeployer::default()));
-                    // The connection the whole client has been missing. Until this line
-                    // `RemoteTasks` was written, tested and impossible to construct.
-                    if let Err(e) = transport.connect() {
-                        crate::logging::warn(&format!("the engine did not start: {e}"));
-                    } else {
-                        tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
-                        sender = Some(to_engine);
+                    // Built whether or not this first attempt succeeds (F012). They used to be
+                    // built only on success, so a client launched offline kept a disconnected
+                    // provider for its whole life and a later reconnection changed nothing it
+                    // could reach. `TransportSender` routes through whichever child is live, and
+                    // a request made while none is fails -- the same answer as during an outage.
+                    tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
+                    sender = Some(to_engine);
+                    // Debug builds only: a hold file in the profile makes this launch start offline,
+                    // so the end-to-end suite can test "relaunched while still offline" (FR-012)
+                    // against a real engine. See `hold_offline_for_tests`.
+                    #[cfg(debug_assertions)]
+                    if data_dir.join("hold-offline").exists() {
+                        transport.hold_offline_for_tests(true);
                     }
+                    // Through the same path the reconnection loop uses, so a held launch reports
+                    // `Disconnected` and the loop starts from it.
+                    if let Err(e) = crate::application::ports::connection::Reconnectable::reconnect(
+                        transport.as_ref(),
+                    ) {
+                        crate::logging::warn(&format!(
+                            "the engine did not start: {e}; reconnection will keep trying"
+                        ));
+                    }
+                    reconnect_target = Some(transport.clone());
                     transport
                 }
                 Err(e) => {
@@ -248,6 +273,7 @@ pub fn build(
         None => stub.clone(),
     };
     let connection = Arc::new(ObserveConnection::new(source.clone()));
+    let current_workspace = std::sync::Arc::new(std::sync::Mutex::new(None));
 
     // The engine-backed provider, when there is an engine to back it.
     //
@@ -275,18 +301,81 @@ pub fn build(
         // serves what it holds, and the rest reports offline.
         None => Arc::new(DisconnectedWorkspace),
     };
-    let workspace = WorkspaceAccess {
-        cache: ready.get(),
-        git: apply_git,
-        register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
-        provider: Arc::new(CachedWorkspace::new(
+    // ---- F012: prefetch (§11.4, US5) ----
+    //
+    // Its own caching reader over the same cache, sent at background priority so it queues behind
+    // everything interactive (FR-030), and with a presentation sink that goes nowhere so a
+    // speculative read never flickers the editor's "verifying" state. Built only with an engine.
+    let prefetch = sender.as_ref().map(|transport| {
+        let reader = Arc::new(CachedWorkspace::new(
+            Arc::new(
+                crate::adapters::outbound::remote_workspace::RemoteWorkspaceProvider::new(
+                    transport.clone(),
+                    None,
+                    String::new(),
+                )
+                .background(),
+            ),
+            ready.get(),
+            Arc::new(SystemClock),
+            source.clone(),
+            Arc::new(|_presentation| {}),
+            Limits::default(),
+        ));
+        Arc::new(crate::application::use_cases::prefetch::Prefetch::new(
+            reader,
+            Arc::new(
+                crate::adapters::outbound::remote_git::RemoteGitProvider::new(transport.clone()),
+            ),
+            ready.get(),
+            source.clone(),
+        ))
+    });
+    let provider: Arc<dyn crate::application::ports::workspace_provider::WorkspaceProvider> =
+        Arc::new(CachedWorkspace::new(
             inner,
             ready.get(),
             Arc::new(SystemClock),
             source,
             Arc::new(|_presentation| {}),
             Limits::default(),
-        )),
+        ));
+
+    // ---- F012: reconcile the work the host has not seen ----
+    //
+    // Built before `WorkspaceAccess` because the workspace commands need it too: `workspace_open`
+    // and `workspace_resume` are the second trigger (see below). `DiffyMerge` is constructed
+    // **here** and injected as `Reconcile`'s `TextMerge` -- the only place that hands the adapter to
+    // anything, so without it the reconciler would have a port and no implementation. Naming the
+    // *type* here does not breach `tests/merge_confinement.rs`: that rule is about the `diffy`
+    // crate, and `engine/src/main.rs` names `inotify_watcher::git_watch()` in its composition root.
+    let merge: Arc<dyn crate::application::ports::text_merge::TextMerge> =
+        Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new());
+    let reconcile = Arc::new(crate::application::use_cases::reconcile::Reconcile::new(
+        ready.get(),
+        provider.clone(),
+        merge.clone(),
+    ));
+    let conflicts = Arc::new(crate::application::use_cases::conflicts::Conflicts::new(
+        ready.get(),
+        provider.clone(),
+        merge,
+    ));
+
+    let watched: crate::adapters::inbound::tauri_commands::WatchedPaths = Default::default();
+    let reconciled: crate::adapters::inbound::tauri_commands::LastReconciliation =
+        Default::default();
+    let workspace = WorkspaceAccess {
+        cache: ready.get(),
+        git: apply_git.clone(),
+        register: Arc::new(RegisterWorkspace::new(ready.get(), Arc::new(SystemClock))),
+        provider,
+        reconcile: reconcile.clone(),
+        watched: watched.clone(),
+        notifications: notifications.clone(),
+        reconciled: reconciled.clone(),
+        conflicts,
+        prefetch: prefetch.clone(),
     };
 
     #[cfg(debug_assertions)]
@@ -296,6 +385,7 @@ pub fn build(
         window,
         rail: rail.clone(),
         stub: stub.clone(),
+        transport: reconnect_target.clone(),
     };
     #[cfg(not(debug_assertions))]
     let shell = Shell {
@@ -305,8 +395,92 @@ pub fn build(
         rail,
     };
 
+    // ---- F012: reconnection (§11.5, FR-018a) ----
+    //
+    // On every loss, a loop tries again on a backoff until the connection returns or the failure
+    // says it will not. On success, the current workspace is registered with the new engine, git
+    // status is asked for -- which also makes the engine watch the repository again -- and only
+    // then is offline work reconciled. This replaces T046's subscriber, which reconciled on the
+    // transition into `Connected` itself: it fired once at startup before any workspace was open,
+    // and against a working reconnection it would have raced the registration.
+    if let (Some(transport), Some(sender)) = (reconnect_target, sender.clone()) {
+        let resume = Arc::new(ResumeWorkspace {
+            sender,
+            git: apply_git.clone(),
+            reconcile: reconcile.clone(),
+            cache: ready.get(),
+            provider: workspace.provider.clone(),
+            watched: watched.clone(),
+            notifications: notifications.clone(),
+            reconciled: reconciled.clone(),
+            prefetch: prefetch.clone(),
+        });
+        let current = current_workspace.clone();
+        let reconnect = Arc::new(crate::application::use_cases::reconnect::Reconnect::new());
+        let target = transport.clone();
+        transport.subscribe(Box::new(move |state| {
+            if state != ConnectionState::Disconnected {
+                return;
+            }
+            let (target, reconnect, resume, current) = (
+                target.clone(),
+                reconnect.clone(),
+                resume.clone(),
+                current.clone(),
+            );
+            // A thread with its own runtime rather than `tokio::spawn`, for the reason
+            // `SshTransport::subscribe` gives: this is reached from the composition root during
+            // startup, which is not guaranteed to be inside a runtime.
+            std::thread::spawn(move || {
+                // The `disallowed_methods` lint bans std::thread::sleep because it blocks the
+                // caller, and blocking is exactly what is wanted here: this is a dedicated OS
+                // thread, not a tokio worker, and waiting out the backoff is its whole job -- the
+                // same exception `persist_session.rs` makes for its debounce. The lint stays in
+                // force for the async code it exists to protect.
+                #[allow(clippy::disallowed_methods)]
+                let outcome = reconnect.run(
+                    target.as_ref(),
+                    &std::thread::sleep,
+                    &mut crate::application::use_cases::reconnect::jitter,
+                );
+                let Some(outcome) = outcome else {
+                    return; // a loop is already running
+                };
+                crate::logging::info(&format!("reconnection: {outcome:?}"));
+                if !matches!(
+                    outcome,
+                    crate::application::use_cases::reconnect::Reconnected::Connected { .. }
+                ) {
+                    return;
+                }
+                let Some(ws) = current
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .map(crate::domain::workspace::WorkspaceId)
+                else {
+                    return; // nothing open, so nothing to resume
+                };
+                let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    crate::logging::warn("could not resume after reconnecting: no runtime");
+                    return;
+                };
+                rt.block_on(
+                    crate::application::use_cases::reconnect::resume_after_reconnect(
+                        resume.as_ref(),
+                        &ws,
+                    ),
+                );
+            });
+        }));
+    }
+
     Wiring {
         shell,
+        current_workspace,
         workspace,
         stub,
         deployer,
@@ -360,5 +534,80 @@ impl WorkspaceProvider for DisconnectedWorkspace {
         _base: &Sha256,
     ) -> ProviderResult<Sha256> {
         Err(ProviderError::Offline)
+    }
+}
+
+/// The reconnection sequence's three steps, against the real collaborators.
+struct ResumeWorkspace {
+    sender: Arc<dyn crate::application::ports::request_sender::RequestSender>,
+    git: Option<Arc<crate::application::use_cases::apply_git_status::ApplyGitStatus>>,
+    reconcile: Arc<crate::application::use_cases::reconcile::Reconcile>,
+    cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
+    provider: Arc<dyn WorkspaceProvider>,
+    watched: crate::adapters::inbound::tauri_commands::WatchedPaths,
+    notifications: Arc<dyn NotificationSink>,
+    reconciled: crate::adapters::inbound::tauri_commands::LastReconciliation,
+    prefetch: Option<Arc<crate::application::use_cases::prefetch::Prefetch>>,
+}
+
+#[async_trait::async_trait]
+impl crate::application::use_cases::reconnect::Resume for ResumeWorkspace {
+    async fn register(&self, ws: &crate::domain::workspace::WorkspaceId) -> bool {
+        // The root path comes from this client's own projection, as `workspace_resume` gets it:
+        // the session records an identity and a name, and not where the workspace is.
+        let Ok(Some(known)) = self.cache.workspace(ws) else {
+            return false;
+        };
+        let base = match &known.location {
+            crate::domain::workspace::Location::Remote { base, .. } => base.clone(),
+            crate::domain::workspace::Location::Local { base } => base.clone(),
+        };
+        crate::adapters::inbound::task_commands::register_with_engine(&self.sender, &ws.0, &base)
+            .await
+    }
+
+    async fn rewatch(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        let paths: Vec<crate::domain::workspace::RelPath> = self
+            .watched
+            .lock()
+            .ok()
+            .and_then(|all| all.get(&ws.0).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|p| crate::domain::workspace::RelPath::parse(p).ok())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        match self.provider.watch(ws, &paths).await {
+            Ok(outcome) => crate::logging::info(&format!(
+                "re-watched {} paths after reconnecting",
+                outcome.watching
+            )),
+            Err(e) => crate::logging::warn(&format!("could not re-watch after reconnecting: {e}")),
+        }
+    }
+
+    async fn refresh_git(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        if let Some(git) = self.git.as_ref() {
+            let outcome = git.refresh(ws).await;
+            crate::logging::info(&format!("git status after reconnecting: {outcome:?}"));
+        }
+    }
+
+    async fn reconcile(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        crate::adapters::inbound::tauri_commands::reconcile_and_announce(
+            &self.reconcile,
+            self.notifications.as_ref(),
+            &self.reconciled,
+            ws,
+        )
+        .await;
+    }
+
+    async fn prefetch(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        if let Some(prefetch) = self.prefetch.as_ref() {
+            crate::adapters::inbound::tauri_commands::log_prefetch(&prefetch.run(ws).await);
+        }
     }
 }

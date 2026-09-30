@@ -220,6 +220,41 @@ impl Git for GitCli {
         parse_status_in(&raw, &prefix)
     }
 
+    fn recently_changed(
+        &self,
+        root: &ResolvedPath,
+        commits: u32,
+    ) -> Result<Vec<String>, GitFailure> {
+        let prefix = self.workspace_prefix(root.as_path())?;
+        let n = commits.to_string();
+        // All three flags matter, verified against git 2.43. Without `--pretty=format:` the parser
+        // meets commit headers -- identities, authors, dates -- which guarantee 1 says never leave
+        // the engine. Without `-- .` the walk covers the whole repository's history; the prefix
+        // strip would still drop the outsiders, but the work would be spent on exactly the monorepo
+        // the scoping exists for. Paths come back repository-relative, so the prefix machinery
+        // `status` uses applies unchanged.
+        match self.run(
+            root.as_path(),
+            &[
+                "log",
+                "--name-only",
+                "--pretty=format:",
+                "-n",
+                &n,
+                "--",
+                ".",
+            ],
+        ) {
+            Ok(raw) => Ok(parse_recent(&raw, &prefix)),
+            // A repository with no commits yet has no history to report, which is an empty answer
+            // and not a failure: the first minute of every new project looks like this.
+            Err(GitFailure::Failed(why)) if why.contains("does not have any commits yet") => {
+                Ok(Vec::new())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     fn file_diff(&self, root: &ResolvedPath, relative: &str) -> Result<GitDiffResult, GitFailure> {
         // No prefix arithmetic here: every git invocation below runs with the workspace root as
         // its working directory, and a pathspec is resolved relative to that. The coordinates
@@ -254,6 +289,19 @@ impl Git for GitCli {
         }
         Ok(parse_diff(&raw))
     }
+}
+
+/// `git log --name-only --pretty=format:` output as a set of workspace paths (guarantee 4).
+///
+/// One path per line, blank lines between commits. Deduplicated and sorted, because the caller is
+/// building a set and the contract promises no order. Paths outside the workspace, or that do not
+/// validate, are dropped by `contained` on the same terms as a status entry.
+pub fn parse_recent(raw: &str, prefix: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| contained(line.trim_end_matches('\r'), prefix))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Turn a workspace-relative path from git into the rooted form the client keys on.

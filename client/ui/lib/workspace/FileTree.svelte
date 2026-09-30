@@ -20,6 +20,7 @@
     onWatchedChanged,
     onOpenFile,
     gitStatus,
+    offline = false,
   }: {
     tree: WorkspaceTree;
     selected?: string;
@@ -35,6 +36,14 @@
     /// This workspace's git state, by path. A plain lookup rather than a store, so the tree
     /// stays a view: what it shows is decided by whoever owns the projection (F011).
     gitStatus?: (path: string) => GitState | undefined;
+    /// Whether the client is offline (F012, FR-006).
+    ///
+    /// Only used to decide what an **unfetched** folder means. Expanded and unfetched while
+    /// connected is a listing in flight and will fill in; expanded and unfetched while offline is
+    /// a folder this client has never seen, and rendering it as an empty folder would be a
+    /// positive claim -- that there is nothing in it -- which is exactly what the client does not
+    /// know. §11.3's table says the tree marks these unavailable rather than showing them empty.
+    offline?: boolean;
   } = $props();
 
   /// The prototype's glyph per kind. Directories carry a caret so expansion state is legible
@@ -94,6 +103,7 @@
   {#each tree.nodes as node (node.path)}
     {@const git = gitStatus?.(node.path)}
     {@const mark = markerFor(git)}
+    {@const unavailable = offline && node.kind === 'directory' && node.expanded && !node.loaded}
     <div
       class="row"
       class:selected={node.path === selected}
@@ -104,12 +114,22 @@
       aria-selected={node.path === selected}
       data-testid="tree-row"
       data-path={node.path}
+      data-unavailable={unavailable ? 'true' : undefined}
       style={`padding-left: calc(var(--vk-tree-pad-left) + var(--vk-tree-indent) * ${node.depth})`}
       onclick={() => activate(node)}
       onkeydown={(e) => onKey(e, node)}
     >
       <i class="ph {glyph(node.kind, node.expanded)}" aria-hidden="true"></i>
       <span class="name">{node.name}</span>
+      {#if unavailable}
+        <!-- An icon and a word, so the state is not held in colour alone and is distinguishable
+             from an empty folder by something a test can read. "Shown empty" and "marked
+             unavailable" look identical to anything that only counts rows. -->
+        <span class="unavailable">
+          <i class="ph ph-cloud-slash" aria-hidden="true"></i>
+          <span>Not available offline</span>
+        </span>
+      {/if}
       <!-- The prototype's VCS marker column, filled by F011. The column was reserved with a
            fixed size, so a file git says nothing about keeps exactly the row it had before this
            feature existed (FR-016). -->
@@ -118,12 +138,22 @@
         style={mark ? `color: var(${mark.token})` : undefined}
         aria-hidden={mark ? undefined : 'true'}
         aria-label={mark ? mark.label : undefined}
-        data-git={git}>{mark ? mark.glyph : ''}</span>
+        data-git={git}>{mark ? mark.glyph : ''}</span
+      >
     </div>
   {/each}
 </div>
 
 <style>
+  .unavailable {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    /* The neutral ramp: a folder nobody has listed is an ordinary consequence of being offline,
+       not a fault, and the accent ramp is what this bar uses to say something went wrong. */
+    color: var(--color-neutral-400);
+    margin-inline-start: var(--space-2);
+  }
   .file-tree {
     display: flex;
     flex-direction: column;

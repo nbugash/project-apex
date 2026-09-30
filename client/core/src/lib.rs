@@ -49,6 +49,12 @@ pub fn run() {
             cmd::workspace_watch,
             cmd::workspace_resume,
             cmd::git_file_diff,
+            // F012's read surface. Same reason as every comment above it: an unregistered command
+            // is an unknown command, and the status bar would report nothing while looking correct.
+            cmd::offline_status,
+            cmd::conflicts_list,
+            cmd::conflict_resolve,
+            cmd::workspace_search_paths,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,
             adapters::inbound::task_commands::task_resize,
@@ -57,6 +63,8 @@ pub fn run() {
             cmd::workspace_seed_for_tests,
             #[cfg(debug_assertions)]
             cmd::stub_set_connection,
+            #[cfg(debug_assertions)]
+            cmd::hold_offline_for_tests,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -116,7 +124,7 @@ pub fn run() {
             app.manage(adapters::inbound::task_commands::Tasks {
                 provider: wiring.tasks,
                 sender: wiring.sender,
-                current: std::sync::Mutex::new(None),
+                current: wiring.current_workspace.clone(),
             });
             app.manage(wiring.shell);
             app.manage(wiring.workspace);

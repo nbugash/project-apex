@@ -28,13 +28,20 @@ impl RemoteGitProvider {
         method: &str,
         params: &P,
     ) -> ProviderResult<R> {
+        self.call_as(Request::interactive, method, params).await
+    }
+
+    /// `call` with the priority chosen by the caller: `Request::interactive` or
+    /// `Request::background`.
+    async fn call_as<P: serde::Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        make: fn(String, String) -> Request,
+        method: &str,
+        params: &P,
+    ) -> ProviderResult<R> {
         let body = serde_json::to_string(params)
             .map_err(|e| ProviderError::Transport(format!("encoding {method}: {e}")))?;
-        match self
-            .transport
-            .send(Request::interactive(method, body))
-            .await
-        {
+        match self.transport.send(make(method.to_string(), body)).await {
             RequestOutcome::Answered(json) => {
                 let value: serde_json::Value = serde_json::from_str(&json)
                     .map_err(|e| ProviderError::Transport(format!("reply to {method}: {e}")))?;
@@ -85,6 +92,21 @@ impl GitProvider for RemoteGitProvider {
             },
         )
         .await
+    }
+
+    async fn recently_changed(&self, workspace: &WorkspaceId) -> ProviderResult<Vec<String>> {
+        let result: wire::RecentlyChangedResult = self
+            .call_as(
+                Request::background,
+                "git/recentlyChanged",
+                &wire::RecentlyChangedParams {
+                    workspace_id: wire::WorkspaceId(workspace.0.clone()),
+                    // The engine's default, for the reason `limit` is left to it above.
+                    commits: None,
+                },
+            )
+            .await?;
+        Ok(result.paths)
     }
 }
 

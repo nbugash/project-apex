@@ -14,6 +14,10 @@
   import { installTerminalHarness } from '../terminal/harness';
   import { listenToEngine } from '../terminal/engine';
   import { GitStatusStore } from '../git/status.svelte';
+  import { OfflineStore } from '../offline/state.svelte';
+  import { ConflictStore } from '../offline/conflicts.svelte';
+  import ConflictPanel from '../offline/ConflictPanel.svelte';
+  import PathSearch from '../workspace/PathSearch.svelte';
   import { WatchRequester, watchedPaths } from '../workspace/watched.svelte';
   import { revealTerminal } from '../terminal/start';
   import { describeEnding } from '../terminal/ending';
@@ -228,6 +232,21 @@
     };
   });
 
+  /// The offline projection, subscribed once for the window on the same terms and for the same
+  /// reason as the git store above: the status bar and the editor both read it, and a
+  /// subscription owned by either would stop reporting the moment the developer looked elsewhere.
+  ///
+  /// No `stop`: its listener for `offline/onPendingChanged` lives in an `$effect` created here, so
+  /// it is torn down with this component and cannot outlive the window.
+  const offline = new OfflineStore();
+  offline.start();
+
+  /// What the last reconciliation left for the developer to decide (US4). Shown above the
+  /// documents, where the developer is already looking, rather than behind a tool window they
+  /// would have to know to open: a conflict nobody sees is a conflict decided by neglect.
+  const conflicts = new ConflictStore();
+  conflicts.start();
+
   /// Bind the tree to whichever workspace is open, and fetch its root.
   ///
   /// One listing, on open, and none afterwards: `open()` asks for the root only, and a folder's
@@ -363,10 +382,17 @@
            destination whose panel said it was "not available" contradicted the rail, which
            shows it as open and active. -->
       {#if activeDestination?.id === 'project'}
+        <!-- Above the tree, because a filter that appears below what it filters reads as a
+             footnote. F012 adds it so FR-007's "the developer runs a path search" has somewhere to
+             happen; recorded as a Principle I deviation, like the conflict panel. -->
+        <PathSearch
+          onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
+        />
         <FileTree
           tree={workspaceTree}
           selected={activeDocument?.path ?? ''}
           gitStatus={(path) => git.stateOf(path)}
+          offline={!offline.connected}
           onWatchedChanged={declareWatched}
           onOpenFile={(path, name) => persist(() => ipc.documentsOpen(name, path)).then(reload)}
         />
@@ -393,13 +419,22 @@
         onclose={(id) => persist(() => ipc.documentsClose(id)).then(reload)}
         onreorder={(id, to) => persist(() => ipc.documentsReorder(id, to)).then(reload)}
       />
+      <ConflictPanel
+        conflicts={conflicts.conflicts}
+        onresolve={(c, r) => conflicts.resolve(c, r)}
+      />
       <div class="content">
         {#if activeDocument}
           <!-- Keyed on the document so switching tabs gives Monaco a fresh mount rather than a
                model swapped underneath it. The buffer behind it is not remounted: it lives in
                `buffers.svelte.ts` precisely so a tab switch cannot lose it. -->
           {#key activeDocument.id}
-            <EditorPanel path={activeDocument.path} {autosave} gitRevision={git.revision} />
+            <EditorPanel
+              path={activeDocument.path}
+              {autosave}
+              gitRevision={git.revision}
+              heldLocally={offline.isHeldLocally(activeDocument.path)}
+            />
           {/key}
         {:else}
           <p class="empty">No document open</p>
@@ -439,6 +474,9 @@
     connection={shellState.connection}
     workspace={shellState.workspace}
     branch={git.branch}
+    heldLocally={offline.pending.length}
+    reconciliation={offline.reconciliation}
+    ondismissreconciliation={() => offline.dismissReconciliation()}
     {persistenceFailed}
   />
 </div>

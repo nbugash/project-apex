@@ -32,4 +32,9 @@ pub trait GitProvider: Send + Sync {
         workspace: &WorkspaceId,
         relative_path: &str,
     ) -> ProviderResult<GitDiffResult>;
+
+    /// The workspace paths the engine's default number of recent commits touched
+    /// (`git/recentlyChanged`). Sent at **background** priority: its only caller is prefetch, and
+    /// §4.6 orders it behind anything the developer asked for (FR-030).
+    async fn recently_changed(&self, workspace: &WorkspaceId) -> ProviderResult<Vec<String>>;
 }

@@ -6,7 +6,7 @@
 // exactly what a colleague's edit is.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /// A directory of our own, never the repository. A test that writes into the checkout can
 /// destroy work and leaves whatever it forgot to clean up behind.
@@ -16,6 +16,9 @@ export function resetWorkspace(files: Record<string, string | Buffer>): void {
   rmSync(WORKSPACE, { recursive: true, force: true });
   mkdirSync(join(WORKSPACE, 'src'), { recursive: true });
   for (const [name, body] of Object.entries(files)) {
+    // Parents first. A nested fixture path used to throw ENOENT here, which surfaced as a
+    // "before all" failure in whichever spec first asked for one (F012's offline-state).
+    mkdirSync(dirname(join(WORKSPACE, name)), { recursive: true });
     writeFileSync(join(WORKSPACE, name), body);
   }
 }

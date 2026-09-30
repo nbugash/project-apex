@@ -51,6 +51,7 @@ pub fn migrate(
             1 => schema::V1,
             2 => schema::V2,
             3 => schema::V3,
+            4 => schema::V4,
             other => {
                 return Err(MigrationFailure::Step {
                     version: other,

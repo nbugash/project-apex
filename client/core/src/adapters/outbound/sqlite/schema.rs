@@ -9,7 +9,7 @@
 use rusqlite::Connection;
 
 /// What shape this build reads and writes.
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 /// Pragmas that must be set on **every** connection, not only at creation.
 ///
@@ -140,6 +140,40 @@ CREATE TABLE git_branch (
     workspace_id TEXT PRIMARY KEY,
     kind         TEXT NOT NULL,
     value        TEXT,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+);
+"#;
+
+/// Version 4: somewhere to keep work the host has not seen (F012, A-PENDING).
+///
+/// Additive — one `CREATE TABLE`. Nothing existing is dropped, re-keyed or rewritten, unlike V3.
+///
+/// **Keyed by path, not by `file_id`.** A file created offline has no `files` row and no
+/// `file_contents` row, so there is no tree identity to key on. V3 above is the record of what
+/// keying on the tree costs.
+///
+/// **`base_blob` holds the base content, not a reference to it.** A three-way merge needs the base
+/// *text*, and the only other copy lives in `file_contents`, which the eviction policy (§5.5) may
+/// remove and which any refetch overwrites — so on precisely the path the merge exists for, a
+/// referenced base would be gone. `base_sha256` sits beside it so a fast-forward is a hash
+/// comparison and never a decompression.
+///
+/// Both base columns are nullable and are set **together**: NULL for a file created offline, which
+/// has nothing to differ from. One without the other is a malformed row and the reader treats it as
+/// unmergeable rather than merging against half a base.
+///
+/// This table is **never evicted** (§5.5). It holds the developer's writing rather than a copy of
+/// the host's, so a row leaves only on a write the host has confirmed.
+pub const V4: &str = r#"
+CREATE TABLE pending_edits (
+    workspace_id  TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    content_blob  BLOB NOT NULL,
+    base_blob     BLOB,
+    base_sha256   TEXT,
+    mergeable     INTEGER NOT NULL,
+    retained_at   INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, relative_path),
     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
 );
 "#;
