@@ -421,3 +421,20 @@ numbers where a reader expecting four finds two — and mis-reads every single-l
 An untracked file is diffed against `/dev/null` with `--no-index`, which reports a difference by
 exiting 1. Without that, `git diff` says nothing about a path it does not track and a new file
 opened in the editor showed no marks at all.
+
+## Recent history for prefetch (F012)
+
+`git/recentlyChanged` answers one question — which workspace paths did the last N commits touch —
+and nothing else (A-RECENT). **Paths only**: no hash, author, date or content, asserted on the
+serialised reply rather than on the parser. `git log --name-only --pretty=format: -n <N> -- .`,
+with each flag load-bearing: without `--pretty=format:` the output carries commit headers; without
+`-- .` a monorepo's whole history is walked for a subdirectory workspace. The prefix re-rooting and
+containment are `status`'s own, so a workspace on a subtree receives its own paths and nothing
+else. `commits` defaults to 20 and is capped at 100.
+
+**Capped, not paged.** Where the paths would exceed a frame, the list is truncated and no cursor is
+offered. Prefetch is speculative, so a partial answer is a partial prefetch; a cursor would let a
+client walk a monorepo's history one page at a time, which is the opposite of a bounded prefetch.
+A directory that is not a repository, a host without git and a repository with no commits yet all
+answer with an empty list; a registered workspace whose root is gone is `-32009`, never an empty
+list, because the empty list is what a plain directory legitimately gets.

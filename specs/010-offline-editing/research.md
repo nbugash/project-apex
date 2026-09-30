@@ -49,7 +49,11 @@ bought — and *two lines apart*, which must merge cleanly so the feature is not
   conflict-boundary question would come back.
 
 **What this does not decide.** Whether a conflict is presented as markers in the buffer or as a
-side-by-side interface is a design question, below.
+side-by-side interface. Decided during implementation, by the reviewer: both, in the conflict
+panel -- the three sides side by side, and an editable result that carries `diffy`'s markers around
+the colliding regions only. The markers are a draft the developer edits and never something the
+client writes; `DiffyMerge` used to discard them for fear of exactly that, and the guard moved to
+`conflict_resolve`, which refuses a resolution that still carries them.
 
 ---
 

@@ -134,6 +134,10 @@ export const config: WebdriverIO.Config = {
   //
   // Measured, not assumed: with the editor specs first, all eight files pass in 46 seconds;
   // with `terminal-live` first, the very next spec stalls in its `before` hook for minutes.
+  // F012 re-measured (2026-09-30): fifteen files in 2 min 5 s, of which the three offline specs are
+  // 44 s between them and `terminal-live`, now straight after them, 2.8 s. They end and restart the
+  // engine repeatedly and add seconds rather than minutes, so they are not a second instance of
+  // the residue below -- but they did not identify it either.
   // Adding a per-spec profile reset (`beforeSession` below) improved it and did not fix it,
   // and no engine process survives a run — that was checked twice, during and after. What it
   // leaves behind has not been identified.

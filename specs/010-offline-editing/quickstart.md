@@ -48,8 +48,8 @@ Numbers, not verdicts. Each is printed by the command beside it.
 | **SC-006b** merge decisions matching `git merge-file` | `cargo test -p apex-shell --test merge_agreement -- --nocapture` | **100%** of ≥20 pairs |
 | **SC-007** offline open of a cached file | `cargo test -p apex-shell --test offline_budget -- --nocapture` | < 200 ms |
 | **SC-008** offline path search over 50,000 paths | same test | < 1 s |
-| **SC-009** interactive latency during prefetch | `cargo test -p apex-shell --test prefetch_budget -- --nocapture` | within 10% |
-| **SC-010a** cached files evicted by prefetch | same test | **0** |
+| **SC-009** interactive p99 during prefetch | `cargo test -p apex-shell --test prefetch_budget -- --nocapture` | ≤ idle p99 + one 64 KiB prefetch response, within 10% (amended) |
+| **SC-010a** cached files evicted by prefetch | `cargo test -p apex-shell --test prefetch -- --nocapture` | **0** |
 | **SC-011** reconciling 100 files | `cargo test -p apex-shell --test reconcile_budget -- --nocapture` | < 10 s |
 | **SC-012** requests issued reading a cached file offline | offline-state spec | **0** |
 | **SC-002a** reconciliations using the host-confirmed base, over 10 files saved 3 times each | `cargo test -p apex-shell --test retain_edit -- --nocapture` | **100%** |
@@ -134,18 +134,85 @@ developer is handed a file nobody wrote.
 
 ## 6. Validation record
 
-*(Filled in when the feature is implemented. Numbers, not verdicts.)*
+Recorded 2026-09-30 on the development machine (Linux, debug builds, local engine), each from the
+command §3 gives. A clean build: the first pass was discarded after a mutation run left a stale
+binary behind (§8's note).
+
+| Criterion | Measured | Bound |
+|---|---|---|
+| **SC-001** drop to offline state visible | **66 ms** | < 2,000 ms |
+| **SC-002** saved offline edits surviving relaunch | **10 of 10 files, 50 saves** (100%) | 100% of ≥ 50 |
+| **SC-002a** reconciliations using the host-confirmed base | asserted, 10 files × 3 saves (100%); not printed | 100% |
+| **SC-003** offline work lost across the full cycle | **0** (1 of 1 kept, through a real second outage and a relaunch) | 0 |
+| **SC-004** interactions, clean reconnection | **0** | 0 |
+| **SC-005** interactions, non-overlapping host change | **0** | 0 |
+| **SC-006** overlaps resolved by the client choosing a side | **0** (no write for the file; asserted) | 0 |
+| **SC-006a** unmergeable files prompting, host untouched | **100%** (asserted) | 100% |
+| **SC-006b** merge decisions matching `git merge-file` | **22 of 22 pairs** | 100% of ≥ 20 |
+| **SC-007** offline open of a cached 64 KiB file | **p99 0.066 ms** | < 200 ms |
+| **SC-008** offline path search, 50,000 paths | **p99 3.49 ms** | < 1,000 ms |
+| **SC-009** interactive p99 during prefetch *(amended)* | **9.9 ms** during against **18.1 ms** bound (idle p99 0.98 ms + one 64 KiB prefetch response 15.5 ms, +10%); median 0.46 ms idle, 0.66 ms during | ≤ bound |
+| **SC-010** manifests and recent files readable once prefetch reports | **4 of 4** reported, all readable offline | 100% |
+| **SC-010a** cached files evicted by prefetch | **0** (stopped at the budget; the opened file still cached) | 0 |
+| **SC-011** reconciling 100 files | **8 ms** (50 fast-forwards, 50 merges) | < 10,000 ms |
+| **SC-012** requests reading a cached file offline | **0** (asserted in the offline-state spec) | 0 |
+
+**Headroom worth knowing.** Everything but SC-009 sits orders of magnitude inside its bound. SC-009
+is the tight one, and its 64 KiB response time is dominated by base64 and JSON in a *debug* build;
+before the amendment, whole-file prefetch reads measured an interactive p99 of 22.5 ms against an
+idle 138 µs, which is what the amendment in spec.md records.
 
 ---
 
 ## 7. Negative-check audit
 
-*(Filled in when the feature is implemented: for each check in §4, the evidence that its condition
-is actually present.)*
+For each check in §4, where its condition is actually present.
+
+| Check | Evidence |
+|---|---|
+| Offline edit lost across relaunch | `offline-state.spec.ts` T027: `relaunch()` ends the session and starts a new application process, launched still offline by the hold file; the count is read from `offline_status`, i.e. the store, not a live projection |
+| Adjacent lines merge silently | `merge_agreement.rs`'s corpus has "adjacent lines"; mutation 2 fails exactly that pair (and one artefact of the mutant itself) |
+| An unmergeable file is merged | `an_unmergeable_file_prompts_even_when_the_host_has_not_moved` uses PNG-headed, non-UTF-8 bytes on every side (changed during this audit: it was text flagged unmergeable); `every_conflict_has_three_sides...` uses `\xff\x00` content |
+| Unmergeable, host unchanged, silently written | Same test: the host holds exactly the base; mutation 3 fails that test and no other |
+| Prefetch evicts something opened | `at_its_budget_prefetch_stops_and_evicts_nothing`: the budget is 100 bytes with 60 already cached by a file opened first, the first manifest (30) fits and the second would not. **Recorded, not hidden:** the cache has no size-based eviction at all (§5.5 evicts by age), so "least recently used" cannot be exercised; the budget itself is A-PREFETCHCAP, added during implementation |
+| Conflict lost by going offline again | `offline-conflict.spec.ts`: the second outage ends the engine, the relaunch is held offline, the host file is byte-compared at every step and the conflict is resolved only at the end |
+| Reconciliation writes what it should prompt about | The e2e specs read the host's file from disk; the Rust tests read `ScriptedHost`'s own write log |
+| Interrupted reconciliation loses work | `an_interruption_between_files_reports_not_attempted` retains two files and drops the connection at the second |
+| Stale-base refusal reported as a failure | `a_stale_base_refusal_is_reported_as_a_conflict`: the read succeeds and only the write is refused (`refuse_stale`) |
+| Retained save presented as a failure | `offline-presentation.test.ts` asserts `save` does not route `heldLocally` through `b.failed()` as well as the label and tone |
+| Deleted root answers an empty list | `an_unregistered_workspace_and_a_gone_root_are_refused_differently` deletes the registered directory and expects `-32009` |
+| Prefetch never runs for a later workspace | `prefetch_runs_only_while_connected_and_for_any_workspace_opened_later` registers the workspace after the prefetcher exists and while connected; in the application the log shows `prefetch: 1 files cached` on opening a workspace with a manifest |
+| Merge library escapes its adapter | `merge_confinement.rs` asserts the adapter **does** name `diffy`; mutation 12 fails it |
 
 ---
 
 ## 8. Mutation record
 
-*(Filled in when the feature is implemented: for each mutation in §5, what failed and whether it
-failed with the assertion expected rather than with a compile error.)*
+Every mutation compiled and failed on an assertion; none failed with a compile error.
+
+| # | Mutation | What failed |
+|---|---|---|
+| 1 | Forget the row before the write is confirmed | `a_row_survives_a_write_that_was_not_confirmed`, `a_stale_base_refusal_is_reported_as_a_conflict`. **Not** the interruption test §5 predicted: an interruption between files lands at the next file's *read*, so that file never reaches the write this mutation moves. The FR-022 test is the one that locates it |
+| 2 | Zero-context merge | `every_pair_agrees_with_git_merge_file` on "adjacent lines" and on "no trailing newline on one side" (the second an artefact of the mutant's own line joining), plus the boundary and region tests |
+| 3 | Prompt only when the remote moved | `an_unmergeable_file_prompts_even_when_the_host_has_not_moved`, and nothing else |
+| 4 | Let prefetch evict (expressed as ignoring the budget, since the cache cannot evict by size) | `at_its_budget_prefetch_stops_and_evicts_nothing` |
+| 5 | Offline from a failed request, not from the connection state | `offline-state.spec.ts` "marks a folder it never listed as unavailable": no request fails for connection reasons, so the mutant never goes offline -- the false negative rather than the latency §5 names |
+| 6 | Retain unsaved buffers | `offline-state.spec.ts` "does not retain a buffer the developer never saved" |
+| 7 | Key pending edits by `file_id` | `pending_store.rs` (six tests, including `a_path_with_no_file_row_and_no_cached_content_can_carry_work`) and three `cache_contract.rs` tests |
+| 8 | Resolve by preferring the local side | `overlapping_changes_prompt_write_nothing_and_keep_the_work`, `reconciliation_is_per_file`, `the_reconciler_asks_the_port_rather_than_deciding` |
+| 9 | Base from `file_contents` | Five of 21: the eviction test and the four whose base is not cached either (deleted on host, root gone, per-file, port-decides). The sixteen whose cached base equals the stored one pass, which is the contrast that matters |
+| 10 | Re-derive the base on a second save | `a_second_offline_save_replaces_the_content_and_keeps_the_base` (SQLite) |
+| 11 | `-32004` as `Failed` | `a_stale_base_refusal_is_reported_as_a_conflict` |
+| 12 | Remove `diffy` from the adapter | `diffy_is_named_in_exactly_one_file`, and the agreement suite |
+
+Beyond §5, run during implementation and killed: resolving against a remote re-read at resolve time
+(`a_stale_resolution_becomes_a_new_conflict_against_the_newer_remote`), listing every pending row
+as a conflict, accepting a resolution with markers, prefetch without listing ancestors, without its
+connection gate, without the mid-read digest check, whole-file prefetch reads (SC-009's bound), and
+the engine's commit cap, frame truncation and deduplication.
+
+**A stale-binary hazard, found here.** The mutation script restored each file by renaming its backup
+back, which keeps the backup's older modification time, so cargo saw no change after the last
+mutant and kept that mutant's build. The next measurement ran against a zero-context merge and
+reported 20 of 22 pairs. Every mutation result above stands -- each mutant was freshly written, so
+each rebuilt -- but anything measured after a restore needs `touch` first.

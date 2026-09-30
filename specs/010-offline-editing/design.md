@@ -27,6 +27,7 @@ client/core/src/
 │   └── use_cases/
 │       ├── retain_edit.rs                   # RetainEdit
 │       ├── reconcile.rs                     # Reconcile, ReconcileReport
+│       ├── conflicts.rs                     # Conflicts: list with three sides, resolve per file
 │       └── prefetch.rs                      # Prefetch, PrefetchReport
 ├── adapters/
 │   ├── inbound/tauri_commands.rs             # + connection on WorkspaceAccess (see below)
@@ -108,14 +109,36 @@ classDiagram
 rust
 
 // --- the merge, pure ---
-enum MergeOutcome { Clean(String), Conflict }
+enum MergeOutcome { Clean(String), Conflict(String) }
 
 trait TextMerge: Send + Sync {
     fn merge(&self, base: &str, local: &str, remote: &str) -> MergeOutcome
         precondition:  all three are valid UTF-8; the caller has established the file is text
-        postcondition: Clean holds the combined content; Conflict holds nothing, because a
-                       partially merged file is not a thing this feature may produce
+        postcondition: Clean holds the combined content; Conflict holds a *draft* -- the
+                       combination with git-style markers around each colliding region only.
+                       The draft is never written by anything: it is what the conflict panel
+                       pre-fills for the developer to edit (US4 scenario 7), and a resolution
+                       still carrying markers is refused (FR-033)
         raises:        none - a merge cannot fail, it can only decline
+}
+
+// --- conflicts: reconstructed per listing, resolved per file ---
+struct Conflict {
+    relative_path, base: Option<String>, local: Option<String>, remote: Option<String>,
+    base_present: bool, remote_present: bool, remote_sha256: Option<Sha256>,
+    mergeable: bool, reason: ConflictReason, draft: Option<String>,
+}
+enum ConflictReason { Overlap, NotText, DeletedOnHost, CreatedOnBothSides }
+enum Resolution { Text(String), KeepLocal, TakeRemote }
+enum ResolveOutcome { Resolved, Conflicted, Refused(String), NotAttempted, Failed(String) }
+
+impl Conflicts {
+    async fn list(&self, ws, conflicted: &[RelPath]) -> Vec<Conflict>
+        // `conflicted` is the last reconciliation's `Conflicted` files; each is intersected with
+        // the pending rows and its remote side is read now, never stored
+    async fn resolve(&self, ws, path, resolution, seen: Option<Sha256>) -> ResolveOutcome
+        // The write is conditional on `seen` -- the remote the developer was shown -- so a host
+        // that moved while they decided refuses it, and that refusal is `Conflicted`
 }
 
 // --- retaining a save made offline ---
@@ -147,6 +170,10 @@ impl Reconcile {
 
 // --- prefetch ---
 struct PrefetchReport { fetched: usize, stopped_at_budget: bool }
+// Budget: A-PREFETCHCAP (256 MiB of cached content), checked with `WorkspaceCache::cached_bytes`
+// before each fetch. Reads: `CachedWorkspace::cache_in_ranges`, 64 KiB at a time at background
+// priority, assembled and cached whole only when every range carried the same whole-file digest
+// and the assembly hashes to it (SC-009 as amended; FR-031).
 
 impl Prefetch {
     async fn run(&self, ws: &WorkspaceId) -> PrefetchReport

@@ -9,6 +9,12 @@ import { readFileSync } from 'node:fs';
 import { PRESENTATION, present } from '../../client/ui/lib/statusbar/presentation';
 import { describeOutcome } from '../../client/ui/lib/editor/ending';
 import type { WriteOutcome } from '../../client/ui/lib/editor/buffers.svelte';
+import {
+  SIDES,
+  sideContent,
+  wholeFileChoices,
+  type Conflict,
+} from '../../client/ui/lib/offline/conflict-presentation';
 
 const SYSTEM = readFileSync('client/ui/lib/ds/system/styles.css', 'utf8');
 const STATUS_BAR = readFileSync('client/ui/lib/statusbar/StatusBar.svelte', 'utf8');
@@ -181,5 +187,72 @@ describe('save outcomes', () => {
     // and moving the base here would lose it.
     expect(BUFFERS).toMatch(/held\(\): void \{[\s\S]{0,160}this\.dirty = false;/);
     expect(BUFFERS).not.toMatch(/held\(\): void \{[\s\S]{0,160}this\.base =/);
+  });
+});
+
+// T054 — US4. The conflict panel's three sides are labelled and distinguishable without colour,
+// and a conflict with no cached base still renders -- a side that does not exist says why.
+describe('conflict panel', () => {
+  const PANEL = readFileSync('client/ui/lib/offline/ConflictPanel.svelte', 'utf8');
+  const conflict = (over: Partial<Conflict> = {}): Conflict => ({
+    relativePath: '/a.rs',
+    base: 'a\nb\n',
+    local: 'a\nMINE\n',
+    remote: 'a\nTHEIRS\n',
+    basePresent: true,
+    remotePresent: true,
+    remoteSha256: 'f'.repeat(64),
+    mergeable: true,
+    reason: 'overlap',
+    draft: '<<<<<<< ours\n',
+    ...over,
+  });
+
+  it('labels each side in words and marks it with its own icon', () => {
+    // Distinguishable without colour means a word and a shape per side, and three different ones:
+    // two sides sharing an icon are told apart by nothing but their position.
+    expect(SIDES.map((s) => s.side)).toEqual(['base', 'local', 'remote']);
+    expect(new Set(SIDES.map((s) => s.label)).size).toBe(3);
+    expect(new Set(SIDES.map((s) => s.icon)).size).toBe(3);
+    for (const s of SIDES) expect(s.icon).toMatch(/^ph-/);
+    // And the panel renders both, inside the element that carries the side.
+    expect(PANEL).toMatch(/data-side=\{s\.side\}[\s\S]{0,200}<i class="ph \{s\.icon\}"[\s\S]{0,80}\{s\.label\}/);
+  });
+
+  it('says why a side is missing rather than showing an empty file', () => {
+    // A file created offline has no base. An empty box would read as "the file was empty", which is
+    // a different, false statement.
+    const created = conflict({ base: null, basePresent: false, reason: 'createdOnBothSides' });
+    expect(sideContent(created, 'base')).toEqual({
+      absent: 'Created offline: there was no earlier version.',
+    });
+    const deleted = conflict({ remote: null, remotePresent: false, remoteSha256: null });
+    expect(sideContent(deleted, 'remote')).toEqual({ absent: 'Deleted on the host.' });
+    const binary = conflict({ local: null, mergeable: false, reason: 'notText' });
+    expect('absent' in sideContent(binary, 'local')).toBe(true);
+    // Present sides are shown as they are.
+    expect(sideContent(conflict(), 'local')).toEqual({ text: 'a\nMINE\n' });
+  });
+
+  it('names the whole-file choices for what they do to this file', () => {
+    expect(wholeFileChoices(conflict()).takeRemote).toBe("Take the host's");
+    const deleted = conflict({ remote: null, remotePresent: false });
+    expect(wholeFileChoices(deleted).takeRemote).toBe('Accept the deletion');
+    expect(wholeFileChoices(deleted).keepLocal).toContain('recreate');
+  });
+
+  it('offers an editable result only where there is something to combine', () => {
+    // Guarded on a draft existing: a file that is not text, or that the host deleted, has nothing
+    // to combine, and an empty editor would invite writing a fourth version from scratch.
+    expect(PANEL).toMatch(/\{#if current\.mergeable && current\.draft !== null\}[\s\S]{0,200}conflict-result/);
+  });
+
+  it('takes every colour from a design-system token', () => {
+    const colours = PANEL.match(/(?:^|[^-\w])color:\s*([^;]+);/g) ?? [];
+    expect(colours.length).toBeGreaterThan(0);
+    for (const decl of colours) {
+      if (/inherit|currentColor/i.test(decl)) continue;
+      expect(decl.trim()).toMatch(/var\(--/);
+    }
   });
 });

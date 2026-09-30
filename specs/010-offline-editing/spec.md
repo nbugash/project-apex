@@ -468,8 +468,14 @@ would mean every insertion silently reassigns the cases after it.
 - **SC-007**: A file previously opened while online opens offline in under **200 ms**.
 - **SC-008**: Offline path search over a workspace of **50,000** cached paths returns in under
   **1 second**.
-- **SC-009**: Interactive actions taken while prefetch is running are no slower than the same
-  actions with prefetch idle, within **10%**.
+- **SC-009**: Interactive actions taken while prefetch is running wait behind **at most one
+  prefetch response**: their p99 is no more than the idle p99 plus the time of one prefetch
+  response of at most **64 KiB**, within **10%**. *Amended during implementation, by the reviewer.*
+  The original bound -- no slower than idle, within 10% -- cannot hold over one pipe: §4.6 sends
+  interactive traffic first, but a frame already in flight completes, and measured against the
+  real engine one whole-file prefetch response put the interactive p99 at 22.5 ms against an idle
+  138 µs. Prefetch therefore reads in 64 KiB ranges, and the bound is stated on the wait that
+  design actually guarantees.
 - **SC-010**: Once prefetch reports that it has completed or stopped at the cache budget,
   **100%** of the project's manifest files and the files changed in the bounded set of recent
   commits are readable offline. Stated against prefetch's own report rather than against a
@@ -488,7 +494,11 @@ either without unpicking an improvised value (Principle I). The same shape as F0
 indicator, which the design system absorbed without incident.
 
 - **The conflict interface.** FR-021 requires the client to prompt, and a prompt needs somewhere
-  to happen. Three versions and a choice, in `client/ui/lib/offline/ConflictPanel.svelte`.
+  to happen. Three versions and a choice, in `client/ui/lib/offline/ConflictPanel.svelte`. The
+  choice includes an editable result pre-filled with markers around **only** the colliding
+  regions, which is how scenario 7's "prompted for that region, not for the file as a whole" is
+  met; the reviewer chose this over a whole-file choice, which would have required amending
+  scenario 7. A file that is not text, or that the host deleted, gets the whole-file choices only.
 - **The path-search surface.** FR-007 requires that the developer can run a path search and that
   the interface not present the results as complete, and there was no search surface in the client
   at all — a filter input, a results list and a "showing cached results" caveat, in
@@ -517,6 +527,11 @@ true until somebody opens that artifact.
   never meets a case it cannot handle (FR-017a, FR-025a).
 - **The conflict interface is part of this feature.** A-OFFLINE requires conflicts to prompt, and
   a prompt with nowhere to happen is not a requirement that can be met.
+- **A-PREFETCHCAP: prefetch stops once cached content would exceed 256 MiB.** The cache has no size
+  budget of its own -- §5.5 evicts by age alone and §11.4 says its policy is unchanged -- so "stop
+  rather than evict" needs a limit to stop at, and this is prefetch's own, on speculative content.
+  32 files at A-CACHECAP's per-file limit, and thousands of ordinary source files. Chosen by the
+  reviewer during implementation, when US5 met a cache with nothing to be at the budget of.
 - **Recent commits and manifests are a good prefetch heuristic**, taken from §11.4. Whether it is
   the *best* heuristic is a question for measurement after this ships, not a blocker for it.
 - **Reconciliation happens once per reconnection**, not continuously. A file edited offline and

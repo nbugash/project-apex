@@ -81,7 +81,7 @@ describe('offline state', () => {
     await invoke('hold_offline_for_tests', { hold: false }).catch(() => {});
   });
 
-  // T012 — scenario 1, FR-002, FR-003, SC-001.
+  // T012 — US1 scenario 1, FR-002, FR-003, SC-001.
   it('shows a distinct offline state within two seconds, and closes no tab', async () => {
     const before = await openTabs();
     expect(before.length).toBeGreaterThan(1);
@@ -109,7 +109,7 @@ describe('offline state', () => {
     expect(await openTabs()).toEqual(before);
   });
 
-  // T013 — scenario 2, FR-005, SC-012.
+  // T013 — US1 scenario 2, FR-005, SC-012.
   it('opens a cached file with no engine to ask', async () => {
     // The evidence is that there is no engine at all. A request could not succeed, so content on
     // screen came from the cache. The webview's own counter cannot show this: it records every
@@ -120,7 +120,7 @@ describe('offline state', () => {
     expect(await editorText()).toContain('fn main');
   });
 
-  // T014 — scenario 3, FR-006.
+  // T014 — US1 scenario 3, FR-006.
   it('marks a folder it never listed as unavailable rather than showing it empty', async () => {
     const row = await $('[data-testid="tree-row"][data-path="/deep"]');
     await row.waitForDisplayed({ timeout: 20_000 });
@@ -134,7 +134,7 @@ describe('offline state', () => {
     expect(await row.getText()).toContain('Not available offline');
   });
 
-  // T015 — scenarios 4, 5 and 6, FR-004, FR-007, FR-008, FR-009.
+  // T015 — US1 scenarios 4, 5 and 6, FR-004, FR-007, FR-008, FR-009.
   it('searches what it holds without claiming completeness, and keeps git state', async () => {
     // §11.3's table, read from the system specification rather than transcribed, so a row added
     // there changes what this test expects instead of going uncovered.
@@ -165,7 +165,7 @@ describe('offline state', () => {
     expect(git).toBeTruthy();
   });
 
-  // T027 — scenarios 3 and 4, FR-012, FR-013, SC-002.
+  // T027 — US2 scenarios 3 and 4, FR-012, FR-013, SC-002.
   it('keeps fifty offline edits across a relaunch that is still offline', async () => {
     // Five saves in each of ten files. Each must be *held* -- a save reported as a failure never
     // reached the store, and the relaunch below would then pass for the wrong reason.

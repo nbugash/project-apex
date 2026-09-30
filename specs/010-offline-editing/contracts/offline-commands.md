@@ -26,7 +26,15 @@ a promise the view cannot check.
 ## `conflicts_list` — request
 
 **Params**: none
-**Result**: `conflicts[]` of `{ relative_path, base, local, remote }`
+**Result**: `conflicts[]` of `{ relative_path, base, local, remote, base_present, remote_present,
+remote_sha256, mergeable, reason, draft }`. The three texts are absent only where the bytes are not
+UTF-8 (`mergeable` false) or the side does not exist, and the two `_present` flags say which, so an
+absent text is never ambiguous. `draft` is the combination with markers around the colliding
+regions only (US4 scenario 7), present only for a mergeable file with all three sides.
+
+**Which files**: the pending rows whose last reconciliation outcome was `Conflicted`. The row is the
+durable fact; the membership is re-established by every reconciliation, which is how an
+unresolved conflict survives going offline and relaunching and is presented again (FR-025).
 
 ### Guarantees
 
@@ -47,8 +55,16 @@ a promise the view cannot check.
 
 ## `conflict_resolve` — request
 
-**Params**: `relative_path`, `resolution`
+**Params**: `relative_path`, `resolution`, `remote_sha256`
 **Result**: `{ outcome }`
+
+`resolution` is `{ text }` (the developer's edited result), `keepLocal` (write the offline bytes as
+they are -- the only way to keep an unmergeable file's work) or `takeRemote` (accept the host,
+including its deletion; nothing is written and the row is forgotten). `remote_sha256` is the remote
+the developer was **shown**, and the write is conditional on it; that is what makes guarantee 2
+detectable at all -- a write conditional on a remote read at resolve time would overwrite a change
+that arrived while the developer was deciding. A `{ text }` still containing conflict markers is
+refused (FR-033: the client must not write a combination nobody chose).
 
 ### Guarantees
 

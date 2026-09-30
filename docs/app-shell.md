@@ -459,3 +459,52 @@ letters, so shape alone separates the five with no colour at all; the tokens are
 luminance gaps above 20 against each other and above 60 against the window background. A marker
 ten pixels tall is read as a smudge of colour as often as it is read as a letter, so neither
 channel is sufficient alone. The editor gutter does the same with solid, dashed and dotted rules.
+
+## Offline work in the client (F012)
+
+### A pending edit is its own table, and outlives its cache entry
+
+A save made while disconnected becomes a `pending_edits` row, keyed by `(workspace_id,
+relative_path)` and holding the saved content **and the base it was derived from** — the base's
+bytes, not a reference to them. The only other copy of the base is in `file_contents`, which
+eviction removes and any refetch overwrites, so a reference would be gone on exactly the path the
+three-way merge exists for. The base is written once, when the path first gains a pending edit;
+a later offline save replaces the content and leaves the base alone, or the merge would compare
+local against local. A file created offline has no base, and that is the only case in which it is
+absent. `pending_edits` is never evicted (§5.5).
+
+### The row is the durable fact; every outcome is a statement about one attempt
+
+Reconciliation deletes a row **only** where the host confirmed a write
+(`Reconcile::write`, the one place `forget_pending` is called). A conflict, a stale refusal, a
+dropped connection or a gone root all leave the row, so an interrupted reconnection costs a retry
+and never a loss. What happened to each file — `FastForwarded`, `Merged`, `Conflicted`,
+`NotAttempted`, `Failed` — is an in-memory report, recorded per workspace for `offline_status` and
+replaced by the next run. Which files are conflicts is that report's statement too: a conflict
+left unresolved survives going offline and a relaunch because its row does, and the next
+reconciliation marks it `Conflicted` again. The core announces both a held save and a
+reconciliation with `offline/onPendingChanged` on `apex:notification`, because neither changes the
+connection state the interface otherwise refreshes on.
+
+### The remote side of a conflict is never stored
+
+`conflicts_list` reads the host's version of each conflicted file when the list is built. A stored
+remote goes stale while the developer is deciding, and resolving against it silently discards a
+change that arrived during the conversation. For the same reason `conflict_resolve` is conditional
+on the remote the developer was **shown** (`remote_sha256`), not on one re-read at resolve time: a
+host that moved meanwhile refuses the write, and that refusal is a new conflict against the newer
+remote. The panel's editable result starts as the merge's draft, with markers around the colliding
+regions only; nothing writes a draft, and a resolution still carrying markers is refused.
+
+### Prefetch stops rather than evicts, and reads in small pieces
+
+Prefetch caches the root's manifests and the files recent commits touched (`git/recentlyChanged`)
+on workspace open while connected and as the last step of a reconnection. The cache has no size
+budget of its own, so prefetch has one — A-PREFETCHCAP, 256 MiB of cached content — checked before
+each fetch; at the budget it stops and says so, and evicts nothing. It lists each unlisted
+ancestor first, because the caching layer stores content only for a file with a tree row. Its
+reads are background priority and **64 KiB at a time** (`CachedWorkspace::cache_in_ranges`): one
+pipe is one queue, and a whole-file response sits ahead of every interactive reply behind it.
+Measured against the real engine, whole-file reads put an interactive p99 at 22 ms; chunked, it is
+bounded by one small frame (SC-009 as amended). The ranges are assembled and cached only if each
+carried the same whole-file digest and the assembly hashes to it.
