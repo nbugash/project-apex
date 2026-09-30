@@ -130,9 +130,16 @@ fn a_hundred_start_and_exit_cycles_leave_nothing_behind() {
         assert_eq!(exits, want, "cycle {cycle} never ended");
     }
 
-    // A moment for the last release to land, so the count is of what remains rather than of what
-    // is still being cleaned up.
-    std::thread::sleep(Duration::from_millis(200));
+    // Waited for rather than slept on: the count is of what *remains*, and the last release can
+    // take longer than any fixed pause under a loaded machine -- a 200 ms sleep failed the full
+    // suite twice with one child still being reaped. A real leak never returns to the starting
+    // count, so bounding the wait keeps the assertion exactly as strict.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while (service.live() > identities_before || children() > children_before)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let identities_after = service.live();
     let children_after = children();
 
