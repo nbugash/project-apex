@@ -21,7 +21,14 @@ export async function invoke<T>(cmd: string, args: Record<string, unknown> = {})
   )) as T;
 }
 
-/** End the engine and wait until it is really gone. */
+/**
+ * End the engine and wait until it is really gone.
+ *
+ * `pkill` only delivers a signal. Returning while the engine was still exiting once left the kill
+ * racing the next spec file's startup (`editor-session.spec.ts` failed its setup in a full run).
+ * The blast radius is every engine on the machine, tolerable only because the suite runs one
+ * application at a time (`maxInstances: 1`).
+ */
 export function killEngine(): void {
   spawnSync('pkill', ['-x', 'ide-engine']);
   for (let i = 0; i < 50; i += 1) {

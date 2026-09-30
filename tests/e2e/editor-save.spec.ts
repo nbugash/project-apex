@@ -17,30 +17,13 @@ import {
   editOnHost,
   requestsIssued,
 } from './editor-harness';
-import { spawnSync } from 'node:child_process';
 import { waitForShell, resetSession } from './helpers';
+import { goOffline } from './offline-harness';
 
 async function noticeTone(): Promise<string> {
   const notice = await $('[data-testid="editor-ending"]');
   await notice.waitForDisplayed({ timeout: 20_000 });
   return (await notice.getAttribute('data-tone')) ?? '';
-}
-
-/// End the engine the application spawned, which is what an outage is.
-///
-/// **Waits for the process to be gone before returning.** `pkill` only delivers a signal; it
-/// says nothing about when the process dies. Returning while the engine was still exiting left
-/// the kill racing the *next* spec file's startup, and `editor-session.spec.ts` failed its setup
-/// once in a full run because of it — an engine that was reachable when its app asked for a
-/// workspace and gone a moment later. The blast radius is still every engine on the machine,
-/// which is tolerable only because the suite runs one application at a time (`maxInstances: 1`).
-function killEngine(): void {
-  spawnSync('pkill', ['-x', 'ide-engine']);
-  for (let i = 0; i < 50; i += 1) {
-    if (spawnSync('pgrep', ['-x', 'ide-engine']).status !== 0) return;
-    spawnSync('sleep', ['0.1']);
-  }
-  throw new Error('the engine would not die, so the test that follows cannot trust its state');
 }
 
 describe('saving', () => {
@@ -125,7 +108,7 @@ describe('saving', () => {
   });
 
   it('holds work on this machine when the engine cannot be reached, and keeps it', async () => {
-    // **Last in the file, and it ends the engine.** `stub_set_connection` cannot serve here:
+    // **It ends the engine.** `stub_set_connection` cannot serve here:
     // with an engine present the composition root binds the real transport as the connection
     // source, so the stub drives something nothing is reading (see `wdio.conf.ts`). The honest
     // way to test "the engine could not be reached" is for it not to be reachable.
@@ -136,9 +119,14 @@ describe('saving', () => {
     // reports `heldLocally` -- a success (FR-010, FR-011). What F006 protected still holds and is
     // still asserted: the save must not read as somebody else's edit (FR-012), the work stays in
     // the editor, and nothing reached the disk.
+    //
+    // **Held, not only ended.** The reconnection loop brings an ended engine back within about a
+    // second, and the fixed pause this test used to take was long enough for it to: the save then
+    // reached the host and read "saved". `goOffline` holds reconnection off for this process and
+    // waits until the client has noticed, rather than guessing how long that takes. The next test
+    // starts a fresh process, so the hold cannot leak into it.
     await typeInEditor('offline ');
-    killEngine();
-    await browser.pause(1000);
+    await goOffline();
 
     await clickSave();
 
