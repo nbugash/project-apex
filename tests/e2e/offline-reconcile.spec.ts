@@ -13,7 +13,7 @@
 // prompt. Notices are not interactions -- being *told* what happened is what FR-024 requires, and a
 // test that counted notices would forbid the report it is supposed to check for.
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   WORKSPACE,
@@ -23,6 +23,7 @@ import {
   typeInEditor,
   clickSave,
   editorText,
+  endingTone,
 } from './editor-harness';
 import { resetSession, relaunch } from './helpers';
 import { goOffline, comeBack, offlineStatus, invoke } from './offline-harness';
@@ -56,6 +57,7 @@ describe('reconnecting after offline work', () => {
       'unmoved.rs': TWENTY_LINES,
       'moved-elsewhere.rs': TWENTY_LINES,
       'untouched.rs': TWENTY_LINES,
+      'locked/held.rs': TWENTY_LINES,
     });
     await relaunch();
     await openWorkspace(WORKSPACE);
@@ -73,10 +75,19 @@ describe('reconnecting after offline work', () => {
   // Scenario 1, SC-004: the host has not moved, so everything lands and nothing is asked.
   it('lands offline work with zero interactions when the host has not moved', async () => {
     await openFile('/unmoved.rs');
+    // Waited for rather than read once: `openFile` returns when the editor exists, which can be
+    // before its content has arrived, and a save is held asynchronously.
+    await browser.waitUntil(async () => (await editorText()).includes('line 19'), {
+      timeout: 10_000,
+      timeoutMsg: 'the file never arrived',
+    });
     await goOffline();
     await typeInEditor('// mine\n');
     await clickSave();
-    expect((await offlineStatus()).pending.length).toBe(1);
+    await browser.waitUntil(async () => (await offlineStatus()).pending.length === 1, {
+      timeout: 10_000,
+      timeoutMsg: 'the offline save was not held',
+    });
 
     await comeBack();
 
@@ -178,5 +189,60 @@ describe('reconnecting after offline work', () => {
 
     expect(onHost('untouched.rs')).toBe(before);
     expect(await editorText()).toBeDefined();
+  });
+
+  // Found after F012 by reading, not by a report: an online save of a file that still has a pending
+  // row did not settle the row. The editor shows the pending content (FR-013) and saves against its
+  // base, so a save that lands has put the developer's latest work on the host -- yet the row stayed,
+  // the file stayed marked "held locally", and the next reconciliation would merge the stale offline
+  // content against the newer save. The row lingers after a reconciliation that *failed*, which is
+  // how it is produced here: the host's folder is made unwritable, so the write fails for a reason
+  // that will not fix itself, and is then made writable again.
+  it('settles a lingering pending row when the file is saved online', async () => {
+    const dir = join(WORKSPACE, 'locked');
+    await openFile('/locked/held.rs');
+    await browser.waitUntil(async () => (await editorText()).includes('line 19'), {
+      timeout: 10_000,
+      timeoutMsg: 'the file never arrived',
+    });
+    await goOffline();
+    await typeInEditor('// offline\n');
+    await clickSave();
+    await browser.waitUntil(async () => (await offlineStatus()).pending.length === 1, {
+      timeout: 10_000,
+      timeoutMsg: 'the offline save was not held',
+    });
+
+    chmodSync(dir, 0o555);
+    try {
+      await comeBack();
+      // Reconciliation ran and failed: the report says so, and the row is still there.
+      await browser.waitUntil(
+        async () => {
+          const r = (await invoke<{ lastReconciliation: { files: { outcome: string }[] } | null }>(
+            'offline_status',
+          )).lastReconciliation;
+          return r?.files.some((f) => f.outcome === 'failed') ?? false;
+        },
+        { timeout: 20_000, timeoutMsg: 'reconciliation never reported the failed write' },
+      );
+      expect((await offlineStatus()).pending.length).toBe(1);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+
+    // Saved online, from the buffer that shows the offline work.
+    await typeInEditor('// online\n');
+    await clickSave();
+    expect(await endingTone()).toBe('ok');
+    const landed = onHost('locked/held.rs');
+    expect(landed).toContain('// offline');
+    expect(landed).toContain('// online');
+
+    await browser.waitUntil(async () => (await offlineStatus()).pending.length === 0, {
+      timeout: 10_000,
+      timeoutMsg: 'the online save left the pending row behind',
+    });
+    expect(await $('[data-testid="editor-held-locally"]').isExisting()).toBe(false);
   });
 });
