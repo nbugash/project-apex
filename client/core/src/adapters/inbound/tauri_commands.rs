@@ -658,9 +658,14 @@ pub async fn workspace_open(
             &base_path_for_engine,
         )
         .await;
-        *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
-        reconcile_if_connected(&shell, &access, &ws.id);
     }
+    // **Set whether or not there is an engine** (F012). This used to sit inside the branch above,
+    // so an application launched while offline never had a current workspace, and every command
+    // that needs one -- reading a cached file, saving, `offline_status` -- refused. That made
+    // FR-012, "survives quit and relaunch while still offline", impossible. Which workspace is open
+    // is a fact about this client; only the engine's registration depends on there being an engine.
+    *tasks.current.lock().expect("current workspace") = Some(ws.id.0.clone());
+    reconcile_if_connected(&shell, &access, &ws.id);
     // Recorded in the session, and announced, before the id is given back. Until F006 nothing
     // ever constructed a `WorkspaceReference`, so `workspace:changed` announced `None` forever
     // and the interface had no way to learn which workspace it had just opened -- which is why
@@ -1196,9 +1201,11 @@ pub async fn workspace_resume(
 
     if let Some(sender) = tasks.sender.as_ref() {
         crate::adapters::inbound::task_commands::register_with_engine(sender, &ws.0, &base).await;
-        *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
-        reconcile_if_connected(&shell, &access, &ws);
     }
+    // Outside the branch for the reason `workspace_open` gives: a restored session launched offline
+    // must still know which workspace it is showing, or nothing in it can be read (FR-012).
+    *tasks.current.lock().expect("current workspace") = Some(ws.0.clone());
+    reconcile_if_connected(&shell, &access, &ws);
     // Asking is also what makes the engine start watching this repository, so this is not
     // merely a refresh: without it nothing would be pushed for the rest of the session.
     if let Some(git) = access.git.as_ref() {
