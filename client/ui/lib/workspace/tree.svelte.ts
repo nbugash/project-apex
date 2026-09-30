@@ -155,37 +155,73 @@ export class WorkspaceTree {
     if (await this.#load(path, node.depth + 1)) node.loaded = true;
   }
 
-  /// `true` when the listing arrived, `false` when it failed or was already in flight.
+  /// `true` when the whole listing arrived, `false` when it failed or was already in flight.
+  ///
+  /// **Every page, rendered as it arrives** (F005's FR-024). A folder larger than one page used to
+  /// show its first thousand entries and nothing else, silently. Each page is inserted after the
+  /// folder's rows so far, so a large folder renders progressively rather than after its last page.
+  /// A later page that fails takes back what this load inserted: a partial folder that looked
+  /// complete is the defect being fixed, and a folder left unloaded is retried on the next expand.
   async #load(path: string, depth: number): Promise<boolean> {
     if (this.#pending.has(path)) return false;
     this.#pending.add(path);
     recordListing(path);
+    const inserted: string[] = [];
     try {
-      const items = await invoke<Entry[]>('workspace_read_directory', {
-        workspaceId: this.workspaceId,
-        relativePath: path,
-      });
-      const children: Node[] = items.map((e) => ({
-        ...e,
-        path: path === '/' ? `/${e.name}` : `${path}/${e.name}`,
-        depth,
-        expanded: false,
-        loaded: false,
-      }));
-      const at = path === '/' ? 0 : this.nodes.findIndex((n) => n.path === path) + 1;
-      this.nodes =
-        path === '/'
-          ? children
-          : [...this.nodes.slice(0, at), ...children, ...this.nodes.slice(at)];
+      let cursor: string | null = null;
+      do {
+        const page: DirectoryPage = await invoke<DirectoryPage>('workspace_read_directory', {
+          workspaceId: this.workspaceId,
+          relativePath: path,
+          cursor,
+        });
+        const children: Node[] = page.entries.map((e) => ({
+          ...e,
+          path: path === '/' ? `/${e.name}` : `${path}/${e.name}`,
+          depth,
+          expanded: false,
+          loaded: false,
+        }));
+        inserted.push(...children.map((c) => c.path));
+        if (path === '/' && cursor === null) {
+          this.nodes = children;
+        } else {
+          const at = this.#endOf(path);
+          this.nodes = [...this.nodes.slice(0, at), ...children, ...this.nodes.slice(at)];
+        }
+        cursor = page.nextCursor;
+      } while (cursor !== null);
       this.problem = null;
       return true;
     } catch (e) {
+      if (inserted.length > 0) {
+        const gone = new Set(inserted);
+        this.nodes = this.nodes.filter(
+          (n) => !gone.has(n.path) && !inserted.some((p) => n.path.startsWith(`${p}/`)),
+        );
+      }
       this.problem = classify(e);
       return false;
     } finally {
       this.#pending.delete(path);
     }
   }
+
+  /// Where the next of `path`'s children goes: after every row beneath it so far.
+  #endOf(path: string): number {
+    if (path === '/') return this.nodes.length;
+    const at = this.nodes.findIndex((n) => n.path === path);
+    if (at < 0) return this.nodes.length;
+    let end = at + 1;
+    while (end < this.nodes.length && this.nodes[end]!.path.startsWith(`${path}/`)) end += 1;
+    return end;
+  }
+}
+
+/// One page of a folder, as `workspace_read_directory` answers.
+interface DirectoryPage {
+  entries: Entry[];
+  nextCursor: string | null;
 }
 
 /// Every listing this tree has asked for, for the suite to count.

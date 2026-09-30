@@ -20,6 +20,7 @@ use std::sync::Arc;
 struct Harness {
     provider: CachedWorkspace,
     engine: Arc<FakeWorkspace>,
+    conn: Arc<StubConnectionStatusSource>,
     ws: WorkspaceId,
 }
 
@@ -49,20 +50,21 @@ fn harness(folders: usize, per: usize) -> Harness {
         )
         .unwrap();
 
-    let conn = StubConnectionStatusSource::new();
+    let conn = Arc::new(StubConnectionStatusSource::new());
     conn.set(ConnectionState::Connected);
 
     let provider = CachedWorkspace::new(
         engine.clone(),
         cache,
         Arc::new(FakeClock::at(0)),
-        Arc::new(conn),
+        conn.clone(),
         Arc::new(|_: Presentation| {}),
         Limits::default(),
     );
     Harness {
         provider,
         engine,
+        conn,
         ws,
     }
 }
@@ -186,5 +188,87 @@ async fn a_directory_larger_than_one_page_arrives_paged() {
         "and the caller is told there is more — a listing of a hundred thousand entries at a \
          hundred bytes each is an order of magnitude past §4.1's frame cap, so a single-message \
          listing is undeliverable rather than merely slow"
+    );
+}
+
+/// FR-024's other half: a caller **can request the next page**, through the caching layer, and
+/// every entry of a folder larger than one page reaches it and the cache.
+///
+/// Found after F012 by reading, not by a report. The first page was cached as though it were the
+/// whole folder, so asking for the next page answered with the first one again and no cursor; and
+/// storing a later page would have replaced the earlier one, because a listing replaces a parent's
+/// children. A folder of more than 1000 entries showed its first 1000, online and offline alike.
+#[tokio::test]
+async fn every_page_of_a_large_folder_reaches_the_caller_and_the_cache() {
+    let h = harness(1, 1_500);
+    let dir = RelPath::parse("/dir00000").unwrap();
+
+    let mut names = std::collections::BTreeSet::new();
+    let mut page = PageRequest::default();
+    for _ in 0..10 {
+        let got = h
+            .provider
+            .read_directory(&h.ws, &dir, page.clone())
+            .await
+            .unwrap();
+        names.extend(got.items.into_iter().map(|e| e.name));
+        match got.next_cursor {
+            Some(cursor) => page.cursor = Some(cursor),
+            None => break,
+        }
+    }
+    assert_eq!(
+        names.len(),
+        1_500,
+        "every entry, each once, following the cursor"
+    );
+
+    // And all of them are held: offline, the folder is complete rather than its first page.
+    h.conn.set(ConnectionState::Disconnected);
+    let mut offline = std::collections::BTreeSet::new();
+    let mut page = PageRequest::default();
+    for _ in 0..10 {
+        let got = h
+            .provider
+            .read_directory(&h.ws, &dir, page.clone())
+            .await
+            .unwrap();
+        offline.extend(got.items.into_iter().map(|e| e.name));
+        match got.next_cursor {
+            Some(cursor) => page.cursor = Some(cursor),
+            None => break,
+        }
+    }
+    assert_eq!(
+        offline.len(),
+        1_500,
+        "the cached folder is the whole folder"
+    );
+}
+
+/// A listing that stops after its first page caches nothing for the folder, so offline it is
+/// reported unavailable rather than presented as a complete folder of 1000 entries (FR-033's rule
+/// for content, applied to a listing). The cached listing of a folder is therefore always the
+/// whole folder or nothing.
+#[tokio::test]
+async fn a_listing_interrupted_after_one_page_caches_nothing() {
+    let h = harness(1, 1_500);
+    let dir = RelPath::parse("/dir00000").unwrap();
+
+    let first = h
+        .provider
+        .read_directory(&h.ws, &dir, PageRequest::default())
+        .await
+        .unwrap();
+    assert!(first.next_cursor.is_some());
+
+    h.conn.set(ConnectionState::Disconnected);
+    let offline = h
+        .provider
+        .read_directory(&h.ws, &dir, PageRequest::default())
+        .await;
+    assert!(
+        offline.is_err(),
+        "a partial listing was served offline as though it were the folder"
     );
 }

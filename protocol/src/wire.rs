@@ -191,6 +191,17 @@ pub struct WriteFileResult {
 /// than merely slow.
 pub const MAX_DIRECTORY_PAGE: u32 = 1000;
 
+/// The `workspace/readDirectory` cursor for an entry: an opaque token that sorts exactly as the
+/// listing does, `(type DESC, name ASC)`.
+///
+/// `0` for directories and `1` for files, so a plain string comparison reproduces the order. The
+/// separator is a unit separator, which cannot occur in a name the engine lists. Here, in the
+/// protocol, because two sides mint it: the engine for pages it reads, and the client for pages it
+/// serves from a cached listing -- and a cursor must mean the same thing whichever minted it.
+pub fn directory_cursor(is_directory: bool, name: &str) -> String {
+    format!("{}\u{1f}{name}", if is_directory { '0' } else { '1' })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadDirectoryParams {
     pub workspace_id: WorkspaceId,

@@ -16,10 +16,10 @@
 use crate::application::ports::connection::ConnectionStatusSource;
 use crate::application::ports::git_provider::GitProvider;
 use crate::application::ports::workspace_cache::WorkspaceCache;
-use crate::application::ports::workspace_provider::{ProviderError, WorkspaceProvider};
+use crate::application::ports::workspace_provider::ProviderError;
 use crate::application::use_cases::cached_workspace::CachedWorkspace;
 use crate::domain::connection::ConnectionState;
-use crate::domain::workspace::{EntryKind, PageRequest, RelPath, WorkspaceId};
+use crate::domain::workspace::{EntryKind, RelPath, WorkspaceId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -146,11 +146,8 @@ impl Prefetch {
     /// listed because the connection is gone.
     async fn candidates(&self, ws: &WorkspaceId) -> Option<Vec<RelPath>> {
         let root = RelPath::root();
-        if let Err(ProviderError::Offline) = self
-            .reader
-            .read_directory(ws, &root, PageRequest::default())
-            .await
-        {
+        // Every page: a manifest can sort after the first thousand entries of a large root.
+        if let Err(ProviderError::Offline) = self.reader.list_all(ws, &root).await {
             return None;
         }
         let children = self.cache.list_children(ws, &root).unwrap_or_default();
@@ -198,11 +195,7 @@ impl Prefetch {
             if listed {
                 continue;
             }
-            match self
-                .reader
-                .read_directory(ws, dir, PageRequest::default())
-                .await
-            {
+            match self.reader.list_all(ws, dir).await {
                 Ok(_) => {}
                 Err(ProviderError::Offline) => return Listed::Offline,
                 Err(_) => return Listed::NotAFile,

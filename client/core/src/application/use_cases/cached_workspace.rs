@@ -52,6 +52,15 @@ pub struct CachedWorkspace {
     connection: Arc<dyn ConnectionStatusSource>,
     present: PresentationSink,
     limits: Limits,
+    /// Listings in progress, per `(workspace, folder)`: the pages so far and the cursor the next
+    /// one must be asked with. A folder's listing is stored only once its **last** page arrives, so
+    /// what the cache holds for a folder is always the whole folder or nothing (FR-024).
+    listing: std::sync::Mutex<std::collections::HashMap<(String, String), PartialListing>>,
+}
+
+struct PartialListing {
+    next: String,
+    items: Vec<crate::domain::workspace::FsEntry>,
 }
 
 impl CachedWorkspace {
@@ -70,6 +79,63 @@ impl CachedWorkspace {
             connection,
             present,
             limits,
+            listing: Default::default(),
+        }
+    }
+
+    /// Every entry of a folder, following the cursor to the end. For prefetch, which needs the
+    /// whole folder to find one file in it; the tree pages instead, so a large folder renders as it
+    /// arrives.
+    pub async fn list_all(
+        &self,
+        ws: &WorkspaceId,
+        path: &RelPath,
+    ) -> ProviderResult<Vec<crate::domain::workspace::FsEntry>> {
+        let mut page = PageRequest::default();
+        let mut out = Vec::new();
+        loop {
+            let got = self.read_directory(ws, path, page.clone()).await?;
+            out.extend(got.items);
+            match got.next_cursor {
+                Some(cursor) => page.cursor = Some(cursor),
+                None => return Ok(out),
+            }
+        }
+    }
+
+    /// Record one fetched page, storing the folder once the last page is in.
+    ///
+    /// A page that does not continue the listing in progress -- a first page again, or a cursor
+    /// that is not the one expected -- starts over rather than being stitched onto pages from a
+    /// different pass, which could duplicate or skip entries that moved in between.
+    fn record_page(&self, ws: &WorkspaceId, path: &RelPath, page: &PageRequest, fetched: &DirPage) {
+        let key = (ws.0.clone(), path.as_str().to_string());
+        let Ok(mut all) = self.listing.lock() else {
+            return;
+        };
+        let mut items = match (&page.cursor, all.remove(&key)) {
+            (None, _) => Vec::new(),
+            (Some(c), Some(partial)) if &partial.next == c => partial.items,
+            // A cursor that continues nothing this layer saw. The pages before it are unknown,
+            // so the folder cannot be stored whole from here.
+            (Some(_), _) => return,
+        };
+        items.extend(fetched.items.iter().cloned());
+        match &fetched.next_cursor {
+            Some(next) => {
+                all.insert(
+                    key,
+                    PartialListing {
+                        next: next.clone(),
+                        items,
+                    },
+                );
+            }
+            None => {
+                drop(all);
+                // Failing to persist a listing must not fail the listing.
+                let _ = self.cache.put_listing(ws, path, &items);
+            }
         }
     }
 
@@ -98,11 +164,11 @@ impl WorkspaceProvider for CachedWorkspace {
     ) -> ProviderResult<DirPage> {
         if let Ok(cached) = self.cache.list_children(ws, path) {
             if !cached.is_empty() {
-                // A folder already listed is never re-requested while it remains valid.
-                return Ok(DirPage {
-                    items: cached,
-                    next_cursor: None,
-                });
+                // A folder already listed is never re-requested while it remains valid. It is
+                // served in the protocol's own pages, with the protocol's own cursor, so a caller
+                // cannot tell a cached folder from a live one and a cursor means the same thing
+                // whichever side minted it.
+                return Ok(page_of(cached, &page));
             }
         }
         if !self.connected() {
@@ -110,9 +176,8 @@ impl WorkspaceProvider for CachedWorkspace {
             self.publish(Presentation::Unavailable);
             return Err(ProviderError::Offline);
         }
-        let fetched = self.inner.read_directory(ws, path, page).await?;
-        // Failing to persist a listing must not fail the listing.
-        let _ = self.cache.put_listing(ws, path, &fetched.items);
+        let fetched = self.inner.read_directory(ws, path, page.clone()).await?;
+        self.record_page(ws, path, &page, &fetched);
         Ok(fetched)
     }
 
@@ -367,6 +432,27 @@ impl CachedWorkspace {
         self.publish(Presentation::Current);
         Ok(chunk)
     }
+}
+
+/// One page of a cached folder, in the listing's contractual order.
+fn page_of(mut items: Vec<crate::domain::workspace::FsEntry>, page: &PageRequest) -> DirPage {
+    use crate::domain::workspace::{EntryKind, FsEntry};
+    let token = |e: &FsEntry| {
+        apex_protocol::wire::directory_cursor(e.kind == EntryKind::Directory, &e.name)
+    };
+    items.sort_by(FsEntry::listing_order);
+    if let Some(after) = &page.cursor {
+        let at = items
+            .iter()
+            .position(|e| token(e).as_str() > after.as_str())
+            .unwrap_or(items.len());
+        items.drain(..at);
+    }
+    let limit = page.limit.max(1) as usize;
+    let more = items.len() > limit;
+    items.truncate(limit);
+    let next_cursor = if more { items.last().map(token) } else { None };
+    DirPage { items, next_cursor }
 }
 
 /// Serve a range out of whole content already held.

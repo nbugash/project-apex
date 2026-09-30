@@ -762,16 +762,28 @@ pub struct WorkspaceDto {
 pub async fn workspace_read_directory(
     workspace_id: String,
     relative_path: String,
+    cursor: Option<String>,
     access: State<'_, WorkspaceAccess>,
-) -> Result<Vec<EntryDto>, WorkspaceFailure> {
+) -> Result<DirectoryPageDto, WorkspaceFailure> {
     // Untrusted input: a path that does not parse is refused here rather than being repaired
-    // into something that does.
+    // into something that does. The cursor is opaque and only ever compared, but it is bounded:
+    // a token longer than any name the engine lists is not one it minted.
     let path = RelPath::parse(&relative_path).map_err(|_| WorkspaceFailure::Refused)?;
+    if cursor.as_ref().is_some_and(|c| c.len() > 4096) {
+        return Err(WorkspaceFailure::Refused);
+    }
     let page = access
         .provider
-        .read_directory(&WorkspaceId(workspace_id), &path, PageRequest::default())
+        .read_directory(
+            &WorkspaceId(workspace_id),
+            &path,
+            PageRequest {
+                cursor,
+                ..PageRequest::default()
+            },
+        )
         .await?;
-    Ok(page
+    let entries = page
         .items
         .into_iter()
         .map(|e| EntryDto {
@@ -783,7 +795,20 @@ pub async fn workspace_read_directory(
             size: e.size,
             modified: e.modified,
         })
-        .collect())
+        .collect();
+    Ok(DirectoryPageDto {
+        entries,
+        next_cursor: page.next_cursor,
+    })
+}
+
+/// One page of a folder (FR-024). `next_cursor` is present exactly when more remain, and the
+/// interface asks again with it until it is absent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryPageDto {
+    pub entries: Vec<EntryDto>,
+    pub next_cursor: Option<String>,
 }
 
 #[tauri::command]

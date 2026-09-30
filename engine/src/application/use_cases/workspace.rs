@@ -225,12 +225,7 @@ pub fn read_directory(
 /// this engine will list — `read_dir` drops names that are not valid UTF-8, and a `\x1f` in a
 /// name would sort within its own type group rather than across it.
 pub fn page_cursor(e: &FsEntryWire) -> String {
-    let group = if matches!(e.kind, EntryKind::Directory) {
-        '0'
-    } else {
-        '1'
-    };
-    format!("{group}\u{1f}{}", e.name)
+    apex_protocol::wire::directory_cursor(matches!(e.kind, EntryKind::Directory), &e.name)
 }
 
 /// Metadata, with the whole file's digest.
