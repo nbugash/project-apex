@@ -424,6 +424,23 @@ fn deliver(registry: &Registry, notifications: &dyn NotificationSink, body: &str
 }
 
 #[allow(async_fn_in_trait)]
+/// The transport is already built for this: `connect_with` resets the last attempt's exit code and
+/// stderr, spawns a fresh child and a fresh queue, and nothing survives a reconnect (the note at the
+/// top of this module). What was missing was anything that called it a second time.
+impl crate::application::ports::connection::Reconnectable for SshTransport {
+    fn reconnect(&self) -> Result<(), String> {
+        self.connect().map_err(|e| e.to_string())
+    }
+
+    fn last_failure(&self) -> Option<FailureCondition> {
+        SshTransport::last_failure(self)
+    }
+
+    fn report_retrying(&self, attempt: u32, next_in_secs: u64) {
+        SshTransport::report_retrying(self, attempt, next_in_secs);
+    }
+}
+
 impl RequestTransport for SshTransport {
     async fn send(&self, request: Request) -> RequestOutcome {
         let (_id, pending) = self.begin(request);

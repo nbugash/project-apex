@@ -364,6 +364,12 @@ would mean every insertion silently reassigns the cases after it.
 
 - **FR-018**: On reconnection the client MUST reconcile each file with retained work by comparing
   three versions: the base it recorded, the local content, and the host's current content.
+- **FR-018a**: While offline, the client MUST attempt to reconnect on its own, on a bounded,
+  jittered backoff, and MUST stop rather than retry where the failure will not fix itself (a
+  changed host key, a refused credential). On success it MUST register the current workspace with
+  the new engine **before** reconciling, because a reconciliation against an engine that does not
+  know the workspace reports every file as failed. Added during implementation: §11.5 specifies
+  this loop, and without it nothing reconnected and FR-018 could only be met by relaunching.
 - **FR-019**: Where the host's content still matches the recorded base, the local content MUST be
   written to the host without prompting the developer.
 - **FR-020**: Where the host's content has changed but does not overlap the local change, the two

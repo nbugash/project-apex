@@ -2121,6 +2121,25 @@ watches already do; this records why.
 **Reversal condition.** A connection state that cannot distinguish a reconnection from a first
 connection, which would make "once per transition" ambiguous.
 
+**Amended during F012's implementation (2026-09-30).** As first built, the trigger could never
+fire usefully, for two reasons found by the first live run. **Nothing reconnected:** the
+transport connected once at startup, and §11.5's backoff loop had a policy (`supervise.rs`) and a
+status emitter (`report_retrying`) but no loop; after a loss the state stayed `Disconnected` for
+the life of the process. **And the one transition there was came too early:** it happens at
+startup, before any workspace is open, so there was nothing to reconcile. The reconciler was
+built, tested and wired, and unreachable.
+
+So the decision now reads: reconciliation runs **as the last step of the reconnection sequence**,
+after the current workspace has been registered again with the new engine -- §11.5's own order,
+which puts reconciling offline work after re-establishing everything else -- and **when a
+workspace is opened or resumed while connected**, which is the first moment both inputs exist
+after a launch. A reconciliation started the instant the state read `Connected` would race the
+re-registration and meet an engine that has never heard of the workspace, reporting every file
+`Failed`. It is still driven by the published state and nothing else: the reconnection loop
+acts on `Disconnected` and nothing in this design is a second detector of whether the client is
+online. The two triggers are mutually excluded by an in-flight guard, so one run happens at a
+time.
+
 ---
 
 ## A-OFFLINE — Offline editing with three-way merge (2026-09-23)

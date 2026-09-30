@@ -10,6 +10,7 @@ pub mod observe_connection;
 pub mod observe_task;
 pub mod persist_session;
 pub mod reconcile;
+pub mod reconnect;
 pub mod register_workspace;
 pub mod restore_session;
 pub mod retain_edit;
