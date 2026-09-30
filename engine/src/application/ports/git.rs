@@ -68,4 +68,13 @@ pub trait Git: Send + Sync {
     /// that assumed the obvious path would watch nothing and never update, on a workspace that
     /// otherwise behaves perfectly.
     fn git_dir(&self, root: &ResolvedPath) -> Result<PathBuf, GitFailure>;
+
+    /// Which files the last `commits` commits touched, workspace-relative and deduplicated
+    /// (`contracts/recently-changed.md`). Paths only: there is no return path here for a commit's
+    /// identity, author, date or content, for the same reason `file_diff` has none for content.
+    fn recently_changed(
+        &self,
+        root: &ResolvedPath,
+        commits: u32,
+    ) -> Result<Vec<String>, GitFailure>;
 }

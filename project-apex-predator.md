@@ -752,6 +752,7 @@ request would leave it diverged. Principle VI puts the check on both sides of th
 | `git/getStatus` | request | `workspaceId`, `cursor?`, `limit?` | `{currentBranch, changes[], nextCursor?}` |
 | `git/onStatusUpdate` | notification | `workspaceId`, `currentBranch`, `changes[]`, `nextCursor?` | — |
 | `git/getFileDiff` | request | `workspaceId`, `relativePath` | `{added[], deleted[], modified[]}` |
+| `git/recentlyChanged` | request | `workspaceId`, `commits?` | `{paths[]}` (A-RECENT) |
 
 `changes[]` entries are `{path, status}` where status is `MODIFIED`, `UNTRACKED`, `STAGED`,
 `DELETED` or `CONFLICT`. Diffs return line coordinates only, never file contents — the client

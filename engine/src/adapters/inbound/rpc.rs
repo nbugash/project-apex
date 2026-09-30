@@ -660,6 +660,77 @@ pub fn dispatch(
                 }
             }
         }
+        "git/recentlyChanged" => {
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let req = match serde_json::from_value::<apex_protocol::wire::RecentlyChangedParams>(
+                params,
+            ) {
+                Ok(req) => req,
+                Err(e) => {
+                    return reply_or_nothing(encode_error(
+                        codec,
+                        id,
+                        INVALID_PARAMS,
+                        &format!("{e}"),
+                    ))
+                }
+            };
+            let commits = match req.commits {
+                None => apex_protocol::wire::DEFAULT_RECENT_COMMITS,
+                Some(n) if n >= 1 => u32::try_from(n).unwrap_or(u32::MAX),
+                Some(n) => {
+                    return reply_or_nothing(encode_error(
+                        codec,
+                        id,
+                        INVALID_PARAMS,
+                        &format!("commits must be a positive integer, not {n}"),
+                    ))
+                }
+            };
+            // Resolved exactly as the other arms resolve, so both refusals come from one call:
+            // `-32001` for a workspace never registered and `-32009` for one whose root is gone.
+            // Hand-rolling the registered check would lose the second, and a gone root answered
+            // with guarantee 5's empty list would let prefetch cache nothing and report nothing
+            // wrong.
+            let root = match roots.resolve(&req.workspace_id.0) {
+                Ok(r) => r,
+                Err(why) => {
+                    let refusal =
+                        crate::application::use_cases::workspace::RequestRefusal::Root(why);
+                    let (code, message) = refusal.wire();
+                    return reply_or_nothing(encode_error(codec, id, code, &message));
+                }
+            };
+            let Some(service) = git.map(|w| w.service()) else {
+                // No git composed: the same empty answer a host without git gives (guarantee 5).
+                return reply_or_nothing(encode_result(
+                    codec,
+                    id,
+                    &apex_protocol::wire::RecentlyChangedResult::default(),
+                ));
+            };
+            let Ok(path) = crate::domain::path::ResolvedPath::resolve(&root, ".", fs) else {
+                return reply_or_nothing(encode_error(
+                    codec,
+                    id,
+                    codes::WORKSPACE_GONE,
+                    "the workspace root no longer exists",
+                ));
+            };
+            // A genuine git failure answers empty rather than with a refusal the contract does not
+            // list: prefetch is speculative, and a workspace whose history cannot be read is a
+            // workspace that prefetches its manifests only -- the same degradation status gives.
+            let result = service
+                .recently_changed(&path, commits)
+                .unwrap_or_else(|e| {
+                    eprintln!("git/recentlyChanged: {e:?}; answering with no paths");
+                    apex_protocol::wire::RecentlyChangedResult::default()
+                });
+            reply_or_nothing(encode_result(codec, id, &result))
+        }
         "git/getFileDiff" => {
             let Some(service) = git.map(|w| w.service()) else {
                 return reply_or_nothing(encode_result(

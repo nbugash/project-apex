@@ -284,6 +284,28 @@ impl GitService {
         }
     }
 
+    /// The files recent commits touched, bounded by commit count and by the frame cap.
+    ///
+    /// `commits` is already validated as positive; above `MAX_RECENT_COMMITS` it is capped
+    /// (guarantee 2). An absence is an empty list (guarantee 5). A list that would not fit in one
+    /// frame is truncated (guarantee 6): prefetch is speculative, so a partial answer is a partial
+    /// prefetch rather than an error, and a cursor would let a client walk a monorepo's history.
+    pub fn recently_changed(
+        &self,
+        root: &ResolvedPath,
+        commits: u32,
+    ) -> Result<apex_protocol::wire::RecentlyChangedResult, GitFailure> {
+        let commits = commits.min(apex_protocol::wire::MAX_RECENT_COMMITS);
+        let paths = match self.git.recently_changed(root, commits) {
+            Ok(p) => p,
+            Err(e) if e.is_absence() => Vec::new(),
+            Err(e) => return Err(e),
+        };
+        Ok(apex_protocol::wire::RecentlyChangedResult {
+            paths: within_one_frame(paths),
+        })
+    }
+
     pub fn git_dir(&self, root: &ResolvedPath) -> Result<std::path::PathBuf, GitFailure> {
         self.git.git_dir(root)
     }
@@ -291,4 +313,28 @@ impl GitService {
     pub fn forget(&self, workspace: &str) {
         self.pager.forget(workspace);
     }
+}
+
+/// Room left in a frame for the paths themselves: the cap less the JSON-RPC envelope around them.
+/// Generous on purpose -- an id is the client's to choose -- because a reply that exceeds the cap
+/// is not sent at all, which is worse than one that carries a few paths fewer.
+const RECENT_ENVELOPE_HEADROOM: usize = 4 * 1024;
+
+/// Keep paths, in order, while their encoded form fits in one frame.
+///
+/// Measured as each path's JSON encoding plus its separator, so an escaped character costs what it
+/// costs on the wire rather than what it costs in memory.
+fn within_one_frame(paths: Vec<String>) -> Vec<String> {
+    let budget = apex_protocol::framing::MAX_FRAME_BYTES - RECENT_ENVELOPE_HEADROOM;
+    let mut used = 0usize;
+    paths
+        .into_iter()
+        .take_while(|p| {
+            used += serde_json::to_string(p)
+                .map(|s| s.len())
+                .unwrap_or(usize::MAX / 2)
+                + 1;
+            used <= budget
+        })
+        .collect()
 }
