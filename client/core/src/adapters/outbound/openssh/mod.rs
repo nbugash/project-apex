@@ -71,6 +71,10 @@ pub struct SshTransport {
     /// per frame: the sink is set at composition and never changes afterwards, so a lock taken
     /// on every inbound frame would be contention bought for nothing.
     notifications: Mutex<Arc<dyn NotificationSink>>,
+    /// Debug builds only: refuse reconnection attempts while set, so the end-to-end suite can hold
+    /// an outage open long enough to work inside it. See `hold_offline_for_tests`.
+    #[cfg(debug_assertions)]
+    held_offline: std::sync::atomic::AtomicBool,
 }
 
 /// How long a freshly spawned child must survive before the attempt counts as established.
@@ -99,6 +103,8 @@ impl SshTransport {
             exit: Arc::new(Mutex::new(None)),
             askpass: Mutex::new(None),
             assisted_available: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(debug_assertions)]
+            held_offline: std::sync::atomic::AtomicBool::new(false),
             notifications: Mutex::new(Arc::new(DiscardNotifications)),
         }
     }
@@ -427,8 +433,29 @@ fn deliver(registry: &Registry, notifications: &dyn NotificationSink, body: &str
 /// The transport is already built for this: `connect_with` resets the last attempt's exit code and
 /// stderr, spawns a fresh child and a fresh queue, and nothing survives a reconnect (the note at the
 /// top of this module). What was missing was anything that called it a second time.
+impl SshTransport {
+    /// Debug builds only: hold reconnection off, or let it resume.
+    ///
+    /// The reconnection loop brings a stopped engine back within about a second, which is correct
+    /// and leaves the end-to-end suite no outage to work in. The hold does not fake an outage -- the
+    /// suite still has to end the engine for real -- it only makes the loop's attempts fail while
+    /// held, and releasing it lets the real loop reconnect on its own schedule.
+    #[cfg(debug_assertions)]
+    pub fn hold_offline_for_tests(&self, hold: bool) {
+        self.held_offline
+            .store(hold, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 impl crate::application::ports::connection::Reconnectable for SshTransport {
     fn reconnect(&self) -> Result<(), String> {
+        #[cfg(debug_assertions)]
+        if self.held_offline.load(std::sync::atomic::Ordering::SeqCst) {
+            // Published, so a hold in force at launch still starts the loop: the loop starts on
+            // `Disconnected`, and a launch that never attempted would sit at `Unknown` forever.
+            let _ = self.state_tx.send(ConnectionState::Disconnected);
+            return Err("held offline for tests".into());
+        }
         self.connect().map_err(|e| e.to_string())
     }
 

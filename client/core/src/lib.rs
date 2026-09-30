@@ -61,6 +61,8 @@ pub fn run() {
             cmd::workspace_seed_for_tests,
             #[cfg(debug_assertions)]
             cmd::stub_set_connection,
+            #[cfg(debug_assertions)]
+            cmd::hold_offline_for_tests,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

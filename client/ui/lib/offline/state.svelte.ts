@@ -5,7 +5,13 @@
 /// status bar that quietly stops reporting.
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { shellState } from '../state.svelte';
+
+const ENGINE_EVENT = 'apex:notification';
+/// Sent by the core after a held save and after a reconciliation: the two moments the pending set
+/// changes while the connection state does not.
+export const PENDING_CHANGED = 'offline/onPendingChanged';
 
 export interface PendingFile {
   relativePath: string;
@@ -65,10 +71,13 @@ export class OfflineStore {
 
   /// Subscribe once for the window.
   ///
-  /// Driven by `shellState.connection`, which `main.ts` sets from the core's connection events.
-  /// No timer and no probe: A-RECONNECT records that a second detector of a published state is
-  /// the defect, and F011 paid for it when the git watch and the workspace watch answered
-  /// different questions about one repository.
+  /// Two triggers, both published by the core, neither a probe. `shellState.connection`, which
+  /// `main.ts` sets from the core's connection events, covers `connected`; `offline/onPendingChanged`
+  /// covers `pending`, which a held save or a reconciliation changes without any connection
+  /// change. No timer: A-RECONNECT records that a second detector of a published state is the
+  /// defect, and F011 paid for it when the git watch and the workspace watch answered different
+  /// questions about one repository. The frame is ignored beyond its method, as the git store
+  /// ignores `git/onStatusUpdate`'s: the state is read back through `offline_status`.
   start(): void {
     if (this.#started) return;
     this.#started = true;
@@ -76,6 +85,15 @@ export class OfflineStore {
       // Read so the effect depends on it; the value itself comes from the core.
       void shellState.connection;
       void this.refresh();
+    });
+    $effect(() => {
+      // Awaited before unlistening, so a teardown that races registration cannot leak a listener.
+      const pending = listen<{ method: string }>(ENGINE_EVENT, (event) => {
+        if (event.payload.method === PENDING_CHANGED) void this.refresh();
+      });
+      return () => {
+        void pending.then((unlisten) => unlisten()).catch(() => {});
+      };
     });
   }
 }

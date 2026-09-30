@@ -27,6 +27,10 @@ pub struct Shell {
     /// from release builds, so it cannot become a production surface by accident.
     #[cfg(debug_assertions)]
     pub stub: Arc<crate::adapters::outbound::stub_connection::StubConnectionStatusSource>,
+    /// Debug builds only: the transport, so `hold_offline_for_tests` can reach it. `None` when no
+    /// engine is configured.
+    #[cfg(debug_assertions)]
+    pub transport: Option<Arc<crate::adapters::outbound::openssh::SshTransport>>,
 }
 
 /// Region identifiers arrive as strings from the bridge and are not trusted to be valid.
@@ -129,6 +133,21 @@ pub fn stub_set_connection(state: String, shell: State<'_, Shell>) -> Result<(),
         _ => return Err(ShellError::InvalidRegion),
     };
     shell.stub.set(next);
+    Ok(())
+}
+
+/// Debug-only test hook: hold reconnection off while the suite works inside an outage (F012).
+///
+/// The same pattern as `stub_set_connection`, and needed for the opposite reason: in the live run
+/// the stub drives a source nothing reads, and the real transport reconnects too quickly after the
+/// engine is ended to save anything offline. The outage itself stays real -- the suite ends the
+/// engine -- and releasing the hold lets the real reconnection loop do the rest.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn hold_offline_for_tests(hold: bool, shell: State<'_, Shell>) -> Result<(), ShellError> {
+    if let Some(t) = shell.transport.as_ref() {
+        t.hold_offline_for_tests(hold);
+    }
     Ok(())
 }
 
@@ -430,7 +449,10 @@ pub async fn file_write(
             true,
             now,
         ) {
-            Ok(()) => Ok(WriteOutcomeDto::HeldLocally),
+            Ok(()) => {
+                announce_pending_changed(access.notifications.as_ref());
+                Ok(WriteOutcomeDto::HeldLocally)
+            }
             // FR-016: the developer is told while the work is still in the buffer. A store that
             // refused is not a write conflict and not an unreachable host, so it is `Refused` with
             // the reason -- the one outcome that says "this will not work until something changes".
@@ -609,6 +631,9 @@ pub struct WorkspaceAccess {
     /// workspace is registered -- re-declaring from the webview instead would race that
     /// registration and be refused.
     pub watched: WatchedPaths,
+    /// Where `offline/onPendingChanged` goes: after a held save and after a reconciliation, the
+    /// two moments the pending set changes without the connection state changing.
+    pub notifications: Arc<dyn crate::application::ports::notification_sink::NotificationSink>,
 }
 
 /// Keep the net watch set in step with what the engine accepted.
@@ -1198,6 +1223,7 @@ fn reconcile_if_connected(shell: &Shell, access: &WorkspaceAccess, ws: &Workspac
         return;
     }
     let reconcile = access.reconcile.clone();
+    let notifications = access.notifications.clone();
     let ws = ws.clone();
     std::thread::spawn(move || {
         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
@@ -1207,13 +1233,50 @@ fn reconcile_if_connected(shell: &Shell, access: &WorkspaceAccess, ws: &Workspac
             crate::logging::warn("could not reconcile offline work: no runtime");
             return;
         };
-        rt.block_on(async move {
-            let report = reconcile.run(&ws).await;
-            for (path, outcome) in &report.files {
-                crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
-            }
-        });
+        rt.block_on(reconcile_and_announce(
+            &reconcile,
+            notifications.as_ref(),
+            &ws,
+        ));
     });
+}
+
+/// Sent by the core itself, not the engine, when the set of pending edits may have changed.
+///
+/// On the same `apex:notification` channel as engine frames so the webview routes it the way it
+/// routes `git/onStatusUpdate`: by method, then reading the state back through `offline_status`.
+/// Without it `OfflineStore` refreshes only on a connection change, and neither a held save nor a
+/// reconciliation is one -- the held-locally mark would lag the work by an entire outage.
+pub const PENDING_CHANGED: &str = "offline/onPendingChanged";
+
+pub fn announce_pending_changed(
+    sink: &dyn crate::application::ports::notification_sink::NotificationSink,
+) {
+    sink.deliver(
+        PENDING_CHANGED,
+        r#"{"jsonrpc":"2.0","method":"offline/onPendingChanged"}"#,
+    );
+}
+
+/// Run a reconciliation, log it per file, and announce it if it touched anything. Both triggers --
+/// the reconnection sequence and a workspace opened while connected -- come through here.
+///
+/// An empty report is a run that found nothing or declined because another was in flight; that
+/// other run announces its own result.
+pub async fn reconcile_and_announce(
+    reconcile: &crate::application::use_cases::reconcile::Reconcile,
+    sink: &dyn crate::application::ports::notification_sink::NotificationSink,
+    ws: &WorkspaceId,
+) {
+    let report = reconcile.run(ws).await;
+    // Per file, never with content: a file being edited may hold a credential, which is the
+    // reason F006 gives for the same rule.
+    for (path, outcome) in &report.files {
+        crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
+    }
+    if !report.files.is_empty() {
+        announce_pending_changed(sink);
+    }
 }
 
 /// Untrusted input, refused rather than repaired into something that parses.

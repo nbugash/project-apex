@@ -222,7 +222,7 @@ pub fn build(
             let notifications: Arc<dyn NotificationSink> = Arc::new(
                 crate::adapters::inbound::git_notification::GitNotifications::new(
                     git,
-                    notifications,
+                    notifications.clone(),
                 ),
             );
 
@@ -243,7 +243,18 @@ pub fn build(
                     // a request made while none is fails -- the same answer as during an outage.
                     tasks = Some(Arc::new(RemoteTasks::new(to_engine.clone())));
                     sender = Some(to_engine);
-                    if let Err(e) = transport.connect() {
+                    // Debug builds only: a hold file in the profile makes this launch start offline,
+                    // so the end-to-end suite can test "relaunched while still offline" (FR-012)
+                    // against a real engine. See `hold_offline_for_tests`.
+                    #[cfg(debug_assertions)]
+                    if data_dir.join("hold-offline").exists() {
+                        transport.hold_offline_for_tests(true);
+                    }
+                    // Through the same path the reconnection loop uses, so a held launch reports
+                    // `Disconnected` and the loop starts from it.
+                    if let Err(e) = crate::application::ports::connection::Reconnectable::reconnect(
+                        transport.as_ref(),
+                    ) {
                         crate::logging::warn(&format!(
                             "the engine did not start: {e}; reconnection will keep trying"
                         ));
@@ -322,6 +333,7 @@ pub fn build(
         provider,
         reconcile: reconcile.clone(),
         watched: watched.clone(),
+        notifications: notifications.clone(),
     };
 
     #[cfg(debug_assertions)]
@@ -331,6 +343,7 @@ pub fn build(
         window,
         rail: rail.clone(),
         stub: stub.clone(),
+        transport: reconnect_target.clone(),
     };
     #[cfg(not(debug_assertions))]
     let shell = Shell {
@@ -356,6 +369,7 @@ pub fn build(
             cache: ready.get(),
             provider: workspace.provider.clone(),
             watched: watched.clone(),
+            notifications: notifications.clone(),
         });
         let current = current_workspace.clone();
         let reconnect = Arc::new(crate::application::use_cases::reconnect::Reconnect::new());
@@ -487,6 +501,7 @@ struct ResumeWorkspace {
     cache: Arc<dyn crate::application::ports::workspace_cache::WorkspaceCache>,
     provider: Arc<dyn WorkspaceProvider>,
     watched: crate::adapters::inbound::tauri_commands::WatchedPaths,
+    notifications: Arc<dyn NotificationSink>,
 }
 
 #[async_trait::async_trait]
@@ -535,11 +550,11 @@ impl crate::application::use_cases::reconnect::Resume for ResumeWorkspace {
     }
 
     async fn reconcile(&self, ws: &crate::domain::workspace::WorkspaceId) {
-        let report = self.reconcile.run(ws).await;
-        // Per file, never with content: a file being edited may hold a credential, which is the
-        // reason F006 gives for the same rule.
-        for (path, outcome) in &report.files {
-            crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
-        }
+        crate::adapters::inbound::tauri_commands::reconcile_and_announce(
+            &self.reconcile,
+            self.notifications.as_ref(),
+            ws,
+        )
+        .await;
     }
 }
