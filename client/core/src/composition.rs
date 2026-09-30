@@ -326,6 +326,8 @@ pub fn build(
     ));
 
     let watched: crate::adapters::inbound::tauri_commands::WatchedPaths = Default::default();
+    let reconciled: crate::adapters::inbound::tauri_commands::LastReconciliation =
+        Default::default();
     let workspace = WorkspaceAccess {
         cache: ready.get(),
         git: apply_git.clone(),
@@ -334,6 +336,7 @@ pub fn build(
         reconcile: reconcile.clone(),
         watched: watched.clone(),
         notifications: notifications.clone(),
+        reconciled: reconciled.clone(),
     };
 
     #[cfg(debug_assertions)]
@@ -370,6 +373,7 @@ pub fn build(
             provider: workspace.provider.clone(),
             watched: watched.clone(),
             notifications: notifications.clone(),
+            reconciled: reconciled.clone(),
         });
         let current = current_workspace.clone();
         let reconnect = Arc::new(crate::application::use_cases::reconnect::Reconnect::new());
@@ -502,6 +506,7 @@ struct ResumeWorkspace {
     provider: Arc<dyn WorkspaceProvider>,
     watched: crate::adapters::inbound::tauri_commands::WatchedPaths,
     notifications: Arc<dyn NotificationSink>,
+    reconciled: crate::adapters::inbound::tauri_commands::LastReconciliation,
 }
 
 #[async_trait::async_trait]
@@ -553,6 +558,7 @@ impl crate::application::use_cases::reconnect::Resume for ResumeWorkspace {
         crate::adapters::inbound::tauri_commands::reconcile_and_announce(
             &self.reconcile,
             self.notifications.as_ref(),
+            &self.reconciled,
             ws,
         )
         .await;

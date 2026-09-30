@@ -3,6 +3,11 @@
   import { present } from './presentation';
   import { branchLabel } from '../git/branch';
   import type { GitBranch } from '../git/status.svelte';
+  import {
+    describeReconciliation,
+    needsAttention,
+    type Reconciliation,
+  } from '../offline/reconciliation';
 
   /// Whether changes on the host are reaching the developer.
   ///
@@ -36,6 +41,11 @@
     ///
     /// Also not in the prototype, and recorded as the same deviation.
     heldLocally?: number;
+    /// What the last reconciliation did (F012, FR-024): a summary here, every file in its title
+    /// and accessible name. On the bar because the bar is where "held locally" was said, so it is
+    /// where the developer looks to learn what became of it. Same deviation as above.
+    reconciliation?: Reconciliation | null;
+    ondismissreconciliation?: () => void;
   }
   let {
     connection,
@@ -44,7 +54,11 @@
     reporting = { kind: 'live' },
     branch = null,
     heldLocally = 0,
+    reconciliation = null,
+    ondismissreconciliation,
   }: Props = $props();
+
+  let reconciled = $derived(reconciliation ? describeReconciliation(reconciliation) : null);
 
   let vcs = $derived(branchLabel(branch));
 
@@ -108,6 +122,27 @@
     </span>
   {/if}
 
+  {#if reconciliation && reconciled}
+    <!-- A button because clicking it dismisses the report; the per-file detail is its title and
+         accessible name, so it is reachable without a pointer. The icon differs by whether
+         anything needs attention, so that is not carried by colour alone (FR-039). -->
+    <button
+      type="button"
+      class="reconciled"
+      data-testid="status-reconciled"
+      data-attention={needsAttention(reconciliation)}
+      title={`${reconciled.detail}\n\nClick to dismiss`}
+      aria-label={`Reconciliation: ${reconciled.summary}. ${reconciled.detail.replaceAll('\n', '; ')}. Dismiss`}
+      onclick={() => ondismissreconciliation?.()}
+    >
+      <i
+        class="ph {needsAttention(reconciliation) ? 'ph-warning' : 'ph-check-circle'}"
+        aria-hidden="true"
+      ></i>
+      <span>{reconciled.summary}</span>
+    </button>
+  {/if}
+
   {#if persistenceFailed}
     <!-- FR-023: reported, never modal, never blocking the interaction that triggered it. -->
     <span class="warn" role="status"
@@ -141,7 +176,8 @@
   .branch,
   .connection,
   .warn,
-  .held {
+  .held,
+  .reconciled {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -164,6 +200,21 @@
   }
   .connection {
     margin-inline-start: auto;
+  }
+  .reconciled {
+    /* A report of ordinary work, in the same neutral ramp as `.held` for the same reason. The
+       button is reset to read as the bar's other items, not as a control drawn on top of it. */
+    color: var(--color-neutral-300);
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  .reconciled:focus-visible {
+    /* The shell's focus ring, at no offset: the bar clips overflow, so the usual 2px would be cut. */
+    outline: 2px solid var(--color-accent);
+    outline-offset: 0;
   }
   .held {
     /* The neutral ramp, not the accent one. Work held locally is an ordinary state of this

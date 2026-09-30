@@ -472,6 +472,40 @@ pub async fn file_write(
 mod tests {
     use super::*;
 
+    /// FR-024 says per file, so the order and every outcome survive the crossing, and only a
+    /// failure carries a reason -- a reason on a merge would read as a problem that is not there.
+    #[test]
+    fn the_reconciliation_report_keeps_every_file_in_order_with_a_reason_only_for_failures() {
+        use crate::application::use_cases::reconcile::{Outcome, ReconcileReport};
+        let path = |p: &str| RelPath::parse(p).expect("path");
+        let report = ReconcileReport {
+            files: vec![
+                (path("a.rs"), Outcome::FastForwarded),
+                (path("b.rs"), Outcome::Merged),
+                (path("c.rs"), Outcome::Conflicted),
+                (path("d.rs"), Outcome::NotAttempted),
+                (path("e.rs"), Outcome::Failed("the root is gone".into())),
+            ],
+        };
+        let dto = ReconciliationDto::from_report(7, &report);
+        assert_eq!(dto.run, 7);
+        let shown: Vec<(&str, &str, Option<&str>)> = dto
+            .files
+            .iter()
+            .map(|f| (f.relative_path.as_str(), f.outcome, f.detail.as_deref()))
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("/a.rs", "fastForwarded", None),
+                ("/b.rs", "merged", None),
+                ("/c.rs", "conflicted", None),
+                ("/d.rs", "notAttempted", None),
+                ("/e.rs", "failed", Some("the root is gone")),
+            ]
+        );
+    }
+
     #[test]
     fn the_watch_record_is_the_net_of_what_the_engine_accepted() {
         let watched: WatchedPaths = Default::default();
@@ -634,6 +668,8 @@ pub struct WorkspaceAccess {
     /// Where `offline/onPendingChanged` goes: after a held save and after a reconciliation, the
     /// two moments the pending set changes without the connection state changing.
     pub notifications: Arc<dyn crate::application::ports::notification_sink::NotificationSink>,
+    /// The last reconciliation per workspace, for `offline_status` (FR-024).
+    pub reconciled: LastReconciliation,
 }
 
 /// Keep the net watch set in step with what the engine accepted.
@@ -942,7 +978,68 @@ pub struct PendingFileDto {
 pub struct OfflineStatusDto {
     pub connected: bool,
     pub pending: Vec<PendingFileDto>,
+    /// What the last reconciliation that touched a file did, per file (FR-024). `None` until one
+    /// has run for this workspace in this process. Attached by the `offline_status` command, not
+    /// by `offline_report`, because it lives in memory rather than in the projection.
+    pub last_reconciliation: Option<ReconciliationDto>,
 }
+
+/// One reconciliation, as the interface reads it.
+///
+/// Kept in memory and replaced by the next run rather than stored (data-model.md: a conflict that
+/// must survive is its `pending_edits` row, and this is a statement about one attempt). Kept at all,
+/// rather than sent in `offline/onPendingChanged` and forgotten, because the first run can finish
+/// before the webview is listening, and a report sent to nobody is the outcome FR-024 forbids.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciliationDto {
+    /// Increases with every recorded run, so the interface can tell a new report from one the
+    /// developer has already dismissed.
+    pub run: u64,
+    pub files: Vec<ReconciledFileDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconciledFileDto {
+    pub relative_path: String,
+    /// `fastForwarded`, `merged`, `conflicted`, `notAttempted` or `failed`.
+    pub outcome: &'static str,
+    /// Why, for `failed`; absent otherwise. Never file content (F006).
+    pub detail: Option<String>,
+}
+
+impl ReconciliationDto {
+    pub fn from_report(
+        run: u64,
+        report: &crate::application::use_cases::reconcile::ReconcileReport,
+    ) -> Self {
+        use crate::application::use_cases::reconcile::Outcome;
+        let files = report
+            .files
+            .iter()
+            .map(|(path, outcome)| {
+                let (outcome, detail) = match outcome {
+                    Outcome::FastForwarded => ("fastForwarded", None),
+                    Outcome::Merged => ("merged", None),
+                    Outcome::Conflicted => ("conflicted", None),
+                    Outcome::NotAttempted => ("notAttempted", None),
+                    Outcome::Failed(why) => ("failed", Some(why.clone())),
+                };
+                ReconciledFileDto {
+                    relative_path: path.as_str().to_string(),
+                    outcome,
+                    detail,
+                }
+            })
+            .collect();
+        Self { run, files }
+    }
+}
+
+/// The last reconciliation per workspace. See `ReconciliationDto`.
+pub type LastReconciliation =
+    Arc<std::sync::Mutex<std::collections::BTreeMap<String, ReconciliationDto>>>;
 
 /// Assemble the report from a connection state and the projection.
 ///
@@ -975,6 +1072,7 @@ pub fn offline_report(
         // online would leave the editor claiming a host it cannot reach.
         connected: matches!(state, ConnectionState::Connected),
         pending,
+        last_reconciliation: None,
     })
 }
 
@@ -1097,7 +1195,13 @@ pub fn offline_status(
     // Resolved in the core, never accepted from the view: a workspace id from the bridge is
     // untrusted input, and this command's answer includes the paths a developer is working on.
     let ws = current_workspace(&tasks)?;
-    offline_report(access.cache.as_ref(), &shell.connection.current(), &ws)
+    let mut status = offline_report(access.cache.as_ref(), &shell.connection.current(), &ws)?;
+    status.last_reconciliation = access
+        .reconciled
+        .lock()
+        .ok()
+        .and_then(|all| all.get(&ws.0).cloned());
+    Ok(status)
 }
 
 /// The git state this client has for the current workspace.
@@ -1224,6 +1328,7 @@ fn reconcile_if_connected(shell: &Shell, access: &WorkspaceAccess, ws: &Workspac
     }
     let reconcile = access.reconcile.clone();
     let notifications = access.notifications.clone();
+    let reconciled = access.reconciled.clone();
     let ws = ws.clone();
     std::thread::spawn(move || {
         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
@@ -1236,6 +1341,7 @@ fn reconcile_if_connected(shell: &Shell, access: &WorkspaceAccess, ws: &Workspac
         rt.block_on(reconcile_and_announce(
             &reconcile,
             notifications.as_ref(),
+            &reconciled,
             &ws,
         ));
     });
@@ -1258,25 +1364,34 @@ pub fn announce_pending_changed(
     );
 }
 
-/// Run a reconciliation, log it per file, and announce it if it touched anything. Both triggers --
-/// the reconnection sequence and a workspace opened while connected -- come through here.
+/// Run a reconciliation, log it per file, record it, and announce it if it touched anything. Both
+/// triggers -- the reconnection sequence and a workspace opened while connected -- come through here.
 ///
 /// An empty report is a run that found nothing or declined because another was in flight; that
-/// other run announces its own result.
+/// other run records and announces its own result, and recording the empty one would replace a
+/// report the developer has not read yet with nothing.
 pub async fn reconcile_and_announce(
     reconcile: &crate::application::use_cases::reconcile::Reconcile,
     sink: &dyn crate::application::ports::notification_sink::NotificationSink,
+    reconciled: &LastReconciliation,
     ws: &WorkspaceId,
 ) {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let report = reconcile.run(ws).await;
     // Per file, never with content: a file being edited may hold a credential, which is the
     // reason F006 gives for the same rule.
     for (path, outcome) in &report.files {
         crate::logging::info(&format!("reconcile {}: {outcome:?}", path.as_str()));
     }
-    if !report.files.is_empty() {
-        announce_pending_changed(sink);
+    if report.files.is_empty() {
+        return;
     }
+    let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if let Ok(mut all) = reconciled.lock() {
+        all.insert(ws.0.clone(), ReconciliationDto::from_report(run, &report));
+    }
+    // After recording, so the webview's re-read finds the report the event announces.
+    announce_pending_changed(sink);
 }
 
 /// Untrusted input, refused rather than repaired into something that parses.

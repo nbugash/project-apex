@@ -464,6 +464,8 @@
     workspace={shellState.workspace}
     branch={git.branch}
     heldLocally={offline.pending.length}
+    reconciliation={offline.reconciliation}
+    ondismissreconciliation={() => offline.dismissReconciliation()}
     {persistenceFailed}
   />
 </div>

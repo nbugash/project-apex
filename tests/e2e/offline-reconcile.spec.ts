@@ -149,6 +149,17 @@ describe('reconnecting after offline work', () => {
     await openFile('/moved-elsewhere.rs');
     expect(await $('[data-testid="editor-held-locally"]').isExisting()).toBe(false);
     expect(await interactionsWaiting()).toBe(0);
+
+    // FR-024: told, not left to infer. The bar summarises, and names each file with what happened.
+    const told = await $('[data-testid="status-reconciled"]');
+    await told.waitForDisplayed({ timeout: 5_000 });
+    expect(await told.getText()).toContain('2 reconciled');
+    const label = (await told.getAttribute('aria-label')) ?? '';
+    expect(label).toContain('/unmoved.rs');
+    expect(label).toContain('/moved-elsewhere.rs');
+    // Dismissed, it stays dismissed: the report is still true, it just has been read.
+    await told.click();
+    await told.waitForExist({ reverse: true, timeout: 2_000 });
   });
 
   // The file nobody touched is not written at all. A reconciliation that rewrote every cached file

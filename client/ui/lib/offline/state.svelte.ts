@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { shellState } from '../state.svelte';
+import type { Reconciliation } from './reconciliation';
 
 const ENGINE_EVENT = 'apex:notification';
 /// Sent by the core after a held save and after a reconciliation: the two moments the pending set
@@ -24,10 +25,12 @@ export interface PendingFile {
 export interface OfflineStatus {
   connected: boolean;
   pending: PendingFile[];
+  /// The last reconciliation that touched a file in this workspace, or `null` before one has run.
+  lastReconciliation: Reconciliation | null;
 }
 
 export function emptyStatus(): OfflineStatus {
-  return { connected: false, pending: [] };
+  return { connected: false, pending: [], lastReconciliation: null };
 }
 
 /// The window's offline state.
@@ -45,6 +48,9 @@ export function emptyStatus(): OfflineStatus {
 export class OfflineStore {
   #status = $state<OfflineStatus>(emptyStatus());
   #started = false;
+  /// The run the developer dismissed. Kept here, not in the core: dismissing is this window's
+  /// business, and the report itself is still true.
+  #dismissedRun = $state<number | null>(null);
 
   get connected(): boolean {
     return this.#status.connected;
@@ -52,6 +58,16 @@ export class OfflineStore {
 
   get pending(): readonly PendingFile[] {
     return this.#status.pending;
+  }
+
+  /** The last reconciliation's report, until the developer dismisses it or a newer one replaces it. */
+  get reconciliation(): Reconciliation | null {
+    const r = this.#status.lastReconciliation;
+    return r && r.run !== this.#dismissedRun ? r : null;
+  }
+
+  dismissReconciliation(): void {
+    this.#dismissedRun = this.#status.lastReconciliation?.run ?? null;
   }
 
   /** Whether this path has work the host has not seen, for the editor's held-locally mark. */
