@@ -1,7 +1,8 @@
 //! Carry engine-initiated frames into the webview.
 //!
 //! One Tauri event, `apex:notification`, carrying the method and the frame untouched. The
-//! webview routes on the method.
+//! webview routes on the method. The core's own frames (`offline/onPendingChanged`) arrive the same
+//! way; `NotificationSink` records why.
 //!
 //! # Why one event and not one per method
 //!
