@@ -784,6 +784,17 @@ impl WorkspaceCache for SqliteWorkspaceCache {
         })
     }
 
+    fn cached_bytes(&self) -> CacheResult<u64> {
+        self.with(|c| {
+            let n: i64 = c.query_row(
+                "SELECT coalesce(sum(length(content_blob)), 0) FROM file_contents",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(n.max(0) as u64)
+        })
+    }
+
     fn schema_version(&self) -> CacheResult<u32> {
         self.with(migrate::read_version)
     }

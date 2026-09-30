@@ -301,6 +301,36 @@ pub fn build(
         // serves what it holds, and the rest reports offline.
         None => Arc::new(DisconnectedWorkspace),
     };
+    // ---- F012: prefetch (§11.4, US5) ----
+    //
+    // Its own caching reader over the same cache, sent at background priority so it queues behind
+    // everything interactive (FR-030), and with a presentation sink that goes nowhere so a
+    // speculative read never flickers the editor's "verifying" state. Built only with an engine.
+    let prefetch = sender.as_ref().map(|transport| {
+        let reader = Arc::new(CachedWorkspace::new(
+            Arc::new(
+                crate::adapters::outbound::remote_workspace::RemoteWorkspaceProvider::new(
+                    transport.clone(),
+                    None,
+                    String::new(),
+                )
+                .background(),
+            ),
+            ready.get(),
+            Arc::new(SystemClock),
+            source.clone(),
+            Arc::new(|_presentation| {}),
+            Limits::default(),
+        ));
+        Arc::new(crate::application::use_cases::prefetch::Prefetch::new(
+            reader,
+            Arc::new(
+                crate::adapters::outbound::remote_git::RemoteGitProvider::new(transport.clone()),
+            ),
+            ready.get(),
+            source.clone(),
+        ))
+    });
     let provider: Arc<dyn crate::application::ports::workspace_provider::WorkspaceProvider> =
         Arc::new(CachedWorkspace::new(
             inner,
@@ -319,10 +349,17 @@ pub fn build(
     // anything, so without it the reconciler would have a port and no implementation. Naming the
     // *type* here does not breach `tests/merge_confinement.rs`: that rule is about the `diffy`
     // crate, and `engine/src/main.rs` names `inotify_watcher::git_watch()` in its composition root.
+    let merge: Arc<dyn crate::application::ports::text_merge::TextMerge> =
+        Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new());
     let reconcile = Arc::new(crate::application::use_cases::reconcile::Reconcile::new(
         ready.get(),
         provider.clone(),
-        Arc::new(crate::adapters::outbound::text_merge::DiffyMerge::new()),
+        merge.clone(),
+    ));
+    let conflicts = Arc::new(crate::application::use_cases::conflicts::Conflicts::new(
+        ready.get(),
+        provider.clone(),
+        merge,
     ));
 
     let watched: crate::adapters::inbound::tauri_commands::WatchedPaths = Default::default();
@@ -337,6 +374,8 @@ pub fn build(
         watched: watched.clone(),
         notifications: notifications.clone(),
         reconciled: reconciled.clone(),
+        conflicts,
+        prefetch: prefetch.clone(),
     };
 
     #[cfg(debug_assertions)]
@@ -374,6 +413,7 @@ pub fn build(
             watched: watched.clone(),
             notifications: notifications.clone(),
             reconciled: reconciled.clone(),
+            prefetch: prefetch.clone(),
         });
         let current = current_workspace.clone();
         let reconnect = Arc::new(crate::application::use_cases::reconnect::Reconnect::new());
@@ -507,6 +547,7 @@ struct ResumeWorkspace {
     watched: crate::adapters::inbound::tauri_commands::WatchedPaths,
     notifications: Arc<dyn NotificationSink>,
     reconciled: crate::adapters::inbound::tauri_commands::LastReconciliation,
+    prefetch: Option<Arc<crate::application::use_cases::prefetch::Prefetch>>,
 }
 
 #[async_trait::async_trait]
@@ -562,5 +603,11 @@ impl crate::application::use_cases::reconnect::Resume for ResumeWorkspace {
             ws,
         )
         .await;
+    }
+
+    async fn prefetch(&self, ws: &crate::domain::workspace::WorkspaceId) {
+        if let Some(prefetch) = self.prefetch.as_ref() {
+            crate::adapters::inbound::tauri_commands::log_prefetch(&prefetch.run(ws).await);
+        }
     }
 }

@@ -15,6 +15,8 @@
   import { listenToEngine } from '../terminal/engine';
   import { GitStatusStore } from '../git/status.svelte';
   import { OfflineStore } from '../offline/state.svelte';
+  import { ConflictStore } from '../offline/conflicts.svelte';
+  import ConflictPanel from '../offline/ConflictPanel.svelte';
   import PathSearch from '../workspace/PathSearch.svelte';
   import { WatchRequester, watchedPaths } from '../workspace/watched.svelte';
   import { revealTerminal } from '../terminal/start';
@@ -234,11 +236,16 @@
   /// reason as the git store above: the status bar and the editor both read it, and a
   /// subscription owned by either would stop reporting the moment the developer looked elsewhere.
   ///
-  /// No `stop`: this store owns no listener of its own. It follows `shellState.connection`, which
-  /// `main.ts` already maintains, so there is nothing to unsubscribe and nothing that could keep
-  /// the window alive.
+  /// No `stop`: its listener for `offline/onPendingChanged` lives in an `$effect` created here, so
+  /// it is torn down with this component and cannot outlive the window.
   const offline = new OfflineStore();
   offline.start();
+
+  /// What the last reconciliation left for the developer to decide (US4). Shown above the
+  /// documents, where the developer is already looking, rather than behind a tool window they
+  /// would have to know to open: a conflict nobody sees is a conflict decided by neglect.
+  const conflicts = new ConflictStore();
+  conflicts.start();
 
   /// Bind the tree to whichever workspace is open, and fetch its root.
   ///
@@ -411,6 +418,10 @@
         onfocus={(id) => persist(() => ipc.documentsFocus(id)).then(reload)}
         onclose={(id) => persist(() => ipc.documentsClose(id)).then(reload)}
         onreorder={(id, to) => persist(() => ipc.documentsReorder(id, to)).then(reload)}
+      />
+      <ConflictPanel
+        conflicts={conflicts.conflicts}
+        onresolve={(c, r) => conflicts.resolve(c, r)}
       />
       <div class="content">
         {#if activeDocument}

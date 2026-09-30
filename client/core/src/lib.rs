@@ -52,6 +52,8 @@ pub fn run() {
             // F012's read surface. Same reason as every comment above it: an unregistered command
             // is an unknown command, and the status bar would report nothing while looking correct.
             cmd::offline_status,
+            cmd::conflicts_list,
+            cmd::conflict_resolve,
             cmd::workspace_search_paths,
             adapters::inbound::task_commands::task_run,
             adapters::inbound::task_commands::task_write_stdin,

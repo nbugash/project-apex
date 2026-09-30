@@ -244,6 +244,10 @@ pub trait WorkspaceCache: Send + Sync {
     /// construction rather than by care.
     fn forget_pending(&self, ws: &WorkspaceId, path: &RelPath) -> CacheResult<()>;
 
+    /// Bytes of cached content as stored, across every workspace. Prefetch's budget is measured
+    /// against this (A-PREFETCHCAP); nothing else reads it, and nothing evicts because of it.
+    fn cached_bytes(&self) -> CacheResult<u64>;
+
     fn schema_version(&self) -> CacheResult<u32>;
 
     /// Migrate to `target`, one transaction per step, publishing progress throughout.

@@ -255,9 +255,8 @@ fn adjacent_lines_conflict_and_two_lines_apart_merge() {
     let merge = DiffyMerge::new();
 
     let adjacent = merge.merge("a\nb\nc\nd\n", "a\nB\nc\nd\n", "a\nb\nC\nd\n");
-    assert_eq!(
-        adjacent,
-        MergeOutcome::Conflict,
+    assert!(
+        matches!(adjacent, MergeOutcome::Conflict(_)),
         "changes on neighbouring lines must conflict; a zero-context merge combines them and is \
          the reason FR-020a names context-aware semantics"
     );
@@ -275,14 +274,81 @@ fn adjacent_lines_conflict_and_two_lines_apart_merge() {
     }
 }
 
-/// A conflict carries no text at all.
+/// `git merge-file -p --diff3`'s output, whatever its exit status. `--diff3` because that is
+/// `diffy`'s default style, so the two drafts carry the same three sections per conflict.
+fn git_draft(base: &str, local: &str, remote: &str) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let write = |name: &str, body: &str| {
+        let p = dir.path().join(name);
+        std::fs::write(&p, body).expect("write");
+        p
+    };
+    let (ours, base, theirs) = (
+        write("ours", local),
+        write("base", base),
+        write("theirs", remote),
+    );
+    let out = Command::new("git")
+        .args(["merge-file", "-p", "--diff3"])
+        .arg(&ours)
+        .arg(&base)
+        .arg(&theirs)
+        .output()
+        .expect("SC-006b needs `git` on this machine; see `git_merges_cleanly`");
+    String::from_utf8(out.stdout).expect("utf-8")
+}
+
+/// A draft with every marker block removed: what the merge settled on its own.
+///
+/// Compared rather than the whole draft because the marker *labels* differ -- git names the files
+/// it was given, `diffy` says "ours" and "theirs" -- and a label is not a merge decision.
+fn settled(draft: &str) -> (Vec<&str>, usize) {
+    let (mut kept, mut blocks, mut inside) = (Vec::new(), 0, false);
+    for line in draft.lines() {
+        if line.starts_with("<<<<<<<") {
+            inside = true;
+            blocks += 1;
+        } else if line.starts_with(">>>>>>>") {
+            inside = false;
+        } else if !inside {
+            kept.push(line);
+        }
+    }
+    (kept, blocks)
+}
+
+/// US4 scenario 7: two offline edits in different regions, and a host change close to one of them.
+/// The developer is prompted for **that region**, on the terms a version-control merge uses, not for
+/// the file as a whole.
+///
+/// The fixture puts the host's change on the line next to the second edit and far from the first,
+/// or the test could not tell per-region from per-file: a per-file prompt would leave the first
+/// edit inside the markers too.
 #[test]
-fn a_conflict_offers_no_partially_merged_file() {
-    let merge = DiffyMerge::new();
-    // `diffy` returns the merged text with conflict markers in its error. Handing that to a
-    // developer would be a fourth version nobody wrote, so the outcome must not carry it.
+fn a_conflict_draft_marks_only_the_colliding_region_as_git_does() {
+    let base = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+    let local = "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n";
+    let remote = "one\ntwo\nthree\nfour\nfive\nsix\nseven\nEIGHT\nnine\nten\n";
+
+    let MergeOutcome::Conflict(draft) = DiffyMerge::new().merge(base, local, remote) else {
+        panic!("the host changed the line next to an offline edit, which must conflict");
+    };
+    let (ours_settled, ours_blocks) = settled(&draft);
+    assert_eq!(ours_blocks, 1, "one colliding region, one prompt:\n{draft}");
+    assert!(
+        ours_settled.contains(&"ONE"),
+        "the far edit is merged outside the markers, not asked about again:\n{draft}"
+    );
+    assert!(
+        !ours_settled.contains(&"NINE") && !ours_settled.contains(&"EIGHT"),
+        "the colliding lines are inside the markers:\n{draft}"
+    );
+
+    let git = git_draft(base, local, remote);
+    let (git_settled, git_blocks) = settled(&git);
     assert_eq!(
-        merge.merge("a\nb\nc\n", "a\nMINE\nc\n", "a\nTHEIRS\nc\n"),
-        MergeOutcome::Conflict
+        (ours_settled, ours_blocks),
+        (git_settled, git_blocks),
+        "the region prompted for is the region git would prompt for.\n  ours:\n{draft}\n  git:\n{git}"
     );
 }

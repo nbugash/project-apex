@@ -7,16 +7,18 @@
 
 /// What a three-way merge concluded.
 ///
-/// **`Conflict` carries nothing.** A partially merged file is not something this feature may
-/// produce: the developer is shown three versions and chooses, and handing them a file with
-/// conflict markers in it would be a fourth version nobody wrote. The reconciler needs to know
-/// only whether it may write.
+/// **`Conflict` carries a draft, and the draft is never written.** It is the combination with
+/// git-style markers around each colliding region and nothing else, so the region the developer is
+/// asked about is the region that collided rather than the whole file (US4 scenario 7). The
+/// reconciler needs to know only whether it may write, and ignores the draft; the conflict panel
+/// pre-fills it for the developer to edit, and `conflict_resolve` refuses a resolution that still
+/// carries markers, which is where FR-033's "nothing nobody chose is written" is enforced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeOutcome {
     /// The two changes combine. This is the text to write.
     Clean(String),
-    /// The changes genuinely collide, so the developer decides (FR-021).
-    Conflict,
+    /// The changes genuinely collide, so the developer decides (FR-021). The draft to edit.
+    Conflict(String),
 }
 
 /// Decide, purely, whether three versions combine or collide.

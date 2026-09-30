@@ -281,6 +281,59 @@ impl WorkspaceProvider for CachedWorkspace {
 }
 
 impl CachedWorkspace {
+    /// Fetch a whole file in `chunk`-byte ranges and cache it whole, for prefetch (US5, SC-009).
+    ///
+    /// Ranges rather than one read because one pipe is one queue: a whole-file response of a few
+    /// hundred kilobytes sits ahead of every interactive reply behind it, and chunking bounds that
+    /// wait to one small frame. Every range carries the **whole file's** digest, so a change between
+    /// two ranges is visible as a changed digest, and the assembly is discarded rather than cached
+    /// as a file that never existed. The assembled bytes are also hashed and compared, so nothing
+    /// is cached that does not match what the engine said it was.
+    ///
+    /// `Ok(true)` when the file is now cached; `Ok(false)` when it changed mid-read, was above the
+    /// eligibility cap, or has no tree row. Nothing is stored until the last range has arrived, so
+    /// an interrupted fetch leaves no partial entry (FR-031).
+    pub async fn cache_in_ranges(
+        &self,
+        ws: &WorkspaceId,
+        path: &RelPath,
+        chunk: u64,
+    ) -> ProviderResult<bool> {
+        let mut bytes = Vec::new();
+        let mut digest = None;
+        loop {
+            let range = ByteRange {
+                offset: bytes.len() as u64,
+                length: chunk,
+            };
+            let part = self.inner.read_file(ws, path, Some(range)).await?;
+            match &digest {
+                None => digest = Some(part.sha256.clone()),
+                Some(d) if d != &part.sha256 => return Ok(false),
+                Some(_) => {}
+            }
+            let done = part.bytes.is_empty();
+            bytes.extend_from_slice(&part.bytes);
+            if done || bytes.len() as u64 >= part.total_size {
+                break;
+            }
+        }
+        let Some(digest) = digest else {
+            return Ok(false);
+        };
+        if crate::domain::workspace::Sha256::of(&bytes) != digest {
+            return Ok(false);
+        }
+        let Ok(Some(file_id)) = self.cache.file_id(ws, path) else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.cache
+                .put_content(&file_id, &bytes, &digest, self.clock.now()),
+            StoreOutcome::Stored
+        ))
+    }
+
     async fn fetch_and_cache(
         &self,
         ws: &WorkspaceId,

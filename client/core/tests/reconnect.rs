@@ -282,6 +282,9 @@ impl Resume for Steps {
     async fn reconcile(&self, _ws: &WorkspaceId) {
         self.log.lock().unwrap().push("reconcile");
     }
+    async fn prefetch(&self, _ws: &WorkspaceId) {
+        self.log.lock().unwrap().push("prefetch");
+    }
 }
 
 #[tokio::test]
@@ -296,7 +299,13 @@ async fn the_workspace_is_registered_before_anything_is_reconciled() {
     assert!(resume_after_reconnect(&steps, &WorkspaceId("w1".into())).await);
     assert_eq!(
         *steps.log.lock().unwrap(),
-        vec!["register", "rewatch", "refresh_git", "reconcile"]
+        vec![
+            "register",
+            "rewatch",
+            "refresh_git",
+            "reconcile",
+            "prefetch"
+        ]
     );
 }
 

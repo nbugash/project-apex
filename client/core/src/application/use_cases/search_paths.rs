@@ -146,6 +146,9 @@ mod tests {
         fn forget_pending(&self, _: &WorkspaceId, _: &RelPath) -> CacheResult<()> {
             unreachable!()
         }
+        fn cached_bytes(&self) -> CacheResult<u64> {
+            unreachable!()
+        }
         fn schema_version(&self) -> CacheResult<u32> {
             unreachable!()
         }

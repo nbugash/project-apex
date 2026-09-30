@@ -124,10 +124,13 @@ pub trait Resume: Send + Sync {
     async fn refresh_git(&self, ws: &crate::domain::workspace::WorkspaceId);
     /// Send the work the host has not seen.
     async fn reconcile(&self, ws: &crate::domain::workspace::WorkspaceId);
+    /// Cache what the developer is likely to want next time the connection goes (FR-029b's second
+    /// trigger). Last: it is speculative, and the developer's own work lands before it.
+    async fn prefetch(&self, ws: &crate::domain::workspace::WorkspaceId);
 }
 
-/// After a reconnection: register, re-watch, refresh git, then reconcile -- §11.5's order, which
-/// puts reconciling offline work last. Re-watching comes before git because git status's own
+/// After a reconnection: register, re-watch, refresh git, reconcile, then prefetch -- §11.5's order,
+/// which puts reconciling offline work after everything it depends on, and prefetch after that. Re-watching comes before git because git status's own
 /// refresh is nudged by file events (A-GITNUDGE), which only arrive for watched paths.
 ///
 /// Stops after a failed registration (EC-16). A workspace the engine cannot take -- an incompatible
@@ -143,5 +146,6 @@ pub async fn resume_after_reconnect(
     resume.rewatch(ws).await;
     resume.refresh_git(ws).await;
     resume.reconcile(ws).await;
+    resume.prefetch(ws).await;
     true
 }

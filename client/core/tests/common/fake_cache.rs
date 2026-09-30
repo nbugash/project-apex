@@ -451,6 +451,17 @@ impl WorkspaceCache for InMemoryCache {
         Ok(())
     }
 
+    fn cached_bytes(&self) -> CacheResult<u64> {
+        Ok(self
+            .rows
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|r| r.bytes.as_ref())
+            .map(|b| b.len() as u64)
+            .sum())
+    }
+
     fn schema_version(&self) -> CacheResult<u32> {
         Ok(*self.version.lock().unwrap())
     }

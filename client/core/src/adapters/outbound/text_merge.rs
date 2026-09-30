@@ -31,10 +31,10 @@ impl TextMerge for DiffyMerge {
         // measures rather than assumes.
         match diffy::merge(base, local, remote) {
             Ok(merged) => MergeOutcome::Clean(merged),
-            // The error carries the merged text *with conflict markers in it*, and it is discarded
-            // deliberately. Handing that to the developer would be a fourth version nobody wrote,
-            // and FR-021 says the client prompts rather than writing.
-            Err(_) => MergeOutcome::Conflict,
+            // The error carries the merged text *with conflict markers around the colliding
+            // regions only*. Kept as the draft the developer edits (US4 scenario 7); nothing writes
+            // it, and `conflict_resolve` refuses a resolution that still carries markers.
+            Err(draft) => MergeOutcome::Conflict(draft),
         }
     }
 }

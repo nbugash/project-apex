@@ -14,6 +14,9 @@ use apex_shell::application::ports::workspace_cache::{PendingEdit, WorkspaceCach
 use apex_shell::application::ports::workspace_provider::{
     ProviderError, ProviderResult, WorkspaceProvider,
 };
+use apex_shell::application::use_cases::conflicts::{
+    ConflictReason, Conflicts, Resolution, ResolveOutcome,
+};
 use apex_shell::application::use_cases::reconcile::{Outcome, Reconcile};
 use apex_shell::domain::workspace::{
     ByteRange, DirPage, FileChunk, FsMeta, Location, PageRequest, RelPath, Sha256, Workspace,
@@ -61,6 +64,12 @@ struct ScriptedHost {
     /// Without it a read resolves immediately and "two concurrent runs" run one after the other,
     /// which would let the in-flight guard's test pass with no guard at all.
     yield_on_read: std::sync::atomic::AtomicBool,
+    /// When set, a write is refused as stale unless its base is the digest of what the host holds
+    /// (all zeros for a path it does not hold) -- the engine's own rule (§4.8). Off by default,
+    /// because the reconciliation tests script staleness explicitly with `refuse_stale`; the
+    /// conflict-resolution tests need the real rule, since what they assert is *which* base a
+    /// resolution is conditional on.
+    check_base: std::sync::atomic::AtomicBool,
 }
 
 impl ScriptedHost {
@@ -130,6 +139,15 @@ impl WorkspaceProvider for ScriptedHost {
     ) -> ProviderResult<Sha256> {
         if self.offline_from.lock().unwrap().as_deref() == Some(path.as_str()) {
             return Err(ProviderError::Offline);
+        }
+        if self.check_base.load(std::sync::atomic::Ordering::Relaxed) {
+            let held = self.content.lock().unwrap().get(path.as_str()).cloned();
+            let expected = held
+                .map(|b| Sha256::of(&b))
+                .unwrap_or_else(|| Sha256::parse(&"0".repeat(64)).expect("digest"));
+            if &expected != _base {
+                return Err(ProviderError::WriteConflict);
+            }
         }
         self.writes
             .lock()
@@ -463,18 +481,22 @@ async fn a_row_survives_a_write_that_was_not_confirmed() {
     assert_eq!(host.writes().len(), 1, "it really did try");
 }
 
-/// FR-025a: a file the client cannot merge always prompts, even where the host has not moved.
+/// US4 scenario 6, FR-017a, FR-025a and SC-006a: a file the client cannot merge is never merged, and
+/// always prompts, even where the host has not moved.
 #[tokio::test]
 async fn an_unmergeable_file_prompts_even_when_the_host_has_not_moved() {
-    let host = Arc::new(ScriptedHost::holding(&[("/blob.bin", b"base\n")]));
+    // Genuinely not text on every side -- not a text file called `.bin` (quickstart §4) -- and the
+    // host holds exactly the base, so it is genuinely untouched.
+    const BASE: &[u8] = b"\x89PNG\r\n\x1a\n\x00\xffbase";
+    let host = Arc::new(ScriptedHost::holding(&[("/blob.bin", BASE)]));
     let (cache, reconcile, ws) = fixture(host.clone());
     cache
         .retain_edit(
             &ws,
             &path("/blob.bin"),
             &PendingEdit {
-                content: b"mine\n".to_vec(),
-                base: Some((b"base\n".to_vec(), Sha256::of(b"base\n"))),
+                content: b"\x89PNG\r\n\x1a\n\x00\xffmine".to_vec(),
+                base: Some((BASE.to_vec(), Sha256::of(BASE))),
                 mergeable: false,
                 retained_at: 1,
             },
@@ -490,7 +512,7 @@ async fn an_unmergeable_file_prompts_even_when_the_host_has_not_moved() {
     assert_eq!(cache.pending_edits(&ws).expect("read").len(), 1);
 }
 
-/// Edge case EC-01 and FR-026: a file the host deleted is a question, not a failure.
+/// US4 scenario 5, edge case EC-01 and FR-026: a file the host deleted is a question, not a failure.
 #[tokio::test]
 async fn a_file_deleted_on_the_host_prompts() {
     // The host holds nothing for this path.
@@ -580,7 +602,7 @@ async fn the_reconciler_asks_the_port_rather_than_deciding() {
     struct AlwaysConflict;
     impl TextMerge for AlwaysConflict {
         fn merge(&self, _: &str, _: &str, _: &str) -> MergeOutcome {
-            MergeOutcome::Conflict
+            MergeOutcome::Conflict(String::new())
         }
     }
     let host = Arc::new(ScriptedHost::holding(&[("/a.rs", b"a\nb\nc\nd\nE\n")]));
@@ -637,5 +659,343 @@ async fn an_overlapping_run_declines_rather_than_writing_twice() {
         files, 1,
         "exactly one run reports the file; the other declined"
     );
+    assert!(cache.pending_edits(&ws).expect("read").is_empty());
+}
+
+// ---- US4: conflicts, listed with three sides and resolved per file ----
+
+fn conflicts_over(host: Arc<ScriptedHost>, cache: Arc<InMemoryCache>) -> Conflicts {
+    Conflicts::new(cache, host, Arc::new(DiffyMerge::new()))
+}
+
+/// US4 scenarios 1 and 2, FR-021, FR-033 and SC-006: overlapping changes prompt, nothing is written
+/// to the host, and the offline work is still retained, byte for byte, while nobody has answered.
+#[tokio::test]
+async fn overlapping_changes_prompt_write_nothing_and_keep_the_work() {
+    let host = Arc::new(ScriptedHost::holding(&[("/a.rs", b"a\nTHEIRS\nc\n")]));
+    let (cache, reconcile, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"a\nMINE\nc\n", b"a\nb\nc\n", 1);
+
+    let report = reconcile.run(&ws).await;
+
+    assert_eq!(report.files, vec![(path("/a.rs"), Outcome::Conflicted)]);
+    assert!(
+        host.writes().is_empty(),
+        "neither side may be written (FR-033)"
+    );
+    let rows = cache.pending_edits(&ws).expect("read");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].1.content, b"a\nMINE\nc\n",
+        "nothing discarded (scenario 2)"
+    );
+}
+
+/// `conflict_resolve` guarantees 1 and 3 (US4 scenario 3): the resolution is written and the row
+/// forgotten together, and resolving one conflict leaves another's row exactly as it was. Also the
+/// other half of guarantee 1: a write that is not confirmed forgets nothing.
+#[tokio::test]
+async fn resolving_writes_and_forgets_together_and_touches_no_other_file() {
+    let host = Arc::new(ScriptedHost::holding(&[
+        ("/a.rs", b"a\nTHEIRS\nc\n"),
+        ("/b.rs", b"x\nHOST\nz\n"),
+    ]));
+    host.check_base
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (cache, _, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"a\nMINE\nc\n", b"a\nb\nc\n", 1);
+    retain_cached(&cache, &ws, "/b.rs", b"x\nLOCAL\nz\n", b"x\ny\nz\n", 2);
+    let conflicts = conflicts_over(host.clone(), cache.clone());
+    let listed = conflicts
+        .list(&ws, &[path("/a.rs"), path("/b.rs")])
+        .await
+        .expect("list");
+    let a = listed
+        .iter()
+        .find(|c| c.relative_path == path("/a.rs"))
+        .expect("a");
+
+    // Not confirmed: nothing forgotten.
+    *host.write_fails.lock().unwrap() = Some("disk full on the host".to_string());
+    let failed = conflicts
+        .resolve(
+            &ws,
+            &path("/a.rs"),
+            Resolution::Text("a\nBOTH\nc\n".into()),
+            a.remote_sha256.clone(),
+        )
+        .await;
+    assert!(matches!(failed, ResolveOutcome::Failed(_)), "{failed:?}");
+    assert_eq!(cache.pending_edits(&ws).expect("read").len(), 2);
+    *host.write_fails.lock().unwrap() = None;
+    host.writes.lock().unwrap().clear();
+
+    let outcome = conflicts
+        .resolve(
+            &ws,
+            &path("/a.rs"),
+            Resolution::Text("a\nBOTH\nc\n".into()),
+            a.remote_sha256.clone(),
+        )
+        .await;
+
+    assert_eq!(outcome, ResolveOutcome::Resolved);
+    assert_eq!(host.wrote("/a.rs").as_deref(), Some(&b"a\nBOTH\nc\n"[..]));
+    let rows = cache.pending_edits(&ws).expect("read");
+    assert_eq!(
+        rows.len(),
+        1,
+        "only the resolved file's row is gone (guarantee 3)"
+    );
+    assert_eq!(rows[0].0, path("/b.rs"));
+    assert_eq!(rows[0].1.content, b"x\nLOCAL\nz\n");
+    assert!(
+        host.wrote("/b.rs").is_none(),
+        "the other conflict was not written"
+    );
+}
+
+/// `conflict_resolve` guarantee 2 and EC-15: the host moving while the developer decided makes the
+/// resolution a new conflict against the newer remote, not an error -- and nothing is overwritten.
+///
+/// Driven with the engine's real base rule (`check_base`), because what this asserts is that the
+/// write is conditional on the remote the developer was **shown**. A resolution conditional on a
+/// remote re-read at resolve time would pass `refuse_stale`-style scripting and silently overwrite
+/// the change that arrived during the conversation.
+#[tokio::test]
+async fn a_stale_resolution_becomes_a_new_conflict_against_the_newer_remote() {
+    let host = Arc::new(ScriptedHost::holding(&[("/a.rs", b"a\nTHEIRS\nc\n")]));
+    host.check_base
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (cache, _, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"a\nMINE\nc\n", b"a\nb\nc\n", 1);
+    let conflicts = conflicts_over(host.clone(), cache.clone());
+    let shown = conflicts.list(&ws, &[path("/a.rs")]).await.expect("list");
+
+    // A colleague writes again while the developer is deciding.
+    host.content
+        .lock()
+        .unwrap()
+        .insert("/a.rs".into(), b"a\nNEWER\nc\n".to_vec());
+
+    let outcome = conflicts
+        .resolve(
+            &ws,
+            &path("/a.rs"),
+            Resolution::Text("a\nMINE\nc\n".into()),
+            shown[0].remote_sha256.clone(),
+        )
+        .await;
+
+    assert_eq!(outcome, ResolveOutcome::Conflicted);
+    assert_eq!(
+        host.content.lock().unwrap().get("/a.rs").map(Vec::as_slice),
+        Some(&b"a\nNEWER\nc\n"[..]),
+        "the change that arrived during the conversation survives"
+    );
+    assert_eq!(
+        cache.pending_edits(&ws).expect("read").len(),
+        1,
+        "the work stays"
+    );
+    let again = conflicts.list(&ws, &[path("/a.rs")]).await.expect("list");
+    assert_eq!(
+        again[0].remote.as_deref(),
+        Some("a\nNEWER\nc\n"),
+        "asked again, against the newer remote"
+    );
+}
+
+/// `conflicts_list` guarantees 2 and 3: the remote side is read when the list is built, so a host
+/// change between two listings shows in the second; and `base` is absent only for a file created
+/// offline -- a file whose cached content was never there (the state eviction leaves) keeps its base,
+/// because the base travels with the pending edit.
+#[tokio::test]
+async fn the_remote_is_read_per_listing_and_base_is_empty_only_for_a_file_created_offline() {
+    let host = Arc::new(ScriptedHost::holding(&[
+        ("/evicted.rs", b"a\nTHEIRS\nc\n"),
+        ("/new.rs", b"the host made one too\n"),
+    ]));
+    let (cache, _, ws) = fixture(host.clone());
+    retain(
+        &cache,
+        &ws,
+        "/evicted.rs",
+        b"a\nMINE\nc\n",
+        Some(b"a\nb\nc\n"),
+        1,
+    );
+    retain(&cache, &ws, "/new.rs", b"mine\n", None, 2);
+    assert!(cache
+        .lookup(&ws, &path("/evicted.rs"))
+        .expect("look")
+        .is_none());
+    let conflicts = conflicts_over(host.clone(), cache.clone());
+    let which = [path("/evicted.rs"), path("/new.rs")];
+
+    let first = conflicts.list(&ws, &which).await.expect("list");
+    let evicted = first
+        .iter()
+        .find(|c| c.relative_path == which[0])
+        .expect("listed");
+    let created = first
+        .iter()
+        .find(|c| c.relative_path == which[1])
+        .expect("listed");
+    assert!(evicted.base_present && evicted.base.as_deref() == Some("a\nb\nc\n"));
+    assert!(!created.base_present && created.base.is_none());
+    assert_eq!(created.reason, ConflictReason::CreatedOnBothSides);
+
+    host.content
+        .lock()
+        .unwrap()
+        .insert("/evicted.rs".into(), b"a\nLATER\nc\n".to_vec());
+    let second = conflicts.list(&ws, &which[..1]).await.expect("list");
+    assert_eq!(
+        second[0].remote.as_deref(),
+        Some("a\nLATER\nc\n"),
+        "never a stored remote"
+    );
+}
+
+/// `conflicts_list` guarantees 1 and 4: all three sides are present for an ordinary conflict, with
+/// a draft marking the collision; a file the client cannot merge is still listed with its base and
+/// its reason; a file the host deleted is listed as deleted. A file that is pending but did not
+/// conflict is not listed at all -- membership is the last reconciliation's, not "every row".
+#[tokio::test]
+async fn every_conflict_has_three_sides_and_an_unmergeable_one_is_still_listed() {
+    let host = Arc::new(ScriptedHost::holding(&[
+        ("/a.rs", b"a\nTHEIRS\nc\n"),
+        ("/blob.bin", b"\xff\x00host"),
+    ]));
+    let (cache, _, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"a\nMINE\nc\n", b"a\nb\nc\n", 1);
+    cache
+        .retain_edit(
+            &ws,
+            &path("/blob.bin"),
+            &PendingEdit {
+                content: b"\xff\x00mine".to_vec(),
+                base: Some((b"\xff\x00base".to_vec(), Sha256::of(b"\xff\x00base"))),
+                mergeable: false,
+                retained_at: 2,
+            },
+        )
+        .expect("retain");
+    retain(&cache, &ws, "/gone.rs", b"mine\n", Some(b"base\n"), 3);
+    retain(
+        &cache,
+        &ws,
+        "/not-a-conflict.rs",
+        b"queued\n",
+        Some(b"base\n"),
+        4,
+    );
+    let conflicts = conflicts_over(host.clone(), cache.clone());
+
+    let listed = conflicts
+        .list(&ws, &[path("/a.rs"), path("/blob.bin"), path("/gone.rs")])
+        .await
+        .expect("list");
+
+    assert_eq!(
+        listed.len(),
+        3,
+        "the pending row that did not conflict is not listed"
+    );
+    let a = &listed[0];
+    assert_eq!(a.reason, ConflictReason::Overlap);
+    assert_eq!(
+        (a.base.as_deref(), a.local.as_deref(), a.remote.as_deref()),
+        (
+            Some("a\nb\nc\n"),
+            Some("a\nMINE\nc\n"),
+            Some("a\nTHEIRS\nc\n")
+        )
+    );
+    let draft = a
+        .draft
+        .as_deref()
+        .expect("a mergeable conflict carries a draft");
+    assert!(draft.contains("<<<<<<<") && draft.contains("MINE") && draft.contains("THEIRS"));
+
+    let blob = &listed[1];
+    assert_eq!(blob.reason, ConflictReason::NotText);
+    assert!(!blob.mergeable && blob.base_present && blob.remote_present);
+    assert!(
+        blob.draft.is_none(),
+        "nothing to draft for a file that is not text"
+    );
+
+    let gone = &listed[2];
+    assert_eq!(gone.reason, ConflictReason::DeletedOnHost);
+    assert!(!gone.remote_present && gone.remote.is_none() && gone.remote_sha256.is_none());
+}
+
+/// FR-033 at the boundary: a resolution still carrying conflict markers is refused and nothing is
+/// written. The draft is for the developer to edit, never for the client to write.
+#[tokio::test]
+async fn a_resolution_that_still_carries_markers_is_refused() {
+    let host = Arc::new(ScriptedHost::holding(&[("/a.rs", b"a\nTHEIRS\nc\n")]));
+    let (cache, _, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"a\nMINE\nc\n", b"a\nb\nc\n", 1);
+    let conflicts = conflicts_over(host.clone(), cache.clone());
+    let listed = conflicts.list(&ws, &[path("/a.rs")]).await.expect("list");
+    let draft = listed[0].draft.clone().expect("draft");
+
+    let outcome = conflicts
+        .resolve(
+            &ws,
+            &path("/a.rs"),
+            Resolution::Text(draft),
+            listed[0].remote_sha256.clone(),
+        )
+        .await;
+
+    assert!(matches!(outcome, ResolveOutcome::Refused(_)), "{outcome:?}");
+    assert!(host.writes().is_empty());
+    assert_eq!(cache.pending_edits(&ws).expect("read").len(), 1);
+}
+
+/// The two whole-file choices: taking the host's side writes nothing and forgets the work (including
+/// accepting a deletion); keeping the local side of a file the host deleted recreates it.
+#[tokio::test]
+async fn taking_the_host_writes_nothing_and_keeping_mine_recreates_a_deleted_file() {
+    let host = Arc::new(ScriptedHost::holding(&[("/a.rs", b"a\nTHEIRS\nc\n")]));
+    host.check_base
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (cache, _, ws) = fixture(host.clone());
+    retain_cached(&cache, &ws, "/a.rs", b"a\nMINE\nc\n", b"a\nb\nc\n", 1);
+    retain(&cache, &ws, "/gone.rs", b"mine\n", Some(b"base\n"), 2);
+    let conflicts = conflicts_over(host.clone(), cache.clone());
+    let listed = conflicts
+        .list(&ws, &[path("/a.rs"), path("/gone.rs")])
+        .await
+        .expect("list");
+
+    let took = conflicts
+        .resolve(
+            &ws,
+            &path("/a.rs"),
+            Resolution::TakeRemote,
+            listed[0].remote_sha256.clone(),
+        )
+        .await;
+    assert_eq!(took, ResolveOutcome::Resolved);
+    assert!(
+        host.wrote("/a.rs").is_none(),
+        "the host's side needs no write"
+    );
+
+    let kept = conflicts
+        .resolve(
+            &ws,
+            &path("/gone.rs"),
+            Resolution::KeepLocal,
+            listed[1].remote_sha256.clone(),
+        )
+        .await;
+    assert_eq!(kept, ResolveOutcome::Resolved);
+    assert_eq!(host.wrote("/gone.rs").as_deref(), Some(&b"mine\n"[..]));
     assert!(cache.pending_edits(&ws).expect("read").is_empty());
 }

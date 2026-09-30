@@ -24,6 +24,9 @@ pub struct RemoteWorkspaceProvider {
     bulk: Option<Arc<dyn BulkTransfer>>,
     /// The workspace's absolute root on the engine's host, needed to name a file to the bulk path.
     remote_base: String,
+    /// Interactive unless built with `background`, which is how prefetch's reads stay behind
+    /// everything the developer asked for (§4.6, FR-030) without a priority on every port method.
+    background: bool,
 }
 
 impl RemoteWorkspaceProvider {
@@ -36,7 +39,14 @@ impl RemoteWorkspaceProvider {
             transport,
             bulk,
             remote_base,
+            background: false,
         }
+    }
+
+    /// The same provider, sending every request at background priority. Prefetch's reader.
+    pub fn background(mut self) -> Self {
+        self.background = true;
+        self
     }
 
     /// One request, one outcome. Errors are mapped from §4.4 codes to typed variants, so a caller
@@ -68,7 +78,11 @@ impl RemoteWorkspaceProvider {
         }
         match self
             .transport
-            .send(Request::interactive(method, body))
+            .send(if self.background {
+                Request::background(method, body)
+            } else {
+                Request::interactive(method, body)
+            })
             .await
         {
             RequestOutcome::Answered(json) => {

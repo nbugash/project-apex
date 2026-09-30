@@ -183,7 +183,7 @@ impl Reconcile {
                 self.write(ws, path, merged.as_bytes(), Some(&remote.sha256))
                     .await
             }
-            MergeOutcome::Conflict => Outcome::Conflicted,
+            MergeOutcome::Conflict(_) => Outcome::Conflicted,
         }
     }
 
@@ -203,7 +203,7 @@ impl Reconcile {
         // conditional on a digest, so an all-zero digest is used for "there was nothing here":
         // §4.8 gives no other spelling, and a digest of the content would claim the host already
         // holds what we are about to send.
-        let empty = Sha256::parse(&"0".repeat(64)).expect("a valid digest shape");
+        let empty = absent_file_digest();
         let base = base.unwrap_or(&empty);
         match self.provider.write_file(ws, path, content, base).await {
             Ok(_) => match self.cache.forget_pending(ws, path) {
@@ -221,4 +221,13 @@ impl Reconcile {
             Err(e) => Outcome::Failed(e.to_string()),
         }
     }
+}
+
+/// The base a write carries for a path the host does not hold.
+///
+/// The engine's write is conditional on a digest, and §4.8 gives no other spelling for "there was
+/// nothing here"; a digest of the content would claim the host already holds what is being sent.
+/// Shared with `conflicts`, which writes to the same condition when the host deleted the file.
+pub(crate) fn absent_file_digest() -> Sha256 {
+    Sha256::parse(&"0".repeat(64)).expect("a valid digest shape")
 }
